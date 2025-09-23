@@ -1,0 +1,5 @@
+title: "Java & Spring Guide"
+theme: minima
+url: "https://cookieman1337.github.io"   # домен пользователя
+baseurl: "/JavaGuide"                   # путь проекта
+permalink: pretty                        # красивые URL вида /spring/intro/
