@@ -1,6 +1,8 @@
+---
 layout: page
 title: "Spring Beans"
 permalink: /spring/beans
+---
 
 ## Что такое бин и кто управляет его жизненным циклом
 

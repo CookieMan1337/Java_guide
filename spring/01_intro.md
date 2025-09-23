@@ -1,6 +1,8 @@
+---
 layout: page
 title: "Spring. Введение"
 permalink: /spring/intro
+---
 
 ## Введение
 
