@@ -1,6 +1,8 @@
+---
 layout: page
 title: "Spring Data JPA: Основы"
 permalink: /spring/mvc
+---
 
 ### Getting Started
 
