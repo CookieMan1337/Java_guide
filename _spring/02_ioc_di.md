@@ -1,6 +1,6 @@
 ---
 layout: page
-title: "Inversion of Control & Dependency Injection"
+title: "Основы Spring: Inversion of Control & Dependency Injection"
 permalink: /spring/ioc_di
 ---
 

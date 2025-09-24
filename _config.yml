@@ -1,13 +1,13 @@
 title: "Java & Spring Guide"
-theme: minima
+#theme: minima
 url: "https://cookieman1337.github.io"   # домен пользователя
 baseurl: "/Java_guide"                   # путь проекта
 permalink: pretty                        # красивые URL вида /spring/intro/
 
 collections:
+  javacore:
+    output: true
+    permalink: /javacore/:name/
   spring:
     output: true
     permalink: /spring/:name/
-defaults:
-  - scope: { type: "spring" }
-    values: { layout: page }

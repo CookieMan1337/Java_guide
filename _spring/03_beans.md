@@ -1,6 +1,6 @@
 ---
 layout: page
-title: "Spring Beans"
+title: "Бины и конфигурация: как «живёт» приложение"
 permalink: /spring/beans
 ---
 
