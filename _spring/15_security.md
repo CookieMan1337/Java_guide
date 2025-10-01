@@ -4,10 +4,6 @@ title: "Spring Security: безопасность приложения"
 permalink: /spring/security
 ---
 
-Ниже — первая часть «главы 15» про безопасность Spring Boot. Разбираем **подтемы 0–3**, как ты попросил: для каждого пункта — 4+ абзаца объяснений, код и разъяснение терминов/аннотаций по мере появления. Стек: Java 17+, Spring Boot 3.x, Spring Security 6.x (без `WebSecurityConfigurerAdapter`).
-
----
-
 # 0. Основы
 
 ## Что такое Spring Security
