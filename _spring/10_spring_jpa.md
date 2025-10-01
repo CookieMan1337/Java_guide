@@ -1,7 +1,7 @@
 ---
 layout: page
 title: "Spring Data JPA: Основы"
-permalink: /spring/mvc
+permalink: /spring/jpa_basic
 ---
 
 ### Getting Started
