@@ -2331,3 +2331,730 @@ management:
 // аналогично: код не меняется, вся кастомизация — в свойствах.
 ```
 
+# 8. Тестирование авто-конфигураций
+
+## Изолированные тесты без полного контекста: `ApplicationContextRunner` + `AutoConfigurations.of(...)`
+
+Изолированные тесты автоконфигов — способ проверить поведение без запуска «всего приложения». Класс `ApplicationContextRunner` из Spring Boot Test поднимает крошечный контекст по нужной конфигурации, а затем даёт fluently-API для ассертов. Главное преимущество — скорость и управляемость: вы создаёте только те бины, которые действительно нужны кейсу.
+
+Типичный сценарий: «если включён флаг и класс в classpath — бин появился». Для этого у `ApplicationContextRunner` есть методы `withPropertyValues(...)` и `withConfiguration(AutoConfigurations.of(...))`. Первый задаёт свойства, второй подключает тестируемый `@AutoConfiguration`. Результат — предсказуемые условия, которые легко варьировать по кейсам.
+
+Такой подход уничтожает флейки. Вы изолируете влияние внешних конфигов, случайных профилей и «поднятых» компонентов. Любая зависимость указывается явно: либо через свойства, либо через подмешивание конфигурационных классов. В итоге тест концентрируется на условиях и бинах, а не на побочных эффектах.
+
+Важно и то, что runner даёт понятные сообщения: если бин не найден — печатается список доступных. Это помогает быстро понять, что именно «не доехало». В связке с отчётом условий (в Dev-режиме) отладка становится почти механической.
+
+Пишите «микро-тесты» на каждую ветку условий: «включено по флагу», «выключено по флагу», «нет нужного класса», «есть пользовательский бин (бэкоф)». Такие тесты короткие, читаемые и хорошо локализуют регресс.
+
+Под конец — практический совет. Не подключайте случайно `@SpringBootTest` для автоконфигов. Это втягивает много лишнего и размывает фокус. Для автоконфигов почти всегда достаточно `ApplicationContextRunner`.
+
+**Код (Java): изолированный тест автоконфига**
+
+```java
+package testing.ac;
+
+import my.http.autoconf.MyHttpAutoConfiguration;
+import my.http.autoconf.MyHttpProps;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.web.client.RestClient;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class MyHttpAutoConfigurationTest {
+
+  private final ApplicationContextRunner runner = new ApplicationContextRunner()
+      .withConfiguration(AutoConfigurations.of(MyHttpAutoConfiguration.class));
+
+  @Test void enabledByDefault() {
+    runner.run(ctx -> {
+      assertThat(ctx).hasSingleBean(RestClient.class);
+      assertThat(ctx).hasSingleBean(MyHttpProps.class);
+    });
+  }
+
+  @Test void disabledByProperty() {
+    runner.withPropertyValues("my.http.enabled=false").run(ctx -> {
+      assertThat(ctx).doesNotHaveBean(RestClient.class);
+    });
+  }
+}
+```
+
+**Код (Kotlin): аналог с AssertJ**
+
+```kotlin
+package testing.ac
+
+import my.http.autoconf.MyHttpAutoConfiguration
+import my.http.autoconf.MyHttpProps
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.web.client.RestClient
+
+class MyHttpAutoConfigurationKtTest {
+
+    private val runner = ApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(MyHttpAutoConfiguration::class.java))
+
+    @Test
+    fun `enabled by default`() {
+        runner.run { ctx ->
+            assertThat(ctx).hasSingleBean(RestClient::class.java)
+            assertThat(ctx).hasSingleBean(MyHttpProps::class.java)
+        }
+    }
+
+    @Test
+    fun `disabled by property`() {
+        runner.withPropertyValues("my.http.enabled=false").run { ctx ->
+            assertThat(ctx).doesNotHaveBean(RestClient::class.java)
+        }
+    }
+}
+```
+
+Gradle (Groovy/Kotlin) — зависимости для раннера:
+
+```groovy
+dependencies {
+  testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+```
+
+```kotlin
+dependencies {
+  testImplementation("org.springframework.boot:spring-boot-starter-test")
+}
+```
+
+---
+
+## Проверка условий: присутствие классов, значений свойств, бэкоф при наличии пользовательского бина
+
+Условия «по классам» проверяются с помощью `FilteredClassLoader`: так мы имитируем отсутствие библиотеки в classpath. Это надёжно воспроизводит «тонкие» сценарии и предотвращает случайные регрессы: если завтра транситивная зависимость скрытно вернётся, тест вас предупредит.
+
+Проверка `@ConditionalOnProperty` — простая: разверните тест с `withPropertyValues(...)` и без них. Хорошая практика — указывать дефолт в тесте явно, чтобы не зависеть от текущих начальных значений (например, `matchIfMissing`).
+
+Для «бэкофа» используем подмешивание пользовательского `@Configuration` с «своим» бином. Runner имеет метод `withUserConfiguration(...)`, который добавляет конфиг в контекст до автоконфигов. Если ваш автоконфиг корректно обёрнут `@ConditionalOnMissingBean`, дефолтный бин не создастся.
+
+Проверяйте и «сочетания» условий: класс есть, но флаг выключен; класс отсутствует, но флаг включен; объявлен пользовательский бин — автоконфиг отступил. Покрытие этих случаев — гарантия предсказуемости.
+
+Ещё один полезный приём — проверка коллекций: если ваш автоконфиг собирает `List<Customizer>`, добавьте свой кастомайзер пользователем и убедитесь в нужном порядке (`@Order`). Это документирует SPI вашего модуля.
+
+Помните, что runner не тянет весь автоконфиг Boot’а. Если ваш модуль зависит от инфраструктуры (например, `MeterRegistry`), либо создайте её «заглушку» в тесте, либо подключите соответствующую автоконфигурацию в `withConfiguration(...)`.
+
+**Код (Java): FilteredClassLoader + бэкоф**
+
+```java
+package testing.cond;
+
+import my.http.autoconf.MyHttpAutoConfiguration;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.FilteredClassLoader;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestClient;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class ConditionsTest {
+
+  @Test void noRestClientClass_skipsConfig() {
+    new ApplicationContextRunner()
+      .withClassLoader(new FilteredClassLoader(RestClient.class))
+      .withConfiguration(AutoConfigurations.of(MyHttpAutoConfiguration.class))
+      .run(ctx -> assertThat(ctx).doesNotHaveBean(RestClient.class));
+  }
+
+  @Test void userBeanBackoff() {
+    new ApplicationContextRunner()
+      .withConfiguration(AutoConfigurations.of(MyHttpAutoConfiguration.class))
+      .withUserConfiguration(UserOverride.class)
+      .run(ctx -> {
+        assertThat(ctx).hasSingleBean(RestClient.class);
+        assertThat(ctx).getBean(RestClient.class).isSameAs(ctx.getBean("userRestClient"));
+      });
+  }
+
+  @Configuration static class UserOverride {
+    @Bean RestClient userRestClient() { return RestClient.create(); }
+  }
+}
+```
+
+**Код (Kotlin): аналог**
+
+```kotlin
+package testing.cond
+
+import my.http.autoconf.MyHttpAutoConfiguration
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.test.context.FilteredClassLoader
+import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.web.client.RestClient
+
+class ConditionsKtTest {
+
+    @Test
+    fun `no RestClient class - skips config`() {
+        ApplicationContextRunner()
+            .withClassLoader(FilteredClassLoader(RestClient::class.java))
+            .withConfiguration(AutoConfigurations.of(MyHttpAutoConfiguration::class.java))
+            .run { ctx -> assertThat(ctx).doesNotHaveBean(RestClient::class.java) }
+    }
+
+    @Test
+    fun `user bean backoff`() {
+        ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(MyHttpAutoConfiguration::class.java))
+            .withUserConfiguration(UserOverride::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasSingleBean(RestClient::class.java)
+                assertThat(ctx.getBean(RestClient::class.java)).isSameAs(ctx.getBean("userRestClient"))
+            }
+    }
+
+    @Configuration
+    class UserOverride {
+        @Bean fun userRestClient(): RestClient = RestClient.create()
+    }
+}
+```
+
+---
+
+## Контрактные тесты модулей: стабильные имена свойств, метаданные, отсутствие неожиданных бинов в контексте
+
+Контрактные тесты фиксируют «внешний» API вашего стартера: префиксы свойств, дефолты, состав бинов. Их задача — не допустить «тихих» изменений, ломающих потребителей при апгрейде. Простая форма — smoke-тест на «поднялся контекст и есть ровно такие бины».
+
+Проверьте набор экспортируемых бинов: «в приложении без пользовательских переопределений мои автоконфиги создают A, B, C — и ничего лишнего». Это полезно, чтобы случайно не добавить «тяжёлый» компонент. Если вы добавляете новый бин — тест падает и заставляет вас обновить контракт осознанно.
+
+Стабильные имена свойств можно проверить «через обратную сторону»: runner с `withPropertyValues("my.http.timeout-ms=1500")` должен успешно подняться, а попытка установить «переименованный» ключ — вызывать ошибку валидации. Это особенно важно после рефакторинга классов свойств.
+
+Метаданные (`spring-configuration-metadata.json`) тоже стоит проверять: интеграционный тест, который распаковывает JAR и проверяет, что ключи присутствуют, а описания не пустые. Это подстраховка против «забыли подключить configuration-processor».
+
+Полезна и негативная проверка: «без моего стартера в чистом приложении этих бинов быть не должно». Так вы заменяете «магическое» появление компонентов явной зависимостью на стартер.
+
+Контрактные тесты — ваш «документ в коде». В README пишете «стартёр даёт X и Y, ключи такие-то», а тест гарантирует, что это правда.
+
+**Код (Java): контракт — ровно один бин и корректный префикс**
+
+```java
+package testing.contract;
+
+import my.hello.autoconf.Hello;
+import my.hello.autoconf.HelloAutoConfiguration;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class HelloContractTest {
+  @Test void exactlyOneHelloBean() {
+    new ApplicationContextRunner()
+      .withConfiguration(AutoConfigurations.of(HelloAutoConfiguration.class))
+      .run(ctx -> {
+        assertThat(ctx).hasSingleBean(Hello.class);
+        assertThat(ctx.getBeanNamesForType(Hello.class)).containsExactly("hello");
+      });
+  }
+}
+```
+
+**Код (Kotlin): smoke + свойство**
+
+```kotlin
+package testing.contract
+
+import my.http.autoconf.MyHttpAutoConfiguration
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.web.client.RestClient
+
+class HttpContractKtTest {
+    @Test
+    fun `property prefix works`() {
+        ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(MyHttpAutoConfiguration::class.java))
+            .withPropertyValues("my.http.timeout-ms=2000")
+            .run { ctx -> assertThat(ctx).hasSingleBean(RestClient::class.java) }
+    }
+}
+```
+
+Gradle (Groovy/Kotlin) — проверка наличия метаданных (простой task):
+
+```groovy
+tasks.register('checkConfigMetadata') {
+  dependsOn 'jar'
+  doLast {
+    def jarFile = file("${buildDir}/libs/${project.name}-${project.version}.jar")
+    assert new java.util.zip.ZipFile(jarFile).entries().any { it.name.endsWith('spring-configuration-metadata.json') }
+  }
+}
+```
+
+```kotlin
+tasks.register("checkConfigMetadata") {
+    dependsOn("jar")
+    doLast {
+        val jar = file("${buildDir}/libs/${project.name}-${project.version}.jar")
+        java.util.zip.ZipFile(jar).use { z ->
+            require(z.entries().toList().any { it.name.endsWith("spring-configuration-metadata.json") }) {
+                "No configuration metadata found"
+            }
+        }
+    }
+}
+```
+
+---
+
+# 9. Взаимодействие с AOT/Native Image и производительностью старта
+
+## Почему условия важнее, чем «жёсткая» регистрация: меньше бинов — быстрее старт/меньше память
+
+Скорость старта — это не только GraalVM. Даже на JVM основную цену платят за создание бинов, инициализацию и проксирование. Чем меньше бинов вы регистрируете, тем быстрее поднимается контекст и тем меньше памяти тратится на структуры контейнера. Поэтому условия в автоконфигах — не «бюрократия», а ключевой инструмент производительности.
+
+Жёсткая регистрация «на всякий случай» приводит к «жирным» контекстам. Бины создаются, держат ссылки, вешают хуки shutdown — и всё это без реальной пользы. Условия `OnClass/OnProperty/OnBean` заранее отсеивают ненужные куски и уменьшают работу контейнера. Вы выигрываете и во времени, и в размерах heap’а.
+
+Ещё один аспект — постпроцессоры. Каждый созданный бин проходит через цепочку `BeanPostProcessor` (AOP, валидация, биндинг), что умножает издержки на количество. Сократив число бинов, вы автоматически снижаете стоимость постобработки.
+
+Особенно заметно это на микросервисах, где «переподъём» случается часто (автоскейлинг, blue/green). Секунды старта складываются в минуты недоступности под нагрузкой. «Тонкие» автоконфиги — прямо вклад в SLO.
+
+Наконец, условия отлично сочетаются с профилями. Вы можете держать «набор тяжёлых» бинов для dev (например, детальная диагностика, доступные эндпоинты) и выключать их в prod, не меняя код. Это и быстрее, и безопаснее.
+
+Практический вывод: любые «дорогие» фичи — под флаг `*.enabled=false` и `@ConditionalOnClass`. Всё, что зависит от внешней инфраструктуры, — под `@ConditionalOnBean`. Жёсткая регистрация — только для крошечных и действительно базовых компонентов.
+
+**Код (Java): дорогой компонент включаем только по условиям**
+
+```java
+package perf.lean;
+
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.*;
+import org.springframework.context.annotation.Bean;
+
+@AutoConfiguration
+@ConditionalOnProperty(prefix = "heavy", name = "enabled", havingValue = "true", matchIfMissing = false)
+@ConditionalOnClass(name = "com.acme.expensive.Engine")
+public class HeavyFeatureAutoConfig {
+
+  @Bean
+  @ConditionalOnMissingBean
+  public Object heavyEngine() {
+    // создание дорогого объекта (кэш, планировщик и т.д.)
+    return new Object();
+  }
+}
+```
+
+**Код (Kotlin): аналог**
+
+```kotlin
+package perf.lean
+
+import org.springframework.boot.autoconfigure.AutoConfiguration
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.context.annotation.Bean
+
+@AutoConfiguration
+@ConditionalOnProperty(prefix = "heavy", name = ["enabled"], havingValue = "true", matchIfMissing = false)
+@ConditionalOnClass(name = ["com.acme.expensive.Engine"])
+class HeavyFeatureAutoConfig {
+    @Bean @ConditionalOnMissingBean
+    fun heavyEngine(): Any = Any()
+}
+```
+
+---
+
+## AOT-генерация: влияние автоконфига на подсказки рефлексии/ресурсов/динамических прокси
+
+В нативной сборке GraalVM запрещает «сюрпризы» во время выполнения. Всё, что вы делаете рефлексией или через динамические прокси, должно быть объявлено заранее. Автоконфиг — лучшее место для этих деклараций, потому что именно он решает, будет ли фича активна.
+
+Механизм Spring AOT предоставляет `RuntimeHints` и `@ImportRuntimeHints`. В `RuntimeHintsRegistrar` вы регистрируете типы для рефлексии (конструкторы/поля/методы), шаблоны ресурсов (например, `classpath:/my/templates/*.ftl`) и JDK-прокси для интерфейсов. Делайте хинты «узкими»: только то, что реально используется при сработавших условиях.
+
+Отсутствие хинтов проявляется в нативной сборке падением во время рантайма или во время image-build. Лучше ловить это на CI: заведите sample-приложение, которое подключает ваш стартер, и собирайте его нативно хотя бы как smoke. Так вы заметите, что забыли зарегистрировать, например, модели Jackson или ресурсные шаблоны.
+
+АOT также «уплощает» конфигурации: многие рефлексивные операции (в т.ч. биндинг свойств) становятся статически сгенерированными. Отсюда ещё один плюс «тонких» автоконфигов: чем меньше динамики (SpEL, класслоадинг, анонимные прокси), тем проще AOT.
+
+Учитывайте условия при регистрации хинтов. В `registerHints(...)` доступен `ClassLoader`, можно проверять наличие класса и регистрировать хинты условно. Это позволяет не загрязнять нативный образ лишними декларациями.
+
+Документируйте ограничение: «эта часть работает только на JVM, потому что библиотека X не совместима с Native». Иногда честно выключить фичу под `native.enabled=false` лучше, чем тащить боль в прод.
+
+**Код (Java): hints для ресурсов и типов**
+
+```java
+package aot.hints;
+
+import org.springframework.aot.hint.*;
+import org.springframework.context.annotation.ImportRuntimeHints;
+
+@ImportRuntimeHints(MyHints.class)
+public class MyNativeAutoConfiguration { /* @AutoConfiguration + бины */ }
+
+class MyHints implements RuntimeHintsRegistrar {
+  @Override public void registerHints(RuntimeHints hints, ClassLoader cl) {
+    hints.resources().registerPattern("my/templates/*.ftl");
+    hints.reflection().registerType(
+      com.fasterxml.jackson.databind.ObjectMapper.class,
+      MemberCategory.INTROSPECT_PUBLIC_METHODS
+    );
+    hints.proxies().registerJdkProxy(aot.hints.MySpi.class);
+  }
+}
+
+interface MySpi { void apply(); }
+```
+
+**Код (Kotlin): аналог**
+
+```kotlin
+package aot.hints
+
+import org.springframework.aot.hint.MemberCategory
+import org.springframework.aot.hint.RuntimeHints
+import org.springframework.aot.hint.RuntimeHintsRegistrar
+import org.springframework.context.annotation.ImportRuntimeHints
+
+@ImportRuntimeHints(MyHints::class)
+class MyNativeAutoConfiguration
+
+class MyHints : RuntimeHintsRegistrar {
+    override fun registerHints(hints: RuntimeHints, classLoader: ClassLoader?) {
+        hints.resources().registerPattern("my/templates/*.ftl")
+        hints.reflection().registerType(
+            com.fasterxml.jackson.databind.ObjectMapper::class.java,
+            MemberCategory.INTROSPECT_PUBLIC_METHODS
+        )
+        hints.proxies().registerJdkProxy(MySpi::class.java)
+    }
+}
+
+interface MySpi { fun apply() }
+```
+
+Gradle (Groovy/Kotlin) — GraalVM native (пример):
+
+```groovy
+plugins { id 'org.graalvm.buildtools.native' version '0.10.2' }
+```
+
+```kotlin
+plugins { id("org.graalvm.buildtools.native") version "0.10.2" }
+```
+
+---
+
+## Практика «тонких» авто-конфигов: без тяжёлой логики, ранняя проверка доступности зависимостей, ленивые бины только там, где оправдано
+
+«Тонкий» автоконфиг — это про декларации, а не про бизнес-логику. В нём описываются **условия** и **связи**: какие бины и как создавать. Любые тяжёлые операции (скан каталога, сетевые пинги, длительный warmup) должны жить в самих компонентах и запускаться контролируемо (после `ApplicationReadyEvent`, по таймеру, вручную).
+
+Ранняя проверка доступности — это условия `OnClass/OnBean/OnProperty` и, при необходимости, валидация свойств. Если нет `DataSource`, не создавайте JdbcTemplate; если `enabled=false`, не поднимайте планировщик. Это уважает ресурсы и снижает шанс «висеть на старте».
+
+Ленивые бины (`@Lazy`) — инструмент, а не панацея. Хорошо подходит для редкопользуемых интеграций (например, дополнительный экспорт метрик), но вреден для базовой инфраструктуры (клиент БД/HTTP). Ленивая инициализация сдвигает проблемы «в рантайм» и усложняет диагностику — включайте её осознанно.
+
+Ещё один приём — прогрев «медленных» частей фоново после старта: `ApplicationRunner` или `@EventListener(ApplicationReadyEvent)`. Так вы не задерживаете готовность сервиса, но достигаете быстрых ответов на первые запросы.
+
+Не пытайтесь «спасти» тяжёлый автоконфиг `@DependsOn` и хаками порядка. В 99% случаев решение — разделить конфиг, ужесточить условия и убрать побочные эффекты из инициализации.
+
+Финально — измеряйте. Включите тайминги старта (логируйте время на фазах, счётчики созданных бинов) и держите регрессионный тест на «время старта» для образца приложения. Падение на 20–30% — сигнал, что какой-то автоконфиг стал «толстым».
+
+**Код (Java): тяжёлая часть уезжает в раннер, автоконфиг — тонкий**
+
+```java
+package thin.good;
+
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.*;
+import org.springframework.context.annotation.Bean;
+import org.springframework.boot.ApplicationRunner;
+
+@AutoConfiguration
+@ConditionalOnProperty(prefix = "feature.cache", name = "enabled", havingValue = "true")
+public class CacheAutoConfig {
+
+  @Bean @ConditionalOnMissingBean CacheClient cacheClient() { return new CacheClient(); }
+
+  @Bean
+  @ConditionalOnBean(CacheClient.class)
+  ApplicationRunner cacheWarmup(CacheClient c) {
+    return args -> c.warmup(); // фоновый прогрев после старта
+  }
+
+  static class CacheClient { void warmup() {/*...*/} }
+}
+```
+
+**Код (Kotlin): аналог**
+
+```kotlin
+package thin.good
+
+import org.springframework.boot.ApplicationRunner
+import org.springframework.boot.autoconfigure.AutoConfiguration
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.context.annotation.Bean
+
+@AutoConfiguration
+@ConditionalOnProperty(prefix = "feature.cache", name = ["enabled"], havingValue = "true")
+class CacheAutoConfig {
+    @Bean @ConditionalOnMissingBean
+    fun cacheClient() = CacheClient()
+
+    @Bean
+    @ConditionalOnBean(CacheClient::class)
+    fun cacheWarmup(c: CacheClient) = ApplicationRunner { c.warmup() }
+}
+
+class CacheClient { fun warmup() { /* ... */ } }
+```
+
+---
+
+# 10. Анти-паттерны и гайдлайны по дизайну
+
+## Не подменяйте пользовательские бины молча; всегда делайте «бэкоф» и явные свойства-переключатели
+
+Главный анти-паттерн — регистрировать бины «поверх» пользовательских. Если ваш автоконфиг создаёт бин без `@ConditionalOnMissingBean`, он может неожиданно перезаписать реализацию, от которой зависит приложение. Итог — трудные для диагностики баги и невозможность кастомизации.
+
+Используйте «вежливые» условия везде, где есть шанс конкуренции: `OnMissingBean` по типу и/или имени. Если ваш дефолт должен легко отключаться, добавьте `@ConditionalOnProperty(prefix="...", name="enabled", havingValue="true")`. Это явная точка выключения в конфиге.
+
+Документируйте, как переопределять. Если автоконфиг ожидает бин с конкретным именем — скажите об этом в README. Если достаточно типа — так и укажите. Прозрачные правила экономят часы интеграции.
+
+Иногда хочется «ушлёпать» все пользовательские бины своим «совершенным» по умолчанию. Не делайте так. Если вы хотите «улучшить» поведение, оформляйте это как декоратор по `@ConditionalOnBean` или SPI-кастомайзер: коллекция `List<Customizer>` применится к уже существующим бинам.
+
+Для «опасных» фич — выключатель по умолчанию. Логирование тела запросов, тяжёлые планировщики, экспортеры секретов — всё это должно включаться осознанно флагом, а не приезжать «в нагрузку».
+
+Тест «бэкофа» обязателен. В контрактных тестах проверяйте кейс «пользовательский бин уже есть — дефолт не создаётся». Это страховка на будущее.
+
+**Код (Java): плохо/хорошо**
+
+```java
+// ПЛОХО: перезапишет пользовательский бин
+//@AutoConfiguration
+//public class BadAutoConfig {
+//  @Bean public ObjectMapper objectMapper() { return new ObjectMapper(); }
+//}
+
+// ХОРОШО: вежливый бэкоф + выключатель
+@org.springframework.boot.autoconfigure.AutoConfiguration
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(prefix="json", name="enabled", havingValue="true", matchIfMissing = true)
+public class GoodAutoConfig {
+  @org.springframework.context.annotation.Bean
+  @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+  com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
+    return new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+  }
+}
+```
+
+**Код (Kotlin): аналог**
+
+```kotlin
+@org.springframework.boot.autoconfigure.AutoConfiguration
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(prefix = "json", name = ["enabled"], havingValue = "true", matchIfMissing = true)
+class GoodAutoConfigKt {
+    @org.springframework.context.annotation.Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+    fun objectMapper(): com.fasterxml.jackson.databind.ObjectMapper =
+        com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()
+}
+```
+
+---
+
+## Не тащите «всё и сразу»: дробите на части и включайте по условиям; избегайте циклов зависимостей
+
+Автоконфиг «комбайн» с десятками бинов и условной логикой трудно читать и поддерживать. Гораздо лучше разнести по зонам ответственности: web, data, clients, observability. Каждый класс — маленький, с простыми условиями и минимальными связями.
+
+Дробление снижает риск циклов. Циклы часто появляются, когда два бина из одного большого конфига зависят друг от друга через конструкторы, а автор пытается «лечить» это `@Lazy`. Правильнее пересмотреть дизайн: вынести общую часть, заменить жёсткую зависимость на `ObjectProvider` или интерфейс SPI.
+
+Условия — естественный способ «подсушить» граф: если нет `DataSource`, не создавайте репозитории; если приложение реактивное, не поднимайте MVC-фильтры. Это автоматически предотвращает «левые» связи.
+
+Стремитесь к **отсутствию** `@DependsOn` в автоконфиге. Порядок регистрации обеспечивается `before/after` на уровнях конфигов, а сами бины должны быть устойчивы к порядку — через условия и опциональную инъекцию.
+
+Не добавляйте скрытые зависимости из пользовательского графа. Если бин реально опционален — ищите его через `ObjectProvider` и действуйте, только если он есть. Иначе автоконфиг «залипнет» на чужих деталях.
+
+В тестах держите «наборы сценариев» для каждого куска: так вы заметите, что добавление новой фичи неожиданно потащило веб-бин в сервис без web-зависимости.
+
+**Код (Java): разрыв цикла через `ObjectProvider`**
+
+```java
+package antipattern.cycle;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.stereotype.Component;
+
+// Было: ServiceA -> ServiceB -> ServiceA (конструкторный цикл)
+// Стало: одна сторона опциональная, обращение по требованию
+
+@Component class ServiceA {
+  private final ObjectProvider<ServiceB> b;
+  ServiceA(ObjectProvider<ServiceB> b){ this.b = b; }
+  void doA(){ b.ifAvailable(ServiceB::assist); }
+}
+@Component class ServiceB {
+  private final ServiceA a;
+  ServiceB(ServiceA a){ this.a = a; }
+  void assist(){ /* ... */ }
+}
+```
+
+**Код (Kotlin): аналог**
+
+```kotlin
+package antipattern.cycle
+
+import org.springframework.beans.factory.ObjectProvider
+import org.springframework.stereotype.Component
+
+@Component
+class ServiceA(private val b: ObjectProvider<ServiceB>) {
+    fun doA() { b.ifAvailable { it.assist() } }
+}
+
+@Component
+class ServiceB(private val a: ServiceA) {
+    fun assist() { /* ... */ }
+}
+```
+
+---
+
+## Не скрывайте побочные эффекты (миграции/сетевые подключения) в статических инициализаторах; всё через управляемые бины
+
+Статические инициализаторы и блоки `init` — плохое место для работы с сетью или диском. Они запускаются при загрузке класса, ещё до того, как Spring сможет управлять жизненным циклом, обработать ошибки и корректно остановиться. Результат — «фантомные» подключения и проблемные откаты.
+
+Все побочные эффекты делайте в управляемых бинах: через конструктор/`@PostConstruct`/инит-метод — если действительно нужно до `ready`; или через `ApplicationRunner`/события — если можно отложить. Так вы получите контроль над порядком, логированием и ошибками.
+
+Миграции БД — не в статике и не в автоконфиге произвольно. Либо используйте стандартные инструменты (Flyway/Liquibase автоконфиги), либо оформляйте отдельный бин-джобу с понятным включателем и политикой запуска. Это делает поведение прозрачным для эксплуатации.
+
+Выделяйте сети в отдельные компоненты с таймаутами и ретраями. Статический вызов «сходить в конфиг-сервер» при загрузке класса ломает старт на ноутбуке, в офлайне и в нативной сборке (AOT не умеет симулировать такие произвольные вызовы).
+
+В отчётах условий не должно быть «побочек». Автоконфиг лишь описывает, какие бины создать. Все операции — в runtime по управляемым правилам (init/runner/scheduler). Это облегчает и AOT, и диагностику.
+
+Если нужна «синхронная» предподготовка, используйте `SmartLifecycle` с фазами: это дало Spring’у возможность корректно остановить компонент и дождаться его завершения.
+
+**Код (Java): плохо/хорошо**
+
+```java
+// ПЛОХО
+class Bad {
+  static {
+    try { new java.net.URL("https://config.example").openStream().close(); }
+    catch (Exception e) { throw new RuntimeException(e); }
+  }
+}
+
+// ХОРОШО
+@org.springframework.stereotype.Component
+class GoodInit implements org.springframework.boot.ApplicationRunner {
+  @Override public void run(org.springframework.boot.ApplicationArguments args) throws Exception {
+    try (var s = new java.net.URL("https://config.example").openStream()) { /* ... */ }
+  }
+}
+```
+
+**Код (Kotlin): аналог**
+
+```kotlin
+// Плохо — статический побочный эффект
+class Bad {
+    companion object {
+        init { java.net.URL("https://config.example").openStream().use { } }
+    }
+}
+
+// Хорошо — управляемый раннер
+@org.springframework.stereotype.Component
+class GoodInit : org.springframework.boot.ApplicationRunner {
+    override fun run(args: org.springframework.boot.ApplicationArguments) {
+        java.net.URL("https://config.example").openStream().use { /* ... */ }
+    }
+}
+```
+
+---
+
+## Документируйте: префиксы свойств, дефолты, сценарии отключения, ожидаемая интеграция с другими автоконфигами
+
+Хорошая документация стартера экономит десятки часов потребителям. Минимум: префикс свойств, таблица ключей с типами и дефолтами, примеры YAML, способы отключения/переопределения (`*.enabled`, `spring.autoconfigure.exclude`, пользовательский `@Bean`). Всё это дублируется и в метаданных, и в README.
+
+Опишите «границы влияния»: какие бины регистрируются, какие зависят от других автоконфигов (например, «если есть `MeterRegistry`, регистрируются метрики»). Укажите, как ваш модуль реагирует на профили и тип web-приложения (MVC/WebFlux).
+
+Метаданные конфигурации генерируйте обязательно: `spring-boot-configuration-processor` в зависимостях, Javadoc на полях — всё это прямо попадает в подсказки IDE. Потребитель увидит правильные ключи и допустимые значения ещё в YAML.
+
+Поддерживайте «changelog для ключей»: при переименовании — добавляйте deprecated-ключи и миграционные подсказки. Контрактные тесты на «старый ключ не работает без явной миграции» защитят от непреднамеренных ломающих изменений.
+
+Покажите «рецепты» интеграции: короткие сниппеты «как заменить бин», «как выключить подсекцию», «как добавить кастомайзер». Это снижает порог входа и уменьшает поток вопросов.
+
+И наконец, держите sample-приложение в репозитории стартера. Запустив его, потребитель увидит ожидаемые бины (`/actuator/beans`) и условия (`/actuator/conditions`), а вы — получите «живой» стенд для регрессии.
+
+**Код (Java): свойства с Javadoc → метаданные**
+
+```java
+package docs.props;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
+
+@ConfigurationProperties("corp.http")
+public record CorpHttpProps(
+  /** Таймаут соединения, миллисекунды. Должен быть >=100. */
+  int connectTimeoutMs,
+  /** Максимальный размер тела ответа для логирования. Пример: 512KB. */
+  DataSize logBodyLimit,
+  /** Включить метрики клиента (Micrometer). */
+  boolean metricsEnabled
+) { }
+```
+
+**Код (Kotlin): аналог**
+
+```kotlin
+package docs.props
+
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.util.unit.DataSize
+
+/** Настройки корпоративного HTTP-клиента. */
+@ConfigurationProperties("corp.http")
+data class CorpHttpProps(
+    /** Таймаут соединения, мс (>=100). */
+    val connectTimeoutMs: Int = 1000,
+    /** Максимальный размер логируемого тела. */
+    val logBodyLimit: DataSize = DataSize.ofKilobytes(512),
+    /** Включить метрики клиента. */
+    val metricsEnabled: Boolean = true
+)
+```
+
+Gradle (Groovy/Kotlin) — процессор метаданных:
+
+```groovy
+dependencies { annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor' }
+```
+
+```kotlin
+dependencies { annotationProcessor("org.springframework.boot:spring-boot-configuration-processor") }
+```
+
+
