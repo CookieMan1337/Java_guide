@@ -1,8 +1,9 @@
 ---
 layout: page
 title: "Spring Boot «под капотом»: авто-конфигурация и стартеры"
-permalink: /spring/context
+permalink: /spring/autoconfiguration_starters
 ---
+
 # 0. Введение
 
 ## Что это

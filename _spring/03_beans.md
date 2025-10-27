@@ -3,6 +3,7 @@ layout: page
 title: "Бины и конфигурация: как «живёт» приложение"
 permalink: /spring/beans
 ---
+
 # 0. Введение
 
 ## Что это

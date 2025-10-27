@@ -4,8 +4,6 @@ title: "Spring + Docker/K8s, деплой приложения"
 permalink: /spring/observability
 ---
 
-# 21. Spring Boot + Docker/K8s: деплой приложения
-
 # 0. Введение
 
 ## Что это

@@ -3,6 +3,7 @@ layout: page
 title: "Основы Spring: Inversion of Control & Dependency Injection"
 permalink: /spring/ioc_di
 ---
+
 # 0. Введение
 
 ## Что это

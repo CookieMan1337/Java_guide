@@ -3,6 +3,7 @@ layout: page
 title: "Spring Data JPA: Углубленно в JDBC"
 permalink: /spring/jpa_deep
 ---
+
 # 1. Производительность загрузки и N+1
 
 *Зависимости и базовые настройки для всех подпунктов ниже*
