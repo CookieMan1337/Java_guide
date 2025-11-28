@@ -1,113 +1,127 @@
 ---
 layout: page
 title: "Spring + Docker/K8s, деплой приложения"
-permalink: /spring/observability
+permalink: /spring/deployment
 ---
+
+<!-- TOC -->
+* [0. Введение](#0-введение)
+  * [Что это](#что-это)
+  * [Зачем это](#зачем-это)
+  * [Где используется](#где-используется)
+  * [Какие виды бывают](#какие-виды-бывают)
+  * [Какие задачи и проблемы решает](#какие-задачи-и-проблемы-решает)
+* [1. Образ приложения: стратегии сборки](#1-образ-приложения-стратегии-сборки)
+  * [Подходы: Dockerfile multi-stage, Buildpacks (bootBuildImage), Jib. Когда что выбирать по скорости/кешированию/доступу к Docker](#подходы-dockerfile-multi-stage-buildpacks-bootbuildimage-jib-когда-что-выбирать-по-скоростикешированиюдоступу-к-docker)
+  * [Базовые образы: distro-full (e.g. eclipse-temurin) vs distroless/alpine. Компромиссы между размером, совместимостью и дебагом](#базовые-образы-distro-full-eg-eclipse-temurin-vs-distrolessalpine-компромиссы-между-размером-совместимостью-и-дебагом)
+  * [Слои: reproducible build, слой зависимостей vs слой приложения; как ускорять CI кэшами Gradle/Artifactory](#слои-reproducible-build-слой-зависимостей-vs-слой-приложения-как-ускорять-ci-кэшами-gradleartifactory)
+  * [Мультиархитектура: buildx и теги для amd64/arm64; политика тегов (semver, commit-sha, build-metadata)](#мультиархитектура-buildx-и-теги-для-amd64arm64-политика-тегов-semver-commit-sha-build-metadata)
+* [2. Продовый Dockerfile (best practices)](#2-продовый-dockerfile-best-practices)
+  * [Multi-stage: сборка артефакта, затем минимальный runtime. COPY только нужного](#multi-stage-сборка-артефакта-затем-минимальный-runtime-copy-только-нужного)
+  * [Безопасность: USER non-root, readOnlyRootFilesystem, drop capabilities; отсутствие shell/пакетного менеджера в runtime](#безопасность-user-non-root-readonlyrootfilesystem-drop-capabilities-отсутствие-shellпакетного-менеджера-в-runtime)
+  * [JVM-настройки по умолчанию для контейнеров: MaxRAMPercentage, GC (G1/ZGC), утилизация CPU квот](#jvm-настройки-по-умолчанию-для-контейнеров-maxrampercentage-gc-g1zgc-утилизация-cpu-квот)
+  * [Стартовый скрипт/entrypoint: exec-формат, корректная обработка сигналов; tini как опция](#стартовый-скриптentrypoint-exec-формат-корректная-обработка-сигналов-tini-как-опция)
+  * [HEALTHCHECK: ping actuator/ready; интервалы/таймауты без ложных тревог](#healthcheck-ping-actuatorready-интервалытаймауты-без-ложных-тревог)
+  * [Часовой пояс/локаль/SSL-сертификаты: копирование truststore/ca-bundle, контроль TZ через env](#часовой-пояслокальssl-сертификаты-копирование-truststoreca-bundle-контроль-tz-через-env)
+* [3. Конфигурация, секреты и профили](#3-конфигурация-секреты-и-профили)
+  * [Externalized config: environment, system properties, mounted files; profiles (dev/test/prod)](#externalized-config-environment-system-properties-mounted-files-profiles-devtestprod)
+  * [Secrets: файловые и env-секреты; шифрование конфигурации, ключи/сертификаты, ротация](#secrets-файловые-и-env-секреты-шифрование-конфигурации-ключисертификаты-ротация)
+  * [12-фактор: неизменяемый образ, параметры — извне; отдельные билды на «dev-фича» не допускаются](#12-фактор-неизменяемый-образ-параметры--извне-отдельные-билды-на-dev-фича-не-допускаются)
+  * [Проверка конфигов на старте: fail-fast, валидация значений, безопасные дефолты](#проверка-конфигов-на-старте-fail-fast-валидация-значений-безопасные-дефолты)
+* [4. Сеть, протоколы и прокси](#4-сеть-протоколы-и-прокси)
+  * [Порты и биндинг: `server.port`, host networking vs bridge; keep-alive/HTTP/2, gzip](#порты-и-биндинг-serverport-host-networking-vs-bridge-keep-alivehttp2-gzip)
+  * [Реверс-прокси/ingress: `X-Forwarded-*`, доверенные прокси и корректные ссылки/редиректы](#реверс-проксиingress-x-forwarded--доверенные-прокси-и-корректные-ссылкиредиректы)
+  * [TLS-терминация: где заканчивается шифрование (edge vs app), mTLS к внутренним зависимостям](#tls-терминация-где-заканчивается-шифрование-edge-vs-app-mtls-к-внутренним-зависимостям)
+  * [Ограничения: лимиты заголовков/тела, загрузка файлов, защита от slowloris](#ограничения-лимиты-заголовковтела-загрузка-файлов-защита-от-slowloris)
+* [5. Логи, метрики и трассировка в контейнерах](#5-логи-метрики-и-трассировка-в-контейнерах)
+  * [Логи в stdout/stderr, структурированные JSON; ротация лог-драйвером, а не приложением](#логи-в-stdoutstderr-структурированные-json-ротация-лог-драйвером-а-не-приложением)
+  * [Actuator/Observation/Micrometer: экспонирование метрик, `/actuator/health/prometheus/otel`](#actuatorobservationmicrometer-экспонирование-метрик-actuatorhealthprometheusotel)
+  * [Корреляция: traceId/spanId в MDC, интеграция с агентами и коллекторами; ресурсоёмкость и сэмплинг](#корреляция-traceidspanid-в-mdc-интеграция-с-агентами-и-коллекторами-ресурсоёмкость-и-сэмплинг)
+  * [Диагностика на проде: безопасное включение debug-логов и маскирование секретов](#диагностика-на-проде-безопасное-включение-debug-логов-и-маскирование-секретов)
+* [6. Жизненный цикл, здоровье и останов](#6-жизненный-цикл-здоровье-и-останов)
+  * [Liveness/Readiness/Startup: что именно проверять и какие статусы; зависимость от БД/кеша/очередей](#livenessreadinessstartup-что-именно-проверять-и-какие-статусы-зависимость-от-бдкешаочередей)
+  * [Graceful shutdown: Spring Boot graceful-period, обработка SIGTERM, preStop-хуки и дренирование трафика](#graceful-shutdown-spring-boot-graceful-period-обработка-sigterm-prestop-хуки-и-дренирование-трафика)
+  * [Инициализация: Liquibase/Flyway, прогрев кэшей/соединений; отдельные init-контейнеры/джобы](#инициализация-liquibaseflyway-прогрев-кэшейсоединений-отдельные-init-контейнерыджобы)
+  * [Стратегии перезапуска и защита от crashloop: экспоненциальные задержки, быстрая диагностика причин](#стратегии-перезапуска-и-защита-от-crashloop-экспоненциальные-задержки-быстрая-диагностика-причин)
+* [7. Ресурсы и производительность в контейнере](#7-ресурсы-и-производительность-в-контейнере)
+  * [Requests/limits и влияние на JVM: нитепулы, реакция на throttling; настройка parallelism](#requestslimits-и-влияние-на-jvm-нитепулы-реакция-на-throttling-настройка-parallelism)
+  * [Память: Xms/Xmx vs MaxRAMPercentage; off-heap (Netty, кеши), tmpfs и размер слоёв](#память-xmsxmx-vs-maxrampercentage-off-heap-netty-кеши-tmpfs-и-размер-слоёв)
+  * [Стартап/тёплый JIT: CDS/AOT/native-image/CRaC; выбор под профиль нагрузки](#стартаптёплый-jit-cdsaotnative-imagecrac-выбор-под-профиль-нагрузки)
+  * [IO/FD-лимиты: количество соединений, connection pools (HTTP/DB), таймауты и backpressure](#iofd-лимиты-количество-соединений-connection-pools-httpdb-таймауты-и-backpressure)
+* [8. Docker Compose: одиночный хост и тестовый прод](#8-docker-compose-одиночный-хост-и-тестовый-прод)
+  * [Сети/volumes: изоляция сервисов, зависимости (depends_on + healthcheck)](#сетиvolumes-изоляция-сервисов-зависимости-depends_on--healthcheck)
+  * [Переменные окружения и секреты: .env, override файлы, режимы restart](#переменные-окружения-и-секреты-env-override-файлы-режимы-restart)
+  * [Локальные зависимости: Postgres/Redis/Kafka; стратегия «максимально близко к прод»](#локальные-зависимости-postgresrediskafka-стратегия-максимально-близко-к-прод)
+  * [Makefile/скрипты: удобный билд/апдейты/миграции; экспорт логов и профили dev/test](#makefileскрипты-удобный-билдапдейтымиграции-экспорт-логов-и-профили-devtest)
+* [9. Kubernetes/Helm: деплой и операционка](#9-kuberneteshelm-деплой-и-операционка)
+  * [Deployment/Service/Ingress: стратегия обновлений (RollingUpdate), readiness-пробы и минимальный healthy-под](#deploymentserviceingress-стратегия-обновлений-rollingupdate-readiness-пробы-и-минимальный-healthy-под)
+  * [ConfigMap/Secret: монтирование, hot-reload конфигов; политика перезапуска после изменения](#configmapsecret-монтирование-hot-reload-конфигов-политика-перезапуска-после-изменения)
+  * [HPA/автоскейл: метрики CPU/RAM/кастомные; PodDisruptionBudget, restartPolicy, topology spread](#hpaавтоскейл-метрики-cpuramкастомные-poddisruptionbudget-restartpolicy-topology-spread)
+  * [Обновления без простоя: blue-green/canary; миграции БД как отдельные джобы; хранение артефактов Helm](#обновления-без-простоя-blue-greencanary-миграции-бд-как-отдельные-джобы-хранение-артефактов-helm)
+* [10. CI/CD, безопасность образов и продвижение релизов](#10-cicd-безопасность-образов-и-продвижение-релизов)
+  * [Pipeline: build → test → image → scan → sign → push → deploy; карантин/стадии promotion](#pipeline-build--test--image--scan--sign--push--deploy-карантинстадии-promotion)
+  * [SBOM/подписи/сканирование уязвимостей; политика базовых образов и патч-окно](#sbomподписисканирование-уязвимостей-политика-базовых-образов-и-патч-окно)
+  * [Контроль версий и откаты: иммутабельные теги, хранение прошлых чартов/манифестов, быстрый rollback](#контроль-версий-и-откаты-иммутабельные-теги-хранение-прошлых-чартовманифестов-быстрый-rollback)
+  * [Release-наблюдаемость: pre/post-deploy проверки SLO, dark-launch, feature-flags, circuit-breakers на периметре](#release-наблюдаемость-prepost-deploy-проверки-slo-dark-launch-feature-flags-circuit-breakers-на-периметре)
+<!-- TOC -->
 
 # 0. Введение
 
 ## Что это
 
-Контейнеризация — подход к упаковке приложения и его зависимостей в стандартизованный образ, который одинаково запускается на ноутбуке разработчика, в CI и в продакшне. Для Java-микросервисов это означает: один и тот же Spring Boot JAR или native-бинарь вместе с JVM/рутФС в образе Docker. Kubernetes (K8s) — система оркестрации контейнеров: она разворачивает, скейлит и лечит ваши Pod’ы, следит за здоровьем, подменяет конфиги и секреты. В современном Java-проекте эти две технологии образуют основу поставки: «собери образ → задеплой чартом/манифестами».
+Когда мы говорим «Spring + Docker/K8s», по сути речь о том, **как упаковать Spring-приложение в контейнер** и **как запускать множество таких контейнеров в оркестраторе**. Docker даёт формат образа и изолированный процесс — контейнер, а Kubernetes управляет жизненным циклом этих контейнеров: запускает, перезапускает, масштабирует, балансирует трафик. Для Spring Boot это особенно естественно: приложение уже умеет стартовать как самостоятельный `jar`, ему не нужен отдельный контейнер приложений.
 
-Контейнеры решают проблему «работает у меня» за счёт изоляции среды выполнения. В образ уже входит нужная версия JDK, нужные СА-сертификаты, timezone, системные библиотеки — вы перестаёте зависеть от того, как настроен сервер. Это критично для повторяемости и быстрого восстановления после инцидентов: вы всегда можете поднять ту же версию образа.
+Docker-образ в этом контексте — это **шаблон файловой системы + метаданные**, в котором лежит JDK/JRE, твой fat-jar или exploded-jar, нужные сертификаты, конфиги по умолчанию. Контейнер — запущенный экземпляр образа, у которого есть ресурсы (CPU, память), сетевые настройки и тома. Один и тот же образ может запускаться много раз, и это базис для масштабирования Spring-сервиса горизонтально.
 
-С Kubernetes мы получаем автоматическое перезапускание процессов при падении, скейлинг по метрикам, выкладки без простоя и «самоисцеление». Это особенно важно для сервисов с непредсказуемой нагрузкой (например, событийные системы на Kafka): платформа держит нужное число реплик и умеет аккуратно останавливать инстансы, дренируя трафик.
+Kubernetes добавляет поверх этого идею **кластера**: множество узлов (node), на которых scheduler распределяет Pod’ы. Pod — это минимальная сущность, где живёт контейнер с твоим Spring Boot приложением (и, возможно, sidecar’ы: агент трейсинга, сервис-меш, лог-агрегатор). Deployment описывает, сколько реплик должно быть, как их обновлять, какие стратегии рестарта использовать. Service и Ingress управляют сетевым доступом к этим Pod’ам.
 
-В Java-мире контейнеризация сочетается с инструментами сборки артефактов: Dockerfile (multi-stage), Cloud Native Buildpacks (Gradle `bootBuildImage`) и Jib. Каждый из них формирует OCI-совместимый образ, но с разными компромиссами по скорости, требованиям к окружению и прозрачности слоёв.
+Для Spring-разработчика эта связка означает смену парадигмы: вместо «запусти `java -jar` на сервере X» ты думаешь «собери образ, запушь в registry, обнови Deployment». Конфигурация, секреты, ресурсы, сети, health-check’и — всё это описывается декларативно в YAML-манифестах или Helm-чартах, а не правится руками на живом сервере. Приложение становится **неизменяемым артефактом**, а среда — тем, что задаётся снаружи.
 
-Идея «иммутабельного артефакта» («immutable artifact») означает, что образ после сборки не меняется: вы не «правите» файлы на сервере, а выпускаете новый образ и выкатываете его. В связке с GitOps/Helm это даёт надёжную трассируемость — можно всегда сказать, какой коммит/чарт/образ сейчас в проде.
+Важно понимать, что **Spring Boot уже подготовлен для контейнеризации**: у него есть встроенный HTTP-сервер (Tomcat/Jetty/Undertow/Netty), Actuator для health-check’ов и метрик, гибкая система конфигов. Это снимает необходимость в толстых базовых образах с Tomcat/WildFly и упрощает Dockerfile — в runtime-образ достаточно положить JDK и `jar`/`war`. Остальное — дело правильных параметров JVM и настройки окружения.
 
-**Код: минимальное Spring Boot приложение**
-Java:
+В этом же наборе «что это» — типичный **жизненный цикл деплоя**: разработчик пушит код → CI собирает `jar`, прогоняет тесты → CI собирает Docker-образ (или buildpack’ом, или Jib’ом), пушит в Docker Registry → CD/Helm обновляет манифесты в Kubernetes → кластер подтягивает новый образ и постепенно перезапускает Pod’ы. Всё, что раньше было «зайдём по SSH и перезапустим сервис», превращается в прозрачный pipeline.
+
+Есть ещё один важный аспект: **единство среды** от разработчика до продакшна. Тот же самый образ может быть запущен в Docker Compose у разработчика, в minikube/kind на тестовом стенде и в настоящем Kubernetes кластере в проде. Разница только в внешних зависимостях и конфиге (профили, адреса БД, лимиты ресурсов), а не в том, «как именно установлен Java» или «какой версии libc на сервере».
+
+При этом Spring + Docker/K8s — это не просто «про упаковку», а **про архитектуру эксплуатации**: как приложение ведёт себя при рестартах, как оно инициализирует схему БД, как переживает временную недоступность зависимостей, как отключается при SIGTERM и не роняет запросы. Всё это нужно учитывать уже на уровне кода и конфигурации, если ты хочешь, чтобы деплой в Kubernetes был не «игрушкой», а нормальной прод-историей.
+
+Наконец, важно осознать, что Docker и Kubernetes — не магия, а набор довольно простых примитивов: процесс в cgroup/namespace’ах, iptables для сетей, kubelet, который следит за Pod’ами, и API-сервер, который хранит декларативное состояние кластера. Spring-приложение внутри контейнера остаётся обычным JVM-процессом, просто его окружение и жизненный цикл теперь контролируются платформой, а не руками администратора.
+
+Итого: «Spring + Docker/K8s» — это про **стандартизированный способ запускать, обновлять и наблюдать** Spring-сервисы, используя контейнеры и оркестратор. От знаний Java/Spring ты добавляешь ещё один слой понимания — упаковки и деплоя. Эта глава как раз про то, как собрать «правильный» образ, подключить конфиги и секреты, настроить health-check’и, ресурсы, логи, метрики, а потом задеплоить всё это в Docker/Kubernetes.
 
 ```java
-package com.example.demo;
+package com.example.springdocker;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.web.bind.annotation.*;
 
+/**
+ * Простейшее Spring Boot приложение, которое дальше будет упаковано
+ * в Docker-образ и запущено в Kubernetes.
+ */
 @SpringBootApplication
-public class DemoApplication {
-  public static void main(String[] args) {
-    SpringApplication.run(DemoApplication.class, args);
-  }
-}
+public class SpringDockerApplication {
 
-@RestController
-@RequestMapping("/api")
-class HelloController {
-  @GetMapping("/hello")
-  public String hello() {
-    return "Hello, containers!";
-  }
+    public static void main(String[] args) {
+        SpringApplication.run(SpringDockerApplication.class, args);
+    }
 }
 ```
 
-Kotlin:
-
 ```kotlin
-package com.example.demo
+package com.example.springdocker
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RestController
 
+/**
+ * Простейшее Spring Boot приложение для упаковки в контейнер.
+ */
 @SpringBootApplication
-class DemoApplication
+class SpringDockerApplication
 
 fun main(args: Array<String>) {
-    runApplication<DemoApplication>(*args)
-}
-
-@RestController
-@RequestMapping("/api")
-class HelloController {
-    @GetMapping("/hello")
-    fun hello(): String = "Hello, containers!"
-}
-```
-
-Gradle Groovy:
-
-```groovy
-plugins {
-  id 'java'
-  id 'org.springframework.boot' version '3.3.5'
-  id 'io.spring.dependency-management' version '1.1.6'
-}
-
-java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
-
-repositories { mavenCentral() }
-
-dependencies {
-  implementation 'org.springframework.boot:spring-boot-starter-web'
-  implementation 'org.springframework.boot:spring-boot-starter-actuator'
-  testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-```
-
-Gradle Kotlin:
-
-```kotlin
-plugins {
-    java
-    id("org.springframework.boot") version "3.3.5"
-    id("io.spring.dependency-management") version "1.1.6"
-}
-
-java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
-
-repositories { mavenCentral() }
-
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-actuator")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    runApplication<SpringDockerApplication>(*args)
 }
 ```
 
@@ -115,202 +129,259 @@ dependencies {
 
 ## Зачем это
 
-Главная причина — **повторяемость**. Один и тот же образ гарантирует одинаковую среду: шрифты/локаль, OpenJDK, CA-bundle. Ошибки «на проде другая JDK» исчезают. Контейнер упаковывает «всё необходимое», а инфраструктура занимается только запуском.
+Первый мотив — **повторяемость окружения**. Когда приложение живёт на «питом» сервере, который кто-то когда-то настраивал руками, каждый новый деплой — лотерея: версии JDK, библиотек, системных пакетов, настройки firewall — всё может отличаться. Контейнеризация фиксирует среду: образ описан Dockerfile’ом, изменения проходят через Git/CI, а не через «я руками поправил на сервере». Это резко снижает число «мистических багов», которые воспроизводятся только на конкретной машине.
 
-Вторая причина — **быстрое масштабирование**. Вместо медленной настройки VM вы стартуете ещё N Pod’ов. Kubernetes сам распределит их по нодам, учтёт лимиты CPU/памяти и запускает readiness-пробы, чтобы не слать трафик в холодные инстансы. Для событийной нагрузки можно динамически менять число потребителей.
+Второй мотив — **упрощение масштабирования**. В мире виртуалок добавить ещё один инстанс приложения — это завести новую VM, установить туда JDK, деплоить артефакт, подключить к балансировщику. В мире контейнеров Kubernetes просто создаёт новые Pod’ы из того же образа и распределяет их по узлам. Для Spring-разработчика это означает, что приложение должно быть stateless и готовым к тому, что экземпляров будет N, и они будут появляться/исчезать.
 
-Третья — **изоляция и безопасность**. Непривилегированный пользователь внутри контейнера, ограниченные capabilities, readOnly RootFS — это минимизирует ущерб даже при уязвимости в приложении. Плюс легко применять подписи образов и политику «только доверенные реестры».
+Третий мотив — **управление жизненным циклом**. Kubernetes умеет делать rolling update, следить за readiness/liveness, перезапускать контейнеры при падении, дренировать трафик перед остановкой. Вместе с правильно настроенным Spring Boot (graceful shutdown, корректные health-check’и) это даёт возможность выкатывать новые версии без простоя, откатываться назад, обновлять конфиги без «ночных релизов».
 
-Четвёртая — **скорость поставки**. CI конвейер «build → test → image → scan → sign → push → deploy» становится стандартом. Появляется «single source of truth» — тэг образа. Helm/ArgoCD/GitOps накатывают один артефакт на все окружения.
+Четвёртый мотив — **изоляция и безопасность**. Контейнеры позволяют ограничить права процесса (user non-root, capabilities), ограничить доступ к файловой системе, сетям, окружению. В сочетании с Kubernetes NetworkPolicies можно сделать так, чтобы Spring-сервис не имел доступа никуда, кроме нужной БД и нужного брокера. Это лучше, чем «Java-процесс с root-правами на общем сервере», и отвечает современным требованиям к security.
 
-Пятая — **простая операционка**. Логи — в stdout/stderr; метрики — по HTTP/Prometheus; трассировка — через Otel-агенты. Никаких rsyslog/cron на инстансах. Всё это удобно агрегировать централизованными инструментами.
+Пятый мотив — **стандартизация деплоя**. В больших компаниях хочется, чтобы все сервисы деплоились одинаково: одинаковая структура образов, одинаковые лейблы, одинаковые health-check’и, одинаковые механизмы rollout/rollback. Spring + Docker/K8s даёт платформенной команде такой стандарт: «все Java-сервисы собираются так-то, имеют Actuator, отдают /actuator/health и метрики, слушают порт из `SERVER_PORT`».
 
-**Код: пример контроллера и actuator-пинга**
-Java:
+Шестой мотив — **наблюдаемость и поддержка SLO**. Контейнерное окружение облегчает сбор логов, метрик и трейсов: можно поставить sidecar/agent, автоматически скрейпить `/actuator/prometheus`, подключить OTel Collector. Для Spring-приложений достаточно включить Micrometer/Actuator — остальное заберёт платформа. Это ключ к тому, чтобы иметь реальные SLI/SLO и автоматические алёрты, а не «ждать пока позвонит бизнес».
+
+Седьмой мотив — **быстрые ephemeral-окружения**. Благодаря контейнеризации можно поднимать временные стенды под feature-ветку: CI собирает образ, Helm/ArgoCD поднимает namespace с нужным набором сервисов, тесты/QA гоняют его и потом удаляют. Для Spring-разработчика это значит, что он может проверять интеграции «как в проде», не поднимая всё вручную локально.
+
+Восьмой мотив — **портируемость между облаками и on-prem**. Если Spring-приложение запаковано в контейнер и деплоится через Kubernetes, перенос из одного облака в другое — вопрос перенастройки кластеров, storage, ingress, но не вопрос перепаковки приложения. Образ и манифесты остаются теми же. Это важный аргумент и с точки зрения бизнеса (vendor lock-in), и с точки зрения архитектуры.
+
+Девятый мотив — **управляемая эволюция инфраструктуры**. Можно обновлять базовые образы (JDK, security-патчи), не трогая код приложения: достаточно перестроить образ на новом base image. Можно обновить версию Kubernetes/Ingress/Service Mesh — и Spring-приложения просто продолжат работать, если соблюдены базовые контракты (HTTP, порты, health-check’и). Это отделяет скорость эволюции кода от скорости эволюции инфраструктуры.
+
+Десятый мотив — **снижение «bus factor» по эксплуатации**. Когда деплой описан как код (Dockerfile + Helm), любой инженер, знакомый с этим стеком, может разобраться, как сервис запускается и как его чинить. Нет «волшебных» Bash-скриптов и неписаных правил. Это делает сопровождение Spring-сервисов более предсказуемым и менее завязанным на конкретных людей.
 
 ```java
-package com.example.demo;
+package com.example.springdocker.info;
 
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-@Component
-class AppHealth implements HealthIndicator {
-  @Override public Health health() {
-    return Health.up().withDetail("status", "ok").build();
-  }
-}
+import java.util.Map;
 
+/**
+ * Простой endpoint, который показывает, из какого окружения запущен контейнер.
+ * Значения пробрасываются через переменные окружения в Kubernetes/Docker.
+ */
 @RestController
-class PingController {
-  @GetMapping("/ping")
-  public String ping() { return "pong"; }
+public class InfoController {
+
+    @Value("${app.environment:local}")
+    private String environment;
+
+    @Value("${HOSTNAME:unknown}")
+    private String hostname;
+
+    @GetMapping("/api/env-info")
+    public Map<String, String> envInfo() {
+        return Map.of(
+                "environment", environment,
+                "hostname", hostname
+        );
+    }
 }
 ```
 
-Kotlin:
-
 ```kotlin
-package com.example.demo
+package com.example.springdocker.info
 
-import org.springframework.boot.actuate.health.Health
-import org.springframework.boot.actuate.health.HealthIndicator
-import org.springframework.stereotype.Component
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
-@Component
-class AppHealth : HealthIndicator {
-    override fun health(): Health = Health.up().withDetail("status", "ok").build()
-}
-
+/**
+ * Endpoint, показывающий базовую информацию об окружении контейнера.
+ */
 @RestController
-class PingController {
-    @GetMapping("/ping")
-    fun ping(): String = "pong"
+class InfoController(
+
+    @Value("\${app.environment:local}")
+    private val environment: String,
+
+    @Value("\${HOSTNAME:unknown}")
+    private val hostname: String
+) {
+
+    @GetMapping("/api/env-info")
+    fun envInfo(): Map<String, String> =
+        mapOf(
+            "environment" to environment,
+            "hostname" to hostname
+        )
 }
-```
-
-`application.yml`:
-
-```yaml
-server:
-  port: 8080
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info,prometheus
-  endpoint:
-    health:
-      probes:
-        enabled: true
 ```
 
 ---
 
 ## Где используется
 
-Контейнеры применяются на всех стадиях: локальная разработка (Docker Compose для Postgres/Kafka), интеграционное тестирование (Testcontainers), стенды dev/test/stage (Helm-релизы), продакшн (K8s кластеры on-prem/в облаке). Один и тот же образ катится по всем средам.
+Связка Spring + Docker/K8s естественно ложится на **микросервисную архитектуру**. Каждый микросервис — это отдельное Spring Boot приложение, упакованное в контейнер, со своим lifecycle, конфигами, метриками и логами. Kubernetes позволяет запускать десятки и сотни таких сервисов в одном кластере, управлять их масштабированием, сетевыми политиками и обновлениями. Здесь контейнер — базовая единица деплоя, а Spring — стандартный фреймворк для сервисной логики.
 
-В банкинге/финтехе контейнеризация стандартизует требования безопасности: non-root, скан уязвимостей, подписи (Cosign/Sigstore), политика обновления базовых образов. Это реально упрощает прохождение аудитов и ускоряет внедрение патчей.
+Однако это не только про микросервисы. **Монолиты** тоже прекрасно живут в контейнерах и Kubernetes. Большой Spring Boot монолит можно завернуть в один образ и деплоить как Deployment с несколькими репликами. Это даёт те же плюсы: health-check’и, rolling update, HPA, observability. Многие компании так и делают: сначала монолит в Docker/K8s, затем постепенное выделение частей в отдельные сервисы по мере необходимости.
 
-В микросервисных архитектурах каждый сервис — отдельный образ, с собственным lifecycle. Это позволяет выкатывать фичи независимо, масштабировать «тяжёлые» компоненты отдельно и гибко обновлять только нужные части системы.
+Ещё один важный сценарий — **временные окружения для тестирования и разработки**. Docker Compose позволяет локально поднять Spring-приложение + Postgres/Redis/Kafka без ручной установки. Kubernetes (через kind/minikube или отдельный dev-кластер) позволяет поднимать namespaces под конкретные feature-ветки. Для Spring-разработчика это означает, что он может отлаживать интеграции, не имея доступа к прод-кластеру, но работая в максимально похожей среде.
 
-В монолитах контейнеры тоже полезны: «упаковали один большой сервис» и получили такие же преимущества: воспроизводимость, простое масштабирование, проверяемые health-пробы, единый способ логирования/метрик.
+Spring + Docker/K8s активно используются в **облаках (AWS/GCP/Azure)**, где Kubernetes предоставляется как managed-сервис (EKS/GKE/AKS). Там деплой Spring-приложения обычно означает: собрать образ, запушить в ECR/GCR/ACR, обновить Helm-чарт/ArgoCD/Flux. Но ровно тот же образ и манифесты могут быть использованы и в on-prem-кластере (Rancher, OpenShift, self-hosted kubeadm).
 
-Data-площадки и ETL: контейнеры удобно используют для батч-джобов и init-контейнеров (миграции Liquibase/Flyway), где важны изоляция зависимостей (psql/jdbc-драйверы) и управляемые ресурсы.
+Отдельная категория — **data-heavy и stream-приложения**: Spring + Kafka, Spring Batch, Spring Cloud Stream. Они тоже часто живут в Kubernetes: Consumer группы масштабируются через количество Pod’ов, batch-джобы запускаются как Kubernetes Job/CronJob, а тяжёлые операции вынесены в отдельные worker-деплойменты. Контейнеризация помогает чётко отделять разные типы нагрузки и управлять ресурсами.
 
-**Код: конфиг подключения к Postgres (чтобы сразу проверить на локальном Compose)**
-Java:
+Использование Docker/K8s для Spring-приложений критично и для **SRE/DevOps-команд**. Они получают унифицированный объект управления: «сервис = Deployment + Service + конфиги + секреты», и не важно, написан он на Java, Go или Node.js. Для Spring-мира это означает, что JVM-специфика (heap, GC, нитепулы) должна быть согласована с общими практиками по ресурсам и observability, но всё это происходит на уже знакомом им уровне.
+
+С точки зрения **безопасности** контейнерная среда позволяет внедрять единые политики: сканирование образов на уязвимости, использование разрешённого списка базовых образов, мандатный non-root user, Seccomp/AppArmor, network policies. Spring-приложение становится просто одним из потребителей этих политик. Это лучше, чем поддерживать отдельные security-подходы для «java на bare-metal» и «java в контейнере».
+
+Для **обучения и внутренних платформ** Spring + Docker/K8s тоже важны. Внутренние платформенные команды часто предоставляют шаблоны репозиториев: Spring Boot skeleton + готовый Dockerfile + базовый Helm-чарт. Новому разработчику достаточно склонировать шаблон, добавить бизнес-логику и сервис автоматически окажется «вписанным» в платформу деплоя. Это снижает порог входа и ускоряет delivery.
+
+Наконец, связка активно используется в **инфраструктурных сервисах**: авторизация, API-шлюзы, отчётность, интеграция с внешними системами. Часто это Spring-приложения, работающие как BFF (Backend for Frontend) для мобильных/SPA клиентов, или как адаптеры к старым SOAP/FTP/DB системам. Для них важны HPA, zero-downtime релизы, регламенты безопасности — всё это проще реализовать в Kubernetes.
 
 ```java
-package com.example.demo;
+package com.example.springdocker.profile;
 
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import javax.sql.DataSource;
-import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Service;
 
-@Configuration
-public class DbConfig {
-  @Bean
-  public DataSource dataSource() {
-    HikariDataSource ds = new HikariDataSource();
-    ds.setJdbcUrl(System.getenv().getOrDefault("DB_URL", "jdbc:postgresql://localhost:5432/app"));
-    ds.setUsername(System.getenv().getOrDefault("DB_USER", "app"));
-    ds.setPassword(System.getenv().getOrDefault("DB_PASSWORD", "app"));
-    return ds;
-  }
+/**
+ * Пример разных реализаций в зависимости от окружения (local/k8s),
+ * что иллюстрирует использование профилей в разных средах деплоя.
+ */
+public interface EnvironmentService {
+    String describe();
+}
+
+@Service
+@Profile("local")
+class LocalEnvironmentService implements EnvironmentService {
+
+    @Override
+    public String describe() {
+        return "Running in local/dev environment (Docker Compose, maybe no Kubernetes)";
+    }
+}
+
+@Service
+@Profile("k8s")
+class KubernetesEnvironmentService implements EnvironmentService {
+
+    @Override
+    public String describe() {
+        return "Running in Kubernetes cluster (prod/stage)";
+    }
 }
 ```
-
-Kotlin:
 
 ```kotlin
-package com.example.demo
+package com.example.springdocker.profile
 
-import com.zaxxer.hikari.HikariDataSource
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-import javax.sql.DataSource
+import org.springframework.context.annotation.Profile
+import org.springframework.stereotype.Service
 
-@Configuration
-class DbConfig {
-    @Bean
-    fun dataSource(): DataSource =
-        HikariDataSource().apply {
-            jdbcUrl = System.getenv("DB_URL") ?: "jdbc:postgresql://localhost:5432/app"
-            username = System.getenv("DB_USER") ?: "app"
-            password = System.getenv("DB_PASSWORD") ?: "app"
-        }
+interface EnvironmentService {
+    fun describe(): String
 }
-```
 
-`docker-compose.yml` (фрагмент):
+@Service
+@Profile("local")
+class LocalEnvironmentService : EnvironmentService {
+    override fun describe(): String =
+        "Running in local/dev environment (Docker Compose, maybe no Kubernetes)"
+}
 
-```yaml
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
-    ports: ["5432:5432"]
+@Service
+@Profile("k8s")
+class KubernetesEnvironmentService : EnvironmentService {
+    override fun describe(): String =
+        "Running in Kubernetes cluster (prod/stage)"
+}
 ```
 
 ---
 
 ## Какие виды бывают
 
-Варианты сборки образов: ручной Dockerfile (полный контроль), Buildpacks (Gradle `bootBuildImage`, без Dockerfile), Jib (сборка образа без Docker-демона). Варианты базовых образов: «толстые» дистрибутивные (Ubuntu/Debian с shell/менеджером пакетов), облегчённые Alpine (musl) и **distroless** (только рантайм-файлы, без shell). Варианты артефактов: «fat jar», **layered jar**, native-бинарь.
+Если говорить о «видах» деплоя Spring-приложений в контейнерах, можно выделить несколько измерений. Первое — **где крутится контейнер**: локально (Docker/Docker Compose), в single-node окружении (kind/minikube/Minikube Docker Desktop), в полноценном Kubernetes-кластере (prod/stage/dev). Код приложения остаётся тем же, но манифесты, конфиги и интеграция с окружением усложняются по мере движения вправо.
 
-Варианты деплоя: одиночный хост/Compose, Kubernetes (Helm/классические манифесты), serverless-контейнеры (Cloud Run/Azure Container Apps). В корпоративной среде почти всегда K8s + Helm.
+Второе измерение — **стратегия сборки образа**. Можно писать Dockerfile и собирать образ через `docker build` (классика), можно использовать buildpacks (Gradle `bootBuildImage`), можно Jib (Maven/Gradle плагин, собирающий образ без Docker-демона). Все три варианта дают Docker-образ, но отличаются по скорости, кэшированию, требованию Docker-демона. В продакшне часто комбинируют: для CI выбор зависит от того, есть ли в runner’ах Docker и какие политики безопасности.
 
-Есть варианты упаковки конфигов/секретов: env-переменные, монтируемые файлы (ConfigMap/Secret), внешние vault’ы (HashiCorp Vault, AWS Secrets Manager). Подход зависит от политики безопасности и требований к ротации.
+Третье измерение — **базовые образы**: «толстые» дистрибутивы (например, `eclipse-temurin:17-jdk`) против «тонких» (alpine) и distroless (минимальный runtime без shell). Толстые образы проще для отладки (можно зайти в контейнер и поставить `curl`, `top`), но они тяжелее и содержат больше потенциальной поверхности для атак. Distroless/Alpine дают маленький размер и меньшую поверхность атаки, но требуют более аккуратной настройки и сложнее в дебаге.
 
-Набор health-проб: liveness/readiness/startup — это не один «/health», а разноцелевые проверки. И, наконец, варианты выкладок: `RollingUpdate`, blue-green, canary.
+Четвёртое измерение — **модель деплоя**: «Docker bare» (когда app стартует простой командой `docker run` и оркестрации почти нет), Docker Compose (простая оркестрация на одном хосте), Kubernetes (полноценный оркестратор), а иногда — PaaS вроде Cloud Run/Heroku, где Docker/Knative скрыты. Для Spring-разработчика Kubernetes даёт максимум контроля, но и максимум сложности, поэтому нередко путь идёт от Compose к K8s.
 
-**Код: Gradle Buildpacks и Jib**
-Groovy:
+Пятое измерение — **вариант интеграции с внешними компонентами**: конфиги и секреты могут приходить через env, монтироваться как файлы, тянуться из Vault; метрики/трейсы — собираться sidecar’ом, агентом, напрямую из приложения; миграции БД — выполняться при старте приложения или отдельным init-контейнером/Job’ом. Это тоже «виды» деплоя, и их выбор влияет на архитектуру и код.
 
-```groovy
-tasks.named('bootBuildImage') {
-  imageName = "registry.example.com/demo:${version}"
-  environment = ["BP_JVM_VERSION":"17"]
-}
+Шестое измерение — **уровень «обёртки» вокруг Kubernetes**. Иногда ты работаешь с «чистым» k8s (kubectl + Helm), иногда поверх него есть GitOps (ArgoCD/Flux), иногда — внутренняя платформа (PaaS), которая скрывает YAML и предлагает «лишь» форму: название сервиса, ресурсы, переменные окружения. В последнем случае Docker/K8s остаются важными концептуально, но в повседневной практике ты взаимодействуешь с ними через абстракции.
 
-plugins {
-  id 'com.google.cloud.tools.jib' version '3.4.3'
-}
-jib {
-  to { image = "registry.example.com/demo:${version}" }
-  container {
-    jvmFlags = ['-XX:MaxRAMPercentage=75.0','-XX:+UseG1GC']
-    ports = ['8080']
-  }
+Седьмой вид — **степень автоматизации CI/CD**. Начиная от «мы руками собираем образ на ноутбуке и пушим в registry» до полноценного pipeline: build → тесты → image scan → deploy в канару → автоматические post-deploy проверки. Чем выше автоматизация, тем больше требований к стабильности Dockerfile и манифестов: они становятся частью контрактов pipeline, а не разовым экспериментом.
+
+Восьмой вид — **подход к управлению зависимостями в контейнере**. Можно заполнять образ средствами ОС (apt/yum + JDK), можно использовать готовые базовые образы с Java, можно полностью положиться на buildpack’и. Для Spring Boot всё чаще идут по пути «официальные базовые образы + buildpacks», чтобы меньше думать о системных деталях и больше — о JVM и приложении.
+
+Девятый вид — **подход к многоархитектурным образам**: когда нужны и `amd64`, и `arm64` (например, для локальной разработки на M1/M2 и прод-кластеров на x86). Тогда подключается `docker buildx` и multi-arch манифесты. В Spring-мире это не меняет код, но требует аккуратности в выборе базовых образов и библиотек, которые должны быть доступны на обеих архитектурах.
+
+Десятый вид — **уровень требований по безопасности и комплаенсу**. От «образ собрали и выкатили» до «образ сканируется, подписывается, деплоится только через доверенный registry, в кластере работают admission-контроллеры, enforcing policy по non-root, seccomp, minimal capabilities». Spring-приложение должно быть готово работать внутри таких ограничений: не писать во всю файловую систему, не требовать root, корректно работать с tmpfs.
+
+```java
+package com.example.springdocker.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+/**
+ * Пример конфигурации, которая будет приходить извне (env/ConfigMap/Secret)
+ * для разных "видов" деплоя (compose/k8s, dev/prod).
+ */
+@Component
+@ConfigurationProperties(prefix = "app")
+public class AppDeploymentProperties {
+
+    /**
+     * Название окружения (dev, stage, prod).
+     */
+    private String environment = "dev";
+
+    /**
+     * Включать ли продовый режим логирования/метрик.
+     */
+    private boolean productionMode;
+
+    // getters/setters
+
+    public String getEnvironment() {
+        return environment;
+    }
+
+    public void setEnvironment(String environment) {
+        this.environment = environment;
+    }
+
+    public boolean isProductionMode() {
+        return productionMode;
+    }
+
+    public void setProductionMode(boolean productionMode) {
+        this.productionMode = productionMode;
+    }
 }
 ```
 
-Kotlin:
-
 ```kotlin
-tasks.named<org.springframework.boot.gradle.tasks.bundling.BootBuildImage>("bootBuildImage") {
-    imageName.set("registry.example.com/demo:${project.version}")
-    environment.set(mapOf("BP_JVM_VERSION" to "17"))
-}
+package com.example.springdocker.config
 
-plugins { id("com.google.cloud.tools.jib") version "3.4.3" }
-jib {
-    to { image = "registry.example.com/demo:${project.version}" }
-    container {
-        jvmFlags = listOf("-XX:MaxRAMPercentage=75.0", "-XX:+UseG1GC")
-        ports = listOf("8080")
-    }
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.stereotype.Component
+
+/**
+ * Конфигурация, иллюстрирующая разные варианты деплоя приложения.
+ */
+@Component
+@ConfigurationProperties(prefix = "app")
+class AppDeploymentProperties {
+
+    /**
+     * Название окружения (dev, stage, prod).
+     */
+    var environment: String = "dev"
+
+    /**
+     * Флаг "продового режима" для дополнительной настройки.
+     */
+    var productionMode: Boolean = false
 }
 ```
 
@@ -318,883 +389,1565 @@ jib {
 
 ## Какие задачи и проблемы решает
 
-Контейнеры и K8s закрывают боль совместимости (разные JDK/сертификаты/локали), обеспечивают управление ресурсами (CPU/память/FD-лимиты), дают стандартизованную наблюдаемость (логи/метрики/трейсинг) и безопасный жизненный цикл (graceful shutdown, пробы, перезапуски).
+Первая крупная задача, которую решают Spring + Docker/K8s, — **управление сложностью инфраструктуры**. Когда сервисов десятки и сотни, ручной деплой, ручное управление версиями JDK, конфигами и зависимостями превращается в кошмар. Контейнеризация и оркестрация делают инфраструктуру *декларативной*: всё описано в YAML и Dockerfile, хранится в Git, меняется через pull-requests. Spring-приложение вписывается в эту модель, если оно следует 12-факторным принципам.
 
-Они помогают выстраивать **12-факторную конфигурацию**: неизменяемые образы и параметры «снаружи». Это дисциплина — но именно она позволяет раскатывать десятки сервисов без дрейфа окружений.
+Вторая задача — **масштабирование под нагрузкой**. Kubernetes умеет автоматически увеличивать количество Pod’ов по CPU/RAM/кастомным метрикам (HPA). Для Spring-приложения это значит: если оно stateless и использует внешние БД/кэши, то горизонтальное масштабирование — вопрос минут. В мире «jar на VM» всё это требует ручного вмешательства и часто приводит к over-provisioning: держим с запасом, потому что сложно масштабировать быстро.
 
-С безопасностью тоже проще: централизованный скан образов, политика базовых образов и регулярные патчи, отказ от root, ограничение capabilities, read-only root FS. Добавьте подписи артефактов и политику admission-контроллеров — и вы серьёзно повышаете надёжность контура.
+Третья задача — **надёжность и самовосстановление**. Контейнер может упасть, node может уйти в reboot, но Deployment и ReplicaSet гарантируют, что нужное количество реплик будет восстановлено. Liveness/readiness-пробы и стратеги перезапуска позволяют автоматически изолировать «битые» экземпляры. Spring Boot, в свою очередь, должен правильно реагировать на сигналы, корректно инициализировать ресурсы и не «умирать» тихо с зависшими потоками.
 
-Отдельная задача — **инициализация**: миграции БД, прогрев кэшей/соединений. Контейнеры дают init-контейнеры/Job’ы и чёткую последовательность запуска.
+Четвёртая задача — **ускорение delivery и уменьшение lead time**. CI/CD pipeline, который оперирует Docker-образами и Helm-чартами, позволяет выпускать новые версии Spring-сервиса хоть несколько раз в день. Нет нужды координировать сложные ручные шаги, время релиза уменьшается, а риск отката снижается благодаря иммутабельности образов и сохранённым манифестам предыдущих версий.
 
-И, наконец, **быстрые откаты**. Если релиз не удался, вы просто переключаете тэг образа/версии чарта, не откручивая вручную изменения на серверах.
+Пятая задача — **управление конфигурациями и секретами**. В Kubernetes ConfigMap и Secret дают централизованный механизм хранения конфигурации. Spring Boot умеет читать из env, файлов, volume-mount’ов, интегрироваться с Vault. Задача «как безопасно хранить пароли, токены, ключи» решается не через .properties в репозитории, а через секреты, шифрование, ротацию и политики доступа.
 
-**Код: настройка health-проб и метрик**
-Java:
+Шестая задача — **наблюдаемость и эксплуатация по SLO**. Когда приложение живёт в контейнере, сбор логов, метрик, трейсинга становится унифицированным. Платформа может навесить sidecar’ы, агентов, Prometheus Operator, OTel Collector. Spring Boot со своей стороны отдаёт здравые сигналы: health, metrics, traces, логирует с traceId. Это позволяет строить SLO типа «99.9% запросов завершились успешно за N мс» и реально следить за ними.
+
+Седьмая задача — **управление зависимостями и миграциями**. Через init-контейнеры и Job’ы можно выполнять миграции БД (Flyway/Liquibase), прогрев кэшей, подготовку схем/индексов до старта приложения. Это дисциплинирует архитектуру: вместо того чтобы класть скрипты «куда-то на сервер», они становятся частью контейнерного пайплайна и управляются как код.
+
+Восьмая задача — **соблюдение требований безопасности и комплаенса**. Образ можно сканировать, подписывать, проверять политиками admission-контроллера (например, запрещать root, требовать определённые лейблы). Kubernetes позволяет ограничить сети, ресурсы, доступ к секретам. Spring-приложение становится потребителем этих политик, и важно, чтобы оно не требовало нарушать их (например, не пыталось писать в `/etc` или запускать shell).
+
+Девятая задача — **поддержка разных окружений и стратегий релиза**: blue-green, canary, dark-launch. В Kubernetes легко поднять две версии Spring-сервиса параллельно и постепенно переключать трафик через Ingress/Service Mesh. Это снижает риск крупных релизов и позволяет тестировать новые версии на небольшой доле пользователей. Spring-код при этом должен быть обратно совместим и уметь жить рядом со старой версией (например, не ломать схему БД).
+
+Десятая задача — **снижение операционных ручных ошибок**. Чем меньше «ручных» SSH/`scp`/`systemctl restart`, тем меньше вероятность, что кто-то случайно запустит неправильную версию, затрёт конфиг или забудет обновить сертификат. Docker/K8s заставляют формализовать все шаги: если образ собран и манифест задеплоен, всё повторяемо. Для Spring-разработчика это означает, что ошибки смещаются из «ops» в «design/code», где их проще тестировать и ревьюить.
 
 ```java
-package com.example.demo;
+package com.example.springdocker.lifecycle;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import jakarta.annotation.PostConstruct;
-import org.springframework.context.annotation.Configuration;
+import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
-@Configuration
-class MetricsConfig {
-  private final MeterRegistry registry;
-  MetricsConfig(MeterRegistry registry) { this.registry = registry; }
+/**
+ * Пример хука на graceful shutdown: полезно в Kubernetes,
+ * чтобы корректно завершать обработку, пока Pod выводят из сервиса.
+ */
+@Component
+public class GracefulShutdownHook {
 
-  @PostConstruct
-  void init() {
-    registry.counter("app.start.count").increment();
-  }
+    private static final Logger log = LoggerFactory.getLogger(GracefulShutdownHook.class);
+
+    @PreDestroy
+    public void onShutdown() {
+        log.info("Received shutdown signal, starting graceful cleanup...");
+        // Здесь можно аккуратно закрыть ресурсы, остановить воркеры и т.д.
+    }
 }
 ```
-
-Kotlin:
 
 ```kotlin
-package com.example.demo
+package com.example.springdocker.lifecycle
 
-import io.micrometer.core.instrument.MeterRegistry
-import jakarta.annotation.PostConstruct
-import org.springframework.context.annotation.Configuration
+import jakarta.annotation.PreDestroy
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
 
-@Configuration
-class MetricsConfig(private val registry: MeterRegistry) {
-    @PostConstruct
-    fun init() { registry.counter("app.start.count").increment() }
+/**
+ * Хук для аккуратного завершения работы Spring-приложения в контейнере.
+ */
+@Component
+class GracefulShutdownHook {
+
+    private val log = LoggerFactory.getLogger(GracefulShutdownHook::class.java)
+
+    @PreDestroy
+    fun onShutdown() {
+        log.info("Received shutdown signal, starting graceful cleanup...")
+        // Здесь закрываем ресурсы, освобождаем соединения и т.п.
+    }
 }
 ```
-
-`application.yml`:
-
-```yaml
-management:
-  endpoints.web.exposure.include: health,info,prometheus
-  metrics.tags:
-    application: demo
-```
-
----
 
 # 1. Образ приложения: стратегии сборки
 
-## Подходы: Dockerfile multi-stage, Buildpacks (bootBuildImage), Jib. Когда что выбирать по скорости/кешированию/доступу к Docker.
+## Подходы: Dockerfile multi-stage, Buildpacks (bootBuildImage), Jib. Когда что выбирать по скорости/кешированию/доступу к Docker
 
-**Dockerfile multi-stage** даёт полный контроль: вы явно определяете слои, базовые образы, копируете только нужные артефакты. Это лучший выбор, если нужны тонкие оптимизации (distroless с кастомным truststore, tini, дополнительные сертификаты). Недостаток — чуть больше поддержки (писать/обновлять Dockerfile), потенциально дольше локально, если нет хорошего кеша.
+Первый и самый «ручной» подход — классический **Dockerfile multi-stage**. Ты явно описываешь, из какого базового образа собираешь приложение (build stage), какие команды запускаешь (Gradle/Maven), что именно копируешь в финальный образ (runtime stage). Это даёт максимальный контроль: можно ставить системные библиотеки, оптимизировать размер, выбирать нужную JDK/OS. Но есть и цена — Dockerfile приходится поддерживать самому, и любая смена структуры проекта/сборки требует обновления этого файла.
 
-**Buildpacks (`bootBuildImage`)** удобно тем, что «нет Dockerfile». Плагины анализируют проект, автоматически формируют слои, выбирают подходящую JVM, подмешивают агенты. Работает быстро в CI с кэшированием слоёв билдпаков. Минусы — меньшая прозрачность и зависимость от стека buildpack’ов; тонкие оптимизации сложнее.
+Multi-stage важен, потому что он разделяет «грязный» слой сборки (toolchain: JDK full, Gradle, curl, git) и «чистый» слой рантайма (голый JRE + jar). В build-слое будут десятки мегабайт кешей Gradle, исходники, артефакты тестов; они не попадут в итоговый образ. Это снижает размер, уменьшает поверхность атаки и ускоряет скачивание образа при деплое в Kubernetes. Типичный паттерн: первый stage `eclipse-temurin:17-jdk` + Gradle, второй — `eclipse-temurin:17-jre` или distroless.
 
-**Jib** собирает образ без Docker-демона, напрямую в реестр. Отличный выбор для CI, где нет Docker socket. Jib умеет умно раскладывать слои (зависимости отдельно от классов), что ускоряет инкрементальные релизы. Минус — тоже ограниченная возможность «тонкой ручной сборки» рантайм-образа.
+Второй подход — **Cloud Native Buildpacks**, которые Spring Boot умеет использовать через задачу Gradle/Maven `bootBuildImage`. Здесь Dockerfile вообще не нужен: плагин сам вытащит исходники, соберёт приложение внутри builder-образа и сформирует OCI-образ. Buildpacks умеют раскладывать приложение по слоям, добавлять JDK, настраивать параметры JVM, и всё это без участия разработчика. Отличный вариант, если хочется «меньше инфраструктурного кода» и есть доверие к официальным builder’ам.
 
-Скорость и кеширование: Jib и Buildpacks часто быстрее при частых небольших изменениях кода; Dockerfile быстрее там, где слои подстроены вручную (например, разделение `build.gradle` и `settings.gradle`, pre-cache зависимостей). Требования: Dockerfile/Buildpacks обычно требуют Docker-демона на машине, Jib — нет.
+Buildpacks особенно удобны, если у тебя стандартный Spring Boot проект без особой нативной зависимости от системных библиотек. Они хорошо **кешируют слои** зависимостей, автоматически обновляют базовые образы (например, с патчами безопасности), поддерживают multi-arch. Но при необходимости «экзотики» — нестандартные шрифты, нативные библиотеки, специфичные сертификаты в системе — придётся либо допиливать кастомный buildpack, либо всё-таки возвращаться к ручному Dockerfile.
 
-Рекомендация: начинайте с Buildpacks или Jib (минимум инфраструктуры). Переходите на Dockerfile, когда появляется потребность в distroless, tini, ручном HEALTHCHECK или специфичном управлении truststore/локалью.
+Третий подход — **Jib** (Google Jib plugin для Maven/Gradle). Он не требует Docker-демона: собирает слои образа напрямую и пушит их в registry по HTTP. Jib анализирует проект (Gradle/Maven), кладёт зависимости и классы в отдельные слои, генерирует манифест и собирает образ, не создавая промежуточных tar’ов. В CI-средах без доступа к Docker socket (частый security-требование) Jib — почти единственный способ собрать образ без дополнительных сервисов.
 
-**Код и конфиг:**
-Java/Kotlin — сам сервис (см. «Введение»). Ниже — сборка.
+По скорости Jib и buildpacks обычно выигрывают у «голого» `docker build`, потому что глубже интегрируются с build-системой. Jib умеет догадаться, какие классы и ресурсы изменились, и перестроить только нужный слой. Buildpacks, в свою очередь, умеют кешировать слои зависимостей и базовый образ. Multi-stage Dockerfile в меру кешируем, но часто его пишут так, что любое изменение в `build.gradle` приводит к инвалидированию почти всех слоёв, и время сборки сильно плавает.
 
-Dockerfile (multi-stage):
+Выбор подхода в проде обычно зависит от **политики доступа к Docker** и зрелости инфраструктуры. Если CI-агенты могут работать с Docker (dind или host Docker), multi-stage даёт максимум контроля. Если доступа к Docker нет или он запрещён по безопасности, Jib — прекрасный кандидат. Если в организации ставка на Cloud Native Buildpacks и kpack/Tanzu и т.п., — логично использовать `bootBuildImage` и не плодить зоопарк.
+
+Наконец, стоит помнить, что выбор стратегии сборки — **архитектурное решение**, а не «мелкая деталь билда». Как ты строишь образ, влияет на безопасность (базовые образы и их патчинг), скорость CI, удобство отладки и поддержку multi-arch. В больших командах обычно стандартизируют один-два подхода («по умолчанию buildpacks, для особых случаев multi-stage Dockerfile») и оборачивают их шаблонами/Blueprint’ами.
+
+Ниже — пример типичного multi-stage Dockerfile для Spring Boot приложения. В первом слое собираем `jar`, во втором — запускаем. Обрати внимание на двухстадийный `COPY`: сначала `build.gradle`/`settings.gradle` и `gradle`-директорию (для кеширования зависимостей), потом уже исходники.
 
 ```dockerfile
-# syntax=docker/dockerfile:1.7
-FROM eclipse-temurin:17-jdk AS build
-WORKDIR /src
-COPY gradlew gradlew
+# build stage
+FROM eclipse-temurin:17-jdk AS builder
+
+WORKDIR /workspace
+
+# Сначала копируем файлы сборки, чтобы кэшировать зависимости
 COPY gradle gradle
+COPY gradlew .
 COPY build.gradle settings.gradle ./
-COPY src src
-RUN ./gradlew --no-daemon clean bootJar
 
-FROM gcr.io/distroless/java17-debian12:latest
+RUN ./gradlew dependencies --no-daemon || return 0
+
+# Теперь копируем исходники и собираем приложение
+COPY src src
+
+RUN ./gradlew bootJar --no-daemon
+
+# runtime stage
+FROM eclipse-temurin:17-jre-alpine
+
+ENV JAVA_OPTS=""
 WORKDIR /app
-COPY --from=build /src/build/libs/*-SNAPSHOT.jar /app/app.jar
-USER nonroot:nonroot
-EXPOSE 8080
-ENTRYPOINT ["java","-XX:MaxRAMPercentage=75.0","-XX:+UseG1GC","-jar","/app/app.jar"]
+
+COPY --from=builder /workspace/build/libs/*.jar app.jar
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]
 ```
 
-Gradle Groovy (Buildpacks + Jib):
+Если использовать Buildpacks через Gradle, Dockerfile не нужен — достаточно настроить плагин. Есть вариант для Groovy DSL и Kotlin DSL.
 
 ```groovy
+// build.gradle (Groovy DSL)
+plugins {
+    id 'org.springframework.boot' version '3.2.5'
+    id 'io.spring.dependency-management' version '1.1.4'
+    id 'java'
+}
+
+group = 'com.example'
+version = '1.0.0'
+sourceCompatibility = '17'
+
 tasks.named('bootBuildImage') {
-  imageName = "registry.local/demo:${version}"
-  environment = ["BP_JVM_VERSION":"17.*"]
-}
-
-plugins { id 'com.google.cloud.tools.jib' version '3.4.3' }
-jib {
-  to { image = "registry.local/demo:${version}" }
+    imageName = "registry.example.com/orders-service:${version}"
+    builder = "paketobuildpacks/builder-jammy-base"
+    environment = [
+        "BP_JVM_VERSION": "17"
+    ]
 }
 ```
 
-Gradle Kotlin:
-
 ```kotlin
+// build.gradle.kts (Kotlin DSL)
+plugins {
+    id("org.springframework.boot") version "3.2.5"
+    id("io.spring.dependency-management") version "1.1.4"
+    java
+}
+
+group = "com.example"
+version = "1.0.0"
+java.sourceCompatibility = JavaVersion.VERSION_17
+
 tasks.named<org.springframework.boot.gradle.tasks.bundling.BootBuildImage>("bootBuildImage") {
-    imageName.set("registry.local/demo:${project.version}")
-    environment.set(mapOf("BP_JVM_VERSION" to "17.*"))
+    imageName.set("registry.example.com/orders-service:$version")
+    builder.set("paketobuildpacks/builder-jammy-base")
+    environment.set(
+        mapOf(
+            "BP_JVM_VERSION" to "17"
+        )
+    )
 }
-plugins { id("com.google.cloud.tools.jib") version "3.4.3" }
-jib { to { image = "registry.local/demo:${project.version}" } }
 ```
 
----
-
-## Базовые образы: distro-full (e.g. eclipse-temurin) vs distroless/alpine. Компромиссы между размером, совместимостью и дебагом.
-
-**Full/distro-based** (Debian/Ubuntu, `eclipse-temurin`) — удобно для дебага: есть shell, можно добавить утилиты, TZ, локали. Образы тяжелее, поверхность атаки шире, но совместимы с большинством native-lib’ов (glibc). Хороший выбор для сборочного этапа (build stage) и иногда для рантайма, если нужен shell.
-
-**Alpine (musl)** — очень лёгкий, но может ломать некоторые библиотеки, собранные под glibc. Java на Alpine работает, но стоит быть осторожнее с JNI/шрифтами/локалями. Плюс — малый размер, минус — иногда «неуловимые» баги.
-
-**Distroless** — только JVM и нужные системные файлы, нет shell/пакетного менеджера. Минимальная поверхность атаки и размер. Минус — «не залезть внутрь»; дебаг делайте через логи/метрики/отладочные эндпойнты, а не через `bash`. Отличен для прод-рантайма.
-
-Подход: сборка (build) — на full-образе, рантайм — distroless. Если нужен TLS с кастомным CA или timezone, подготовьте на этапе сборки и **копируйте** в рантайм.
-
-**Код/конфиг:**
-Dockerfile сравнения:
-
-```dockerfile
-# Full runtime (удобно, но тяжелее)
-FROM eclipse-temurin:17-jre
-WORKDIR /app
-COPY build/libs/app.jar /app/app.jar
-ENTRYPOINT ["java","-jar","/app/app.jar"]
-```
-
-```dockerfile
-# Distroless runtime (рекомендуется для прод)
-FROM gcr.io/distroless/java17-debian12
-WORKDIR /app
-COPY build/libs/app.jar /app/app.jar
-USER nonroot:nonroot
-ENTRYPOINT ["java","-XX:MaxRAMPercentage=75.0","-jar","/app/app.jar"]
-```
-
-Java/Kotlin — эндпойнт для проверки (тот же `/ping`).
-
-Gradle Groovy/Kotlin — без изменений; важно лишь собирать `bootJar`.
-
----
-
-## Слои: reproducible build, слой зависимостей vs слой приложения; как ускорять CI кэшами Gradle/Artifactory.
-
-Слои образа должны меняться как можно реже. В Java-сервисах это достигается разделением **зависимостей** (слой, который редко меняется) и **классов/ресурсов приложения** (меняются чаще). Spring Boot поддерживает слойность JAR’а; Buildpacks/Jib умеют автоматически разносить слои.
-
-**Reproducible build**: фиксируйте версии плагинов, используйте `gradle.lockfile`, кэшируйте Gradle-директории (`~/.gradle/caches`, `~/.m2` при Maven) в CI. В Artifactory/Nexus храните зависимости, чтобы не тянуть их из интернета каждый раз.
-
-В Dockerfile можно тянуть только файлы, влияющие на зависимости, **до** копирования кода: сначала `build.gradle`/`settings.gradle` + `gradle` wrapper → команда, качающая зависимости, → потом `src/` и сборка. Так вы максимально используете кеш.
-
-Buildpacks и Jib сами раскладывают слои, поэтому инкрементальные сборки часто очень быстры. Но если вам нужно «разложить» нестандартные артефакты (нативные либы, шрифты) — Dockerfile даёт полный контроль.
-
-**Код/конфиг:**
-Gradle Groovy:
+Для Jib пример конфигурации в Gradle может выглядеть так. Jib сам соберёт образ и отправит в registry, не вызывая Docker.
 
 ```groovy
-dependencies {
-  implementation 'org.springframework.boot:spring-boot-starter-web'
-  // фиксируем версии
-  constraints { implementation('com.fasterxml.jackson.core:jackson-databind:2.17.2') }
+// build.gradle (Groovy DSL)
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.5'
+    id 'io.spring.dependency-management' version '1.1.4'
+    id 'com.google.cloud.tools.jib' version '3.4.2'
+}
+
+jib {
+    to {
+        image = "registry.example.com/orders-service:${version}"
+    }
+    from {
+        image = "eclipse-temurin:17-jre-jammy"
+    }
+    container {
+        jvmFlags = ['-XX:MaxRAMPercentage=75.0']
+        ports = ['8080']
+    }
 }
 ```
-
-Gradle Kotlin:
 
 ```kotlin
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    constraints { implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2") }
+// build.gradle.kts (Kotlin DSL)
+plugins {
+    java
+    id("org.springframework.boot") version "3.2.5"
+    id("io.spring.dependency-management") version "1.1.4"
+    id("com.google.cloud.tools.jib") version "3.4.2"
+}
+
+jib {
+    to {
+        image = "registry.example.com/orders-service:$version"
+    }
+    from {
+        image = "eclipse-temurin:17-jre-jammy"
+    }
+    container {
+        jvmFlags = listOf("-XX:MaxRAMPercentage=75.0")
+        ports = listOf("8080")
+    }
 }
 ```
 
-Dockerfile (оптимизированный кеш):
-
-```dockerfile
-FROM eclipse-temurin:17-jdk AS build
-WORKDIR /src
-COPY gradle gradle
-COPY gradlew settings.gradle build.gradle ./
-RUN ./gradlew --no-daemon dependencies || true
-COPY src src
-RUN ./gradlew --no-daemon bootJar
-```
-
-Java/Kotlin код — любой контроллер (как выше), т.к. логика здесь про сборку/слои.
-
----
-
-## Мультиархитектура: buildx и теги для amd64/arm64; политика тегов (semver, commit-sha, build-metadata).
-
-Поддержка **multi-arch** нужна, если разработчики на Apple Silicon (arm64), а прод — amd64, или вы выкатываете на разные кластеры. Docker Buildx умеет собирать манифест для нескольких архитектур в один тэг.
-
-Политика тегов: используйте **semver** (`1.4.2`), **commit-sha** (`git-abcdef0`) и, при необходимости, **build-metadata** (дата/ветка). Хорошая практика — пушить `:1.4.2`, `:1.4`, `:1`, `:git-abcdef0` и **никогда** не перезаписывать исторические теги.
-
-Храните информацию о версии в приложении (`/actuator/info`) через `buildInfo()`. Это помогает мониторингу и расследованию инцидентов: глядя на метки/логи, вы понимаете, какая версия где крутится.
-
-В CI указывайте платформы `--platform=linux/amd64,linux/arm64`. Следите за базовыми образами: не все тэги бывают multi-arch. Distroless/Temurin — обычно поддерживают обе.
-
-**Код/конфиг:**
-Gradle Groovy:
-
-```groovy
-springBoot {
-  buildInfo()
-}
-```
-
-Gradle Kotlin:
-
-```kotlin
-tasks.named<org.springframework.boot.gradle.tasks.buildinfo.BuildInfo>("bootBuildInfo")
-```
-
-Java:
+Чтобы привязать всё это к живому Spring-коду, достаточно минимального контроллера. Для целей главы важен сам факт: **одно и то же приложение** можно упаковать тремя разными стратегиями, не меняя ни строки кода.
 
 ```java
-package com.example.demo;
+package com.example.springdocker.hello;
 
-import org.springframework.boot.info.BuildProperties;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-class VersionController {
-  private final BuildProperties build;
-  VersionController(BuildProperties build) { this.build = build; }
+public class HelloController {
 
-  @GetMapping("/version")
-  public String version() { return build.getVersion() + " " + build.get("git.commit.id.abbrev"); }
+    @GetMapping("/api/hello")
+    public String hello() {
+        return "Hello from Dockerized Spring Boot!";
+    }
 }
 ```
 
-Kotlin:
-
 ```kotlin
-package com.example.demo
+package com.example.springdocker.hello
 
-import org.springframework.boot.info.BuildProperties
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
-class VersionController(private val build: BuildProperties) {
-    @GetMapping("/version")
-    fun version(): String = "${build.version} ${build["git.commit.id.abbrev"]}"
+class HelloController {
+
+    @GetMapping("/api/hello")
+    fun hello(): String = "Hello from Dockerized Spring Boot!"
 }
 ```
 
-Пример buildx:
+---
+
+## Базовые образы: distro-full (e.g. eclipse-temurin) vs distroless/alpine. Компромиссы между размером, совместимостью и дебагом
+
+При выборе базового образа для Spring-приложения ключевое решение — **насколько «толстая» должна быть операционная система внутри контейнера**. Классический путь — взять официальный `eclipse-temurin:17-jre` или `eclipse-temurin:17-jdk` на базе полноценного дистрибутива (Ubuntu/Debian). Такой образ содержит стандартный набор утилит, libc, шрифты, сертификаты. Он тяжёлый, но отлично подходит для отладки и совместимости.
+
+Альтернативой являются **alpine-образы**. Они намного легче благодаря использованию `musl` вместо `glibc` и минимальному набору пакетов. Размер образа приложения может снизиться на сотни мегабайт. Однако не всё так радужно: некоторые библиотеки/драйверы ожидают `glibc` и могут работать некорректно на Alpine. К тому же отладка становится сложнее: мало утилит, другая экосистема пакетов, возможны странные баги уровня native-кода.
+
+Самый радикальный вариант — **distroless** (например, `gcr.io/distroless/java17`). Это образы, в которых нет shell, пакетного менеджера и лишних файлов — только JVM и всё, что нужно для её запуска. Поверхность атаки минимальна, размер небольшой, но и отладка через `exec` практически невозможна. Такой подход подходит, когда приложение хорошо обложено логами/метриками, а внутрь контейнера заходить почти не нужно.
+
+С точки зрения безопасности distroless и Alpine кажутся привлекательными: меньше attack-surface, меньше пакетов, меньше CVE. Но в реальной жизни часто приходится искать баланс: для критичных сервисов можно выбрать distroless и усиленные политики, для менее критичных — `eclipse-temurin:jre` ради удобства диагностики. Важно, чтобы этот выбор был осознанным и единым в рамках платформы, а не «кто как придумал».
+
+Размер образа влияет не только на скорость скачивания при деплое, но и на **скорость масштабирования в Kubernetes**. Когда HPA решит поднять ещё 10 Pod’ов, каждому узлу нужно будет притянуть образ из registry. Лишние сотни мегабайт на каждую реплику заметно увеличат время реакции на пик нагрузки. Поэтому в проде стараются избегать излишне толстых base image или хотя бы разумно их кэшировать на нодах.
+
+Есть ещё аспект **сертификатов и временных зон**. В некоторых минимальных образах нет нужных корневых сертификатов или tzdata, и Spring-приложение внезапно начинает ругаться при HTTPS или неправильно считать время. Поэтому при выборе лёгкого образа почти всегда приходится вручную докатывать `ca-certificates` и `tzdata`, а также настраивать `TZ`. Это нужно учитывать в Dockerfile и не надеяться, что «как-нибудь само будет».
+
+Если требуется активная разработческая отладка внутри контейнера (например, смотреть содержимое файлов, пробовать curl, jstack/jmap), лучше иметь **debug-вариант образа** на базе полноценного дистрибутива, даже если прод будешь запускать на distroless. Это может быть отдельный Dockerfile или отдельный target в CI; с его помощью легче разбираться с проблемами, воспроизводя окружение продакшна.
+
+Ниже пример двух Dockerfile: один на базе «толстого» `eclipse-temurin:17-jre-jammy`, второй — на базе distroless. Оба запускают один и тот же `app.jar`, но первый годится для отладки, второй — для жёстко закрытого прод-окружения.
+
+```dockerfile
+# Runtime на полном дистрибутиве (удобно для отладки)
+FROM eclipse-temurin:17-jre-jammy
+
+RUN apt-get update && \
+    apt-get install -y ca-certificates tzdata && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Europe/Warsaw
+WORKDIR /app
+
+COPY build/libs/app.jar app.jar
+
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "/app/app.jar"]
+```
+
+```dockerfile
+# Runtime на distroless (минимальный образ для прод)
+FROM gcr.io/distroless/java17:nonroot
+
+WORKDIR /app
+
+COPY build/libs/app.jar app.jar
+
+USER nonroot
+
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "/app/app.jar"]
+```
+
+Чтобы увидеть, на каком base image мы работаем и как оно влияет на среду, удобно иметь endpoint, который показывает `os.name`, `os.arch` и `java.version`. Это помогает отличать «толстый» образ от минимального и быстрее диагностировать проблемы.
+
+```java
+package com.example.springdocker.debug;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+@RestController
+public class EnvDebugController {
+
+    @GetMapping("/api/env")
+    public Map<String, String> env() {
+        return Map.of(
+                "os.name", System.getProperty("os.name"),
+                "os.arch", System.getProperty("os.arch"),
+                "java.version", System.getProperty("java.version")
+        );
+    }
+}
+```
+
+```kotlin
+package com.example.springdocker.debug
+
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class EnvDebugController {
+
+    @GetMapping("/api/env")
+    fun env(): Map<String, String> =
+        mapOf(
+            "os.name" to System.getProperty("os.name"),
+            "os.arch" to System.getProperty("os.arch"),
+            "java.version" to System.getProperty("java.version")
+        )
+}
+```
+
+При выборе base image важно также договориться о **политике обновления**. Официальные образы регулярно получают security-патчи, и если просто один раз выбрать `eclipse-temurin:17-jre-jammy` и больше никогда не пересобирать образы, то через год там накопится куча уязвимостей. Поэтому обычно либо используют «плавающие» теги (`17-jre-jammy` с регулярной пересборкой), либо фиксируют digest и периодически обновляют его через security-процесс.
+
+---
+
+## Слои: reproducible build, слой зависимостей vs слой приложения; как ускорять CI кэшами Gradle/Artifactory
+
+Docker-образ — это набор слоёв (layers), и от того, **как ты организуешь эти слои**, зависит скорость сборки, размер и повторяемость. Для Spring Boot это особенно заметно: зависимости проекта (`.m2` / Gradle cache) обычно гораздо тяжелее, чем сами классы приложения, но меняются гораздо реже. Поэтому основная идея — отделить слой с зависимостями от слоя с кодом, чтобы при изменении пары классов не пересобирать и не перетаскивать гигабайты артефактов.
+
+Reproducible build — это свойство, при котором **одни и те же исходники и конфиг собираются в бит-идентичный артефакт**, независимо от номера билда или времени. Для Docker это важно, потому что слои кешируются по хешам; если в `jar` зашито текущее время, то каждый билд будет давать новый слой даже при отсутствии изменений в коде. Gradle и Spring Boot поддерживают reproducible jar’ы, если настроить соответствующие опции (например, `bootJar` с `reproducibleFileOrder` и фиксированным timestamp).
+
+Для Spring Boot есть два пути работы со слоями. Первый — использовать **layered jar** (Spring Boot 2.3+): `bootJar` может разложить приложение по слоям внутри `jar`, а утилита `layertools` позволяет извлечь их для Docker. Второй — использовать Jib/buildpacks, которые сами разбивают артефакты по слоям (dependencies, snapshot-dependencies, resources, classes). В обоих случаях цель одна: слой зависимостей должен обновляться редко, слой классов — часто.
+
+В multi-stage Dockerfile типичный паттерн такой: сначала копируются `build.gradle` / `pom.xml` и `gradle`-директория → запускается «пустой» `gradle dependencies` для прогрева кеша → и только потом копируется `src` и выполняется `bootJar`. Тогда смена кода в `src` не сбивает слой с зависимостями, и `docker build` будет гораздо быстрее. Этот паттерн особенно важен в CI, где каждый билд должен быть как можно быстрее.
+
+Отдельная линия оптимизации — **Gradle cache и Artifactory**. В CI можно использовать `Gradle Remote Cache` или проксирующий репозиторий артефактов (Artifactory/Nexus). Тогда «дорогие» операции (скачивание зависимостей из интернета, пересборка тех же модулей) будут выполняться реже. В Docker-контексте это значит, что при сборке build-слоя Gradle будет брать зависимости из локального/удалённого кеша, а не каждый раз тащить их из Maven Central.
+
+Reproducible build также упрощает проверку безопасности и трассировку. Если пакет в registry можно однозначно сопоставить коммиту (через тег/label) и убедиться, что его биты точно соответствуют исходникам, легче делать supply-chain аудит. Для этого в Gradle/Boot можно добавить в манифест `Implementation-Version`, `Build-Commit`, а также использовать Git hash в теге образа.
+
+Ниже пример Gradle-конфига, где включены layered jar и reproducible настройки. В Dockerfile потом можно использовать `java -Djarmode=layertools -jar app.jar extract`, чтобы разложить слои и собрать образ максимально кешируемо.
+
+```groovy
+// build.gradle (Groovy DSL)
+tasks.named('bootJar') {
+    layered {
+        enabled = true
+    }
+    reproducibleFileOrder = true
+    preserveFileTimestamps = false
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin DSL)
+tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
+    layered {
+        isEnabled = true
+    }
+    isReproducibleFileOrder = true
+    isPreserveFileTimestamps = false
+}
+```
+
+С учётом этих настроек Dockerfile может извлекать слои и собирать образ ещё более эффективно:
+
+```dockerfile
+FROM eclipse-temurin:17-jdk AS builder
+WORKDIR /workspace
+
+COPY build.gradle settings.gradle gradlew gradle ./
+RUN ./gradlew dependencies --no-daemon || return 0
+
+COPY src src
+RUN ./gradlew bootJar --no-daemon
+
+RUN java -Djarmode=layertools -jar build/libs/*.jar extract
+
+FROM eclipse-temurin:17-jre-jammy
+
+WORKDIR /app
+
+COPY --from=builder dependencies/ ./dependencies/
+COPY --from=builder snapshot-dependencies/ ./snapshot-dependencies/
+COPY --from=builder spring-boot-loader/ ./spring-boot-loader/
+COPY --from=builder application/ ./application/
+
+ENTRYPOINT ["java", "org.springframework.boot.loader.JarLauncher"]
+```
+
+С точки зрения кода приложения всё это прозрачно, но полезно иметь класс, который позволяет проверить информацию о версии/коммите, встроенную в jar. Тогда легко проверить, действительно ли работающий контейнер соответствует ожидаемой сборке.
+
+```java
+package com.example.springdocker.version;
+
+import org.springframework.core.env.Environment;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+@RestController
+public class VersionController {
+
+    private final Environment environment;
+
+    public VersionController(Environment environment) {
+        this.environment = environment;
+    }
+
+    @GetMapping("/api/version")
+    public Map<String, String> version() {
+        return Map.of(
+                "app.version", environment.getProperty("app.version", "unknown"),
+                "git.commit", environment.getProperty("app.git-commit", "unknown")
+        );
+    }
+}
+```
+
+```kotlin
+package com.example.springdocker.version
+
+import org.springframework.core.env.Environment
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class VersionController(
+    private val environment: Environment
+) {
+
+    @GetMapping("/api/version")
+    fun version(): Map<String, String> =
+        mapOf(
+            "app.version" to environment.getProperty("app.version", "unknown"),
+            "git.commit" to environment.getProperty("app.git-commit", "unknown")
+        )
+}
+```
+
+Эти свойства (`app.version`, `app.git-commit`) легко прокинуть из Gradle через `application.yml` или `BuildConfig`, чтобы они были частью reproducible артефакта. Тогда Docker-слои будут стабильны, а информация о сборке — доступна через API.
+
+---
+
+## Мультиархитектура: buildx и теги для amd64/arm64; политика тегов (semver, commit-sha, build-metadata)
+
+Современный мир — это не только x86_64, но и **arm64** (Apple Silicon, Graviton и т.д.). Если разработчики сидят на Mac M1/M2, а прод-кластеры — на amd64, возникает задача: собрать образы, которые будут **работать на обеих архитектурах**. Для этого Docker использует manifest list (multi-arch образы), а инструмент `buildx` позволяет одним билдом собрать и опубликовать слои для нескольких платформ.
+
+Суть multi-arch в том, что у тебя есть один тег, например `orders-service:1.2.3`, а за ним скрываются отдельные образы для `linux/amd64` и `linux/arm64`. Когда кто-то делает `docker pull orders-service:1.2.3`, клиент сам выберет подходящий вариант под свою архитектуру. Это удобно и для локальной разработки, и для CI/CD: не нужно помнить разные теги, достаточно одного логического имени версии.
+
+Для сборки таких образов используется `docker buildx build --platform ...`. В CI обычно настраивают builder, умеющий собирать для нескольких архитектур (через QEMU или кросс-платформенные runner’ы), а затем публикуют multi-arch манифест в registry. Важно, чтобы выбранные базовые образы тоже поддерживали обе архитектуры; большинство официальных Java-образов (temurin, distroless) уже multi-arch, но экзотические образы — не всегда.
+
+Вторая половина истории — **политика тегов**. В проде почти никогда не полагаются на `latest`. Обычно используют семантическое версионирование (`1.2.3`) плюс build metadata: `1.2.3+abcd123`. Для образов в registry удобно иметь несколько тегов: `1.2.3` (релизная версия), `1.2.3-abcd123` (точный билд из конкретного коммита), `main-abcd123` (канара). Это облегчает откаты и анализ: по тегу легко понять, из какого кода собран образ.
+
+Многие команды вводят правило: **в прод деплоятся только иммутабельные теги** (с commit SHA), а «удобные» теги (`1.2.3`, `stable`, `latest`) помогают в работе людей и инструментов, но не участвуют напрямую в CI/CD-принятии решений. Тогда невозможно незаметно «подменить» образ под тем же тегом — любые изменения требуют нового хеша и нового tag.
+
+Multi-arch и тегирование тесно связаны с reproducible build: если артефакт полностью воспроизводим, то можно быть уверенным, что образ для `amd64` и образ для `arm64` содержат один и тот же байткод и одинаковые ресурсы, различаясь только платформой JDK. Это важно и для отладки: если баг воспроизводится только на одной архитектуре, можно сравнивать поведение контейнеров, зная, что приложение идентично.
+
+Ниже пример команды `buildx`, собирающей multi-arch образ из Dockerfile и тегирующей его сразу двумя тегами: по версии и по SHA. Предположим, в CI у тебя есть переменные `VERSION` и `GIT_SHA`.
 
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -t registry.local/demo:1.4.2 \
-  -t registry.local/demo:1.4 \
-  -t registry.local/demo:git-abcdef0 \
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --build-arg VERSION=${VERSION} \
+  -t registry.example.com/orders-service:${VERSION} \
+  -t registry.example.com/orders-service:${VERSION}-${GIT_SHA} \
   --push .
 ```
 
----
-
-# 2. Продовый Dockerfile (best practices)
-
-## Multi-stage: сборка артефакта, затем минимальный runtime. COPY только нужного.
-
-Multi-stage позволяет держать «тяжёлые» инструменты (JDK, Gradle, gcc) только в build-слое и получить минимальный рантайм (distroless/JRE). Это уменьшает размер и поверхность атаки. Копируйте **только** итоговый JAR/бинарь и необходимые файлы (truststore, локаль, ресурсы).
-
-Следите за тем, чтобы случайно не скопировать `~/.m2`, `.git`, папки `test` и прочий «мусор». Используйте `.dockerignore`. В рантайм-слоях не нужны исходники.
-
-Если требуется tini или дополнительные сертификаты — соберите/скачайте их в build-слое и перенесите в рантайм как отдельные файлы. Не ставьте `apt` в рантайм-образ.
-
-**Код/конфиг:**
-`.dockerignore`:
-
-```
-.git
-.gradle
-build
-out
-Dockerfile*
-docker-compose*
-```
-
-Dockerfile:
-
-```dockerfile
-# syntax=docker/dockerfile:1.7
-FROM eclipse-temurin:17-jdk AS build
-WORKDIR /src
-COPY gradlew gradlew
-COPY gradle gradle
-COPY settings.gradle build.gradle ./
-COPY src src
-RUN ./gradlew --no-daemon clean bootJar
-
-FROM gcr.io/distroless/java17-debian12
-WORKDIR /app
-COPY --from=build /src/build/libs/*-SNAPSHOT.jar /app/app.jar
-USER nonroot:nonroot
-ENTRYPOINT ["java","-XX:MaxRAMPercentage=75.0","-XX:+UseG1GC","-jar","/app/app.jar"]
-```
-
-Java/Kotlin — приложение как выше. Gradle — стандартный.
-
----
-
-## Безопасность: USER non-root, readOnlyRootFilesystem, drop capabilities; отсутствие shell/пакетного менеджера в runtime.
-
-Запускайте процесс **под непривилегированным пользователем**. Это снижает ущерб при компрометации. В Dockerfile — `USER nonroot:nonroot` (distroless), или создайте uid/gid вручную. На уровне оркестратора делайте rootfs read-only, а для нужных каталогов монтируйте `emptyDir`/`tmpfs`. Capabilities можно урезать в K8s `securityContext`.
-
-Отсутствие shell — плюс distroless: атакующему сложнее «превратить» RCE в полноценный взлом. Пакетный менеджер в рантайме не нужен. Сертификаты/локаль/временные каталоги готовьте заранее.
-
-Проверяйте образ на уязвимости (Trivy/Grype), подписывайте (Cosign), применяйте политику (Kyverno/OPA Gatekeeper), чтобы отклонять неподписанные/уязвимые образы.
-
-**Код/конфиг:**
-Dockerfile — создание рабочей директории для временных файлов:
-
-```dockerfile
-FROM gcr.io/distroless/java17-debian12
-WORKDIR /app
-USER nonroot:nonroot
-# В distroless /tmp доступен; можно использовать его для временных файлов
-ENTRYPOINT ["java","-jar","/app/app.jar"]
-```
-
-Java:
+Иногда полезно иметь endpoint, который показывает архитектуру контейнера (`os.arch`) и тег образа (пробрасывается через env). Это помогает в дебаге canary/blue-green, когда в кластере какое-то время сосуществуют разные версии.
 
 ```java
-package com.example.demo;
-
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-import java.nio.file.*;
-
-@RestController
-class TmpController {
-  @GetMapping("/tmp")
-  public String writeTmp() throws Exception {
-    Path p = Files.createTempFile("demo-", ".txt");
-    Files.writeString(p, "ok");
-    return "wrote to " + p.toString();
-  }
-}
-```
-
-Kotlin:
-
-```kotlin
-package com.example.demo
-
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-import java.nio.file.Files
-
-@RestController
-class TmpController {
-    @GetMapping("/tmp")
-    fun writeTmp(): String {
-        val p = Files.createTempFile("demo-", ".txt")
-        Files.writeString(p, "ok")
-        return "wrote to $p"
-    }
-}
-```
-
-K8s (фрагмент, если будете применять Helm позже):
-
-```yaml
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 65532
-  readOnlyRootFilesystem: true
-  allowPrivilegeEscalation: false
-```
-
----
-
-## JVM-настройки по умолчанию для контейнеров: MaxRAMPercentage, GC (G1/ZGC), утилизация CPU квот.
-
-Современная JVM умеет «видеть» cgroup-лимиты, но всё равно стоит управлять памятью явно: `-XX:MaxRAMPercentage=75.0` оставляет запас под нативную память, стек, metaspace. Для большинства сервисов хорош G1 GC; ZGC — для больших heap’ов и паузы <10мс, но требует профилирования.
-
-CPU-квоты: указывайте пул потоков и параллелизм с учётом `AvailableProcessors()`. В Boot 3.x Tomcat/Jetty учитывают это автоматически, но пулов в приложении может быть много (DB, Kafka, executors) — настраивайте. **Не** ставьте `Xms=Xmx` в контейнере, чтобы JVM могла адаптироваться.
-
-Учитывайте off-heap (Netty, ByteBuffer, caches) — даже при «маленьком Xmx» можно легко словить OOM от нативной памяти, если rootfs read-only и нет свопа.
-
-**Код/конфиг:**
-Dockerfile (ENV):
-
-```dockerfile
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
-```
-
-Java:
-
-```java
-package com.example.demo;
-
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-@RestController
-class SysController {
-  @GetMapping("/sys")
-  public String sys() {
-    int cpus = Runtime.getRuntime().availableProcessors();
-    long max = Runtime.getRuntime().maxMemory() / (1024*1024);
-    return "cpus=" + cpus + " maxMemMb=" + max;
-  }
-}
-```
-
-Kotlin:
-
-```kotlin
-package com.example.demo
-
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-
-@RestController
-class SysController {
-    @GetMapping("/sys")
-    fun sys(): String {
-        val cpus = Runtime.getRuntime().availableProcessors()
-        val max = Runtime.getRuntime().maxMemory() / (1024*1024)
-        return "cpus=$cpus maxMemMb=$max"
-    }
-}
-```
-
----
-
-## Стартовый скрипт/entrypoint: exec-формат, корректная обработка сигналов; tini как опция.
-
-Команда контейнера должна использовать **exec-формат** JSON, а не `sh -c`: тогда сигналы (`SIGTERM`) приходят прямо вашему процессу PID 1. Если у вас сложный скрипт, используйте `tini` — минимальный init, который проксирует сигналы и ждёт зомби-процессы.
-
-Spring Boot корректно завершает работу при `SIGTERM`: закрывает входящие соединения, ждёт завершения обработчиков. Но важно настроить таймауты и graceful-period на уровне оркестратора.
-
-Если без tini, убедитесь, что вы не используете оболочку в CMD/ENTRYPOINT. Не перехватывайте сигналы «на глазок»; в Java можно добавить `@PreDestroy`/`DisposableBean` для логов.
-
-**Код/конфиг:**
-Dockerfile с tini:
-
-```dockerfile
-FROM alpine:3.20 AS tini
-RUN apk add --no-cache tini
-
-FROM gcr.io/distroless/java17-debian12
-COPY --from=tini /sbin/tini /tini
-WORKDIR /app
-COPY app.jar /app/app.jar
-USER nonroot:nonroot
-ENTRYPOINT ["/tini","--","java","-jar","/app/app.jar"]
-```
-
-Java:
-
-```java
-package com.example.demo;
-
-import jakarta.annotation.PreDestroy;
-import org.springframework.stereotype.Component;
-
-@Component
-class ShutdownHook {
-  @PreDestroy
-  public void onStop() {
-    System.out.println("Graceful shutdown...");
-  }
-}
-```
-
-Kotlin:
-
-```kotlin
-package com.example.demo
-
-import jakarta.annotation.PreDestroy
-import org.springframework.stereotype.Component
-
-@Component
-class ShutdownHook {
-    @PreDestroy
-    fun onStop() {
-        println("Graceful shutdown...")
-    }
-}
-```
-
----
-
-## HEALTHCHECK: ping actuator/ready; интервалы/таймауты без ложных тревог.
-
-HEALTHCHECK в Docker полезен для одиночного хоста/Compose; в K8s лучше полагаться на readiness/liveness пробы. Если оставляете Docker HEALTHCHECK — не стучитесь в «тяжёлые» эндпойнты, используйте лёгкий `/actuator/health/readiness`.
-
-Не делайте слишком частые проверки: иначе получите ложные срабатывания под нагрузкой и «пинги» будут мешать нормальному трафику. Балансируйте `interval`, `timeout`, `retries`, `start-period`.
-
-В Spring Boot включите **probes**: они учитывают состояние зависимостей (DB/Kafka). Readiness может быть «down», пока пулы не готовы; это нормальное поведение при старте.
-
-**Код/конфиг:**
-Dockerfile:
-
-```dockerfile
-HEALTHCHECK --interval=30s --timeout=2s --retries=3 --start-period=20s \
-  CMD [ "wget", "--spider", "-q", "http://localhost:8080/actuator/health/readiness" ]
-```
-
-`application.yml`:
-
-```yaml
-management:
-  endpoint.health.probes.enabled: true
-  health:
-    livenessstate.enabled: true
-    readinessstate.enabled: true
-```
-
-Java/Kotlin — можно добавить кастомный `HealthIndicator`, как в «Введение».
-
----
-
-## Часовой пояс/локаль/SSL-сертификаты: копирование truststore/ca-bundle, контроль TZ через env.
-
-Часовой пояс лучше задавать **через переменную окружения** (`TZ=Europe/Moscow`) — не меняйте системные файлы. Локаль и шрифты для рендеринга PDF/Excel соберите на build-слое и перенесите.
-
-SSL: если нужно доверять кастомному CA, создайте **отдельный truststore** и передавайте путь/пароль через конфигурацию (`javax.net.ssl.trustStore`). В distroless нет `update-ca-certificates`, поэтому truststore формируйте на сборке.
-
-Проверяйте, что JDBC/HTTP-клиенты используют нужный truststore. Для MTLS добавляйте `keystore` и настраивайте клиента/сервер.
-
-**Код/конфиг:**
-Создание truststore (скрипт этапа сборки):
-
-```bash
-keytool -importcert -noprompt \
-  -alias corp-ca -file corp-ca.crt \
-  -keystore truststore.jks -storepass changeit
-```
-
-Dockerfile (копируем truststore):
-
-```dockerfile
-FROM gcr.io/distroless/java17-debian12
-WORKDIR /app
-COPY truststore.jks /app/truststore.jks
-ENV TZ=Europe/Moscow
-ENV JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/app/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit"
-COPY app.jar /app/app.jar
-ENTRYPOINT ["java","-jar","/app/app.jar"]
-```
-
-Java:
-
-```java
-package com.example.demo;
-
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-
-@RestController
-class TimeController {
-  @GetMapping("/time")
-  public String now() {
-    return ZonedDateTime.now(ZoneId.systemDefault()).toString();
-  }
-}
-```
-
-Kotlin:
-
-```kotlin
-package com.example.demo
-
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-import java.time.ZoneId
-import java.time.ZonedDateTime
-
-@RestController
-class TimeController {
-    @GetMapping("/time")
-    fun now(): String = ZonedDateTime.now(ZoneId.systemDefault()).toString()
-}
-```
-
----
-
-# 3. Конфигурация, секреты и профили
-
-## Externalized config: environment, system properties, mounted files; profiles (dev/test/prod).
-
-По «12-фактору» конфиги хранятся **вне** образа. В Spring Boot порядок источников: `application.yml` → профили → env → системные свойства → аргументы. Профили (`spring.profiles.active`) позволяют включать разные блоки конфигурации для dev/test/prod.
-
-Секреты лучше передавать **как файлы** (монтирование) или секрет-менеджером. Для параметров подключения — env-переменные удобнее. В Kubernetes `ConfigMap`/`Secret` монтируются в файлы или попадают в env.
-
-При локальной разработке удобно иметь `application-local.yml` и активировать профиль `local`. В проде ни один профиль, кроме `prod`, не должен попадать в контейнер через bake-вставки.
-
-Проверяйте значения на старте: если обязательный параметр не задан — падать fail-fast, а не работать «как-нибудь».
-
-**Код/конфиг:**
-`application.yml`:
-
-```yaml
-spring:
-  application.name: demo
-  profiles:
-    group:
-      dev: [ "common" ]
-      prod: [ "common" ]
----
-spring:
-  config.activate.on-profile: common
-server:
-  port: 8080
----
-spring:
-  config.activate.on-profile: prod
-app:
-  external-url: https://prod.example.com
-```
-
-Java:
-
-```java
-package com.example.demo;
+package com.example.springdocker.arch;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
 
 @RestController
-class ConfigController {
-  @Value("${app.external-url:unset}")
-  private String externalUrl;
+public class ArchController {
 
-  @GetMapping("/cfg")
-  public String cfg() { return externalUrl; }
+    @Value("${app.image-tag:unknown}")
+    private String imageTag;
+
+    @GetMapping("/api/arch")
+    public Map<String, String> arch() {
+        return Map.of(
+                "os.arch", System.getProperty("os.arch"),
+                "image.tag", imageTag
+        );
+    }
 }
 ```
 
-Kotlin:
-
 ```kotlin
-package com.example.demo
+package com.example.springdocker.arch
 
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
-class ConfigController(
-    @Value("\${app.external-url:unset}") private val externalUrl: String
+class ArchController(
+
+    @Value("\${app.image-tag:unknown}")
+    private val imageTag: String
 ) {
-    @GetMapping("/cfg")
-    fun cfg(): String = externalUrl
+
+    @GetMapping("/api/arch")
+    fun arch(): Map<String, String> =
+        mapOf(
+            "os.arch" to System.getProperty("os.arch"),
+            "image.tag" to imageTag
+        )
 }
 ```
 
-Gradle Groovy/Kotlin — добавить `spring-boot-configuration-processor` для подсказок (см. следующий пункт).
+В `application.yml` можно определить `app.image-tag` через env, который заполняется CI в момент сборки/деплоя.
+
+```yaml
+app:
+  image-tag: "${IMAGE_TAG:unknown}"
+```
+
+Такой подход к multi-arch и тегам делает деплой Spring-приложений предсказуемым: один и тот же код может работать и у разработчика на M1, и в прод-кластере на x86, при этом версии и происхождение артефактов прозрачно зафиксированы в тегах и конфигурации.
+
+# 2. Продовый Dockerfile (best practices)
+
+## Multi-stage: сборка артефакта, затем минимальный runtime. COPY только нужного
+
+В продовой сборке Dockerfile главная цель проста и жестока: в финальном образе должно оказаться **только то, что нужно для запуска** Spring Boot приложения, и ничего лишнего. Multi-stage позволяет этого добиться: в первом слое живёт «грязный» мир сборки (Gradle/Maven, JDK full, исходники), а во втором — чистый, минимальный runtime. Всё, что относится к компиляции, тестам, кешам, инструментам — остаётся в build-stage и не попадает в результирующий образ.
+
+Типичный паттерн для Spring Boot: первый stage на `eclipse-temurin:17-jdk`, куда копируются файлы сборки и исходники, выполняется `bootJar`, на выходе получается fat-jar. Второй stage — на `eclipse-temurin:17-jre-*` или distroless, куда копируется только собранный `jar`. Важно осознанно писать `COPY`: не делать `COPY . .`, а забирать ровно артефакт (`build/libs/app.jar`) или слои, если используешь layered jar. Это уменьшает размер и не тащит в образ `.git`, тестовые ресурсы, секреты случайно положенные в репозиторий.
+
+В проде multi-stage-Dockerfile обычно ставят в один ряд с репозиторной политикой: это часть контракта сервиса. Любые изменения в структуре сборки (переезд на другой плагин, изменение имени `jar`) должны аккуратно отражаться в Dockerfile. Чем проще и прямолинейнее этот файл, тем легче его ревьюить и тем меньше риск, что кто-то случайно начнёт копировать в runtime-образ ненужные файлы (`.gradle`, `build/`, скрипты, ssh-ключи и т.п.).
+
+В build-stage важно максимально использовать кеш. Сначала копируются `build.gradle(.kts)`, `settings.gradle(.kts)` и `gradle/`, запускается `./gradlew dependencies`, и только потом копируется `src/` и делается `bootJar`. Тогда при небольших изменениях в коде слой с зависимостями не инвалидируется, и сборка становится заметно быстрее. В CI это критично: десятки сервисов, каждый билд — минус минуты в сумме.
+
+Ниже пример продового multi-stage Dockerfile, заточенного под Spring Boot + Gradle. В первом слое собираем `bootJar`, во втором — запускаем его на JRE. Обрати внимание: мы копируем только `app.jar`, никаких исходников и конфигов сборки.
+
+```dockerfile
+FROM eclipse-temurin:17-jdk AS builder
+
+WORKDIR /workspace
+
+COPY gradle gradle
+COPY gradlew .
+COPY build.gradle settings.gradle ./
+
+RUN ./gradlew dependencies --no-daemon || return 0
+
+COPY src src
+
+RUN ./gradlew bootJar --no-daemon
+
+FROM eclipse-temurin:17-jre-jammy
+
+WORKDIR /app
+
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
+
+COPY --from=builder /workspace/build/libs/*.jar app.jar
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]
+```
+
+С точки зрения Spring-приложения Dockerfile прозрачен, но полезно сделать явный «контракт» на имя `jar` и точки входа. Например, в `build.gradle` можно задать имя архива, чтобы Dockerfile не зависел от версии или файла с classifier’ом. Это уменьшает шанс сломать контейнер при смене версии.
+
+```groovy
+// build.gradle (Groovy)
+tasks.named('bootJar') {
+    archiveBaseName.set('orders-service')
+    archiveVersion.set('') // без версии в имени файла
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
+    archiveBaseName.set("orders-service")
+    archiveVersion.set("") // убираем версию из имени jar
+}
+```
+
+Чтобы увидеть, что именно мы собрали, удобно иметь простой контроллер, который читает информацию о версии/артефакте из конфигурации. Это позволяет проверить, что контейнер действительно запущен с тем артефактом, который ожидался при multi-stage сборке.
+
+```java
+package com.example.docker.prod;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+@RestController
+public class BuildInfoController {
+
+    @Value("${app.name:orders-service}")
+    private String appName;
+
+    @Value("${app.version:unknown}")
+    private String appVersion;
+
+    @GetMapping("/api/build-info")
+    public Map<String, String> buildInfo() {
+        return Map.of(
+                "name", appName,
+                "version", appVersion
+        );
+    }
+}
+```
+
+```kotlin
+package com.example.docker.prod
+
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class BuildInfoController(
+
+    @Value("\${app.name:orders-service}")
+    private val appName: String,
+
+    @Value("\${app.version:unknown}")
+    private val appVersion: String
+) {
+
+    @GetMapping("/api/build-info")
+    fun buildInfo(): Map<String, String> =
+        mapOf(
+            "name" to appName,
+            "version" to appVersion
+        )
+}
+```
+
+Multi-stage в проде ещё и про скорость rollout’а. В Kubernetes при RollingUpdate каждый новый Pod должен скачать образ из registry. Чем меньше образ и чем лучше разложены слои, тем быстрее поднимаются новые реплики и тем меньше время, когда часть трафика обрабатывает старая версия. В условиях высокой нагрузки это не косметика, а нормальная эксплуатационная задача.
+
+Наконец, правильный multi-stage помогает security: мы не берём в runtime-образ билд-скрипты, токены, временные файлы и прочий мусор, который может случайно оказаться в репозитории. Даже если где-то кто-то ошибся и положил в проект секрет, он останется в build-слое и не попадёт в прод-контейнер, если `COPY` настроен аккуратно.
 
 ---
 
-## Secrets: файловые и env-секреты; шифрование конфигурации, ключи/сертификаты, ротация.
+## Безопасность: USER non-root, readOnlyRootFilesystem, drop capabilities; отсутствие shell/пакетного менеджера в runtime
 
-Секреты в K8s — base64-коды, монтируются в файлы (`/var/run/secrets/...`) или env. Для TLS и MTLS чаще используют файловые секреты (keystore/truststore). В Docker Compose есть `secrets`, но в простых сценариях чаще — env.
+По умолчанию контейнеры в Docker запускаются от пользователя root внутри контейнера, и это **очень плохая идея для продакшна**. При escape-у из контейнера или ошибках в конфигурации сети такой процесс может получить повышенные права на хосте. Поэтому продовый Dockerfile для Spring Boot должен в явном виде создавать отдельного пользователя (uid/gid) и запускать приложение от его имени. Тогда даже в случае уязвимости в приложении атакующий получает сильно урезанные права.
 
-Шифрование конфигов (например, Spring Cloud Config + Vault) позволяет  хранить только зашифрованные значения, а ключ — в отдельном vault’е. Ротация ключей критична: настраивайте TTL и автоматическое обновление.
+В Dockerfile это делается через `useradd`/`adduser` и `USER`. В Kubernetes то же самое можно продублировать `securityContext.runAsUser`. Важный момент: перед сменой пользователя нужно выдать права на директории, куда приложение пишет (логи, временные файлы, загружаемые файлы). Если этого не сделать, Spring Boot может падать на старте с ошибками разрешений при записи во `java.io.tmpdir` или при использовании upload-директорий.
 
-Приложение должно **не логировать** секреты. Маскирование в логгере/actuator — обязательная практика. Для программного чтения файлов-секретов удобно указывать путь в `application.yml` и загружать ключ в памяти (без записи на диск).
+`readOnlyRootFilesystem` — ещё одно важное ограничение. Идея в том, что root-файловая система контейнера монтируется только на чтение, а любые записи идут в отдельные тома (`emptyDir`, PVC). Это защищает от случайных и вредоносных модификаций файлов в образе во время выполнения. Spring-приложение должно быть к этому готово: не пытаться писать в `/`, `/opt`, `/app`, а использовать либо `java.io.tmpdir`, либо явно смонтированные директории данных.
 
-**Код/конфиг:**
-K8s Secret (фрагмент):
+Linux-capabilities — это «микроправа» процесса поверх базового user id. Даже non-root процесс может иметь опасные capabilities (например, `NET_ADMIN`). В проде обычно либо вообще не нужны дополнительные capabilities, либо их строго ограничивают. На уровне Docker это `--cap-drop=ALL` и явное `--cap-add` того, что реально нужно (для обычного Spring HTTP-сервиса — почти ничего). В Kubernetes это `securityContext.capabilities.drop: ["ALL"]`.
+
+Отсутствие shell и пакетного менеджера в runtime-образе — не паранойя, а нормальные требования безопасности. Если у атакующего нет `sh`/`bash` и `apt`/`apk`, ему гораздо сложнее закрепиться в контейнере и тянуть дополнительный зловредный софт. Distroless-образы реализуют эту идею радикально: там вообще нет shell. Для Spring Boot это почти прозрачно: приложение не зависит от shell, если только ты сам не завязался на внешние утилиты.
+
+Ниже упрощённый Dockerfile, показывающий создание non-root пользователя и запуск от его имени. В реальном проде поверх этого ещё накатывают seccomp/apparmor, но для уровня приложения это уже забота кластера.
+
+```dockerfile
+FROM eclipse-temurin:17-jre-jammy
+
+RUN useradd --system --create-home --home-dir /home/spring spring
+
+WORKDIR /app
+
+COPY build/libs/app.jar app.jar
+
+RUN chown -R spring:spring /app
+
+USER spring
+
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]
+```
+
+Чтобы проверить, от кого реально запущен процесс, удобно логировать uid/gid и имя пользователя при старте. Это не панацея, но помогает быстро увидеть конфигурационные ошибки: например, если приложение всё-таки стартует от root.
+
+```java
+package com.example.docker.security;
+
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+@Component
+public class SecurityStartupLogger {
+
+    private static final Logger log = LoggerFactory.getLogger(SecurityStartupLogger.class);
+
+    @PostConstruct
+    public void logSecurityContext() {
+        String user = System.getProperty("user.name");
+        String tmpDir = System.getProperty("java.io.tmpdir");
+        log.info("Running as user='{}', java.io.tmpdir='{}'", user, tmpDir);
+
+        try {
+            Path testFile = Path.of(tmpDir, "write-check.tmp");
+            Files.writeString(testFile, "ok");
+            Files.deleteIfExists(testFile);
+            log.info("Write to tmpdir is allowed");
+        } catch (Exception ex) {
+            log.warn("Cannot write to tmpdir {}: {}", tmpDir, ex.toString());
+        }
+    }
+}
+```
+
+```kotlin
+package com.example.docker.security
+
+import jakarta.annotation.PostConstruct
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+import java.nio.file.Files
+import java.nio.file.Path
+
+@Component
+class SecurityStartupLogger {
+
+    private val log = LoggerFactory.getLogger(SecurityStartupLogger::class.java)
+
+    @PostConstruct
+    fun logSecurityContext() {
+        val user = System.getProperty("user.name")
+        val tmpDir = System.getProperty("java.io.tmpdir")
+        log.info("Running as user='{}', java.io.tmpdir='{}'", user, tmpDir)
+
+        try {
+            val testFile: Path = Path.of(tmpDir, "write-check.tmp")
+            Files.writeString(testFile, "ok")
+            Files.deleteIfExists(testFile)
+            log.info("Write to tmpdir is allowed")
+        } catch (ex: Exception) {
+            log.warn("Cannot write to tmpdir {}: {}", tmpDir, ex.toString())
+        }
+    }
+}
+```
+
+Когда включается `readOnlyRootFilesystem` в Kubernetes, важно заранее продумать, куда Spring будет писать временные файлы и кеши. Это может быть `emptyDir` на `/tmp` или отдельный том `/data`. Тогда даже с read-only root приложение продолжит работать, а любые попытки писать не туда закончатся понятными ошибками, а не тихими падениями.
+
+Последний штрих — договорённость с платформенной командой: какие security-требования обязательны для всех сервисов (non-root, read-only root, drop capabilities), а какие — опциональны. Приложение должно укладываться в эти рамки технически (не требовать root и записи в неожиданное место) и организационно (security-review Dockerfile и манифестов).
+
+---
+
+## JVM-настройки по умолчанию для контейнеров: MaxRAMPercentage, GC (G1/ZGC), утилизация CPU квот
+
+Начиная с Java 10, JVM научилась **понимать контейнерные лимиты**: количество CPU и память из cgroup. Но по умолчанию поведение не всегда идеально под реальные нагрузки Kubernetes, поэтому продовой Dockerfile почти всегда задаёт дополнительные опции: `MaxRAMPercentage`, настройки GC и иногда `ActiveProcessorCount`. Для Spring Boot это особенно важно: от этих параметров зависят размеры нитепулов, паузы GC и степень «задушенности» при CPU-throttling.
+
+`-XX:MaxRAMPercentage` определяет, какой процент от доступной контейнеру памяти JVM может использовать под heap. Если limit Pod’а — 1024 MiB, а `MaxRAMPercentage=75`, то heap будет около 768 MiB, остальное оставлено под метаданные, native-память, стеки потоков, любые off-heap структуры. В проде редко стоит выставлять 90–100%: тогда любые всплески native-памяти (Netty, драйверы, TLS) быстро приводят к OOM-killer’у на уровне контейнера.
+
+Для Spring Boot на G1 GC чаще всего работает конфигурация вида: `-XX:MaxRAMPercentage=70.0`–`75.0`, остальное отдать под non-heap. G1 — дефолтный GC в современных Java, он более чем достаточен для большинства веб-сервисов. ZGC имеет смысл рассматривать при очень больших heap’ах и критичных паузах, но в типичном микросервисном мире это редкость. В любом случае важно записать выбранную стратегию в документацию сервиса, а не рассчитывать на магические настройки.
+
+CPU-квоты в Kubernetes (`requests`/`limits`) определяют, сколько виртуальных CPU видит JVM. Иногда полезно явно задавать `-XX:ActiveProcessorCount`, чтобы ограничить количество потоков, создаваемых внутри JVM (ForkJoinPool, parallel GC). Например, если Pod’у выделен один vCPU, нет смысла иметь десяток параллельных GC-потоков или огромные пулы для `parallelStream()`. Spring Boot в части серверных нитепулов всё равно придётся настраивать отдельно.
+
+Ниже пример Dockerfile, где мы через переменную окружения `JAVA_TOOL_OPTIONS` задаём базовый набор JVM-опций для контейнера. Эта переменная автоматически подхватывается JVM и не требует менять `ENTRYPOINT`. Такой подход удобен тем, что можно частично переопределять её на уровне Kubernetes (через env override).
+
+```dockerfile
+FROM eclipse-temurin:17-jre-jammy
+
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
+
+WORKDIR /app
+
+COPY build/libs/app.jar app.jar
+
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+```
+
+Чтобы понимать, как контейнерная среда воспринимается JVM, полезно логировать `maxMemory` и `availableProcessors` при старте. Это позволяет быстро увидеть, что heap/CPU настроены не так, как ожидалось (например, при ошибке в объектах ресурсов Kubernetes).
+
+```java
+package com.example.docker.jvm;
+
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class JvmContainerInfo {
+
+    private static final Logger log = LoggerFactory.getLogger(JvmContainerInfo.class);
+
+    @PostConstruct
+    public void logJvmInfo() {
+        long maxMemoryMb = Runtime.getRuntime().maxMemory() / (1024 * 1024);
+        int cpus = Runtime.getRuntime().availableProcessors();
+        log.info("JVM maxMemory={} MiB, availableProcessors={}", maxMemoryMb, cpus);
+    }
+}
+```
+
+```kotlin
+package com.example.docker.jvm
+
+import jakarta.annotation.PostConstruct
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+
+@Component
+class JvmContainerInfo {
+
+    private val log = LoggerFactory.getLogger(JvmContainerInfo::class.java)
+
+    @PostConstruct
+    fun logJvmInfo() {
+        val maxMemoryMb = Runtime.getRuntime().maxMemory() / (1024 * 1024)
+        val cpus = Runtime.getRuntime().availableProcessors()
+        log.info("JVM maxMemory={} MiB, availableProcessors={}", maxMemoryMb, cpus)
+    }
+}
+```
+
+Вместе с этим логированием имеет смысл дать сервису endpoint, который показывает эти значения снаружи (например, `/actuator/env` и метрики Micrometer). Тогда в реальном инциденте можно быстро понять, страдает ли приложение от недостатка памяти/CPU или проблема в другом.
+
+Контейнерная среда также требует аккуратно выбирать параметры нитепулов. Если JVM считает, что у неё 8 CPU, а Pod ограничен 2 vCPU, то Tomcat/Netty легко создадут больше активных потоков, чем нужно, и при throttling’е от kubelet сервис начнёт резко деградировать. Поэтому вместе с `MaxRAMPercentage` в проде часто фиксируют `maxThreads` на сервере, придерживая аппетиты сервера под реальные CPU-лимиты.
+
+Наконец, важно помнить, что JVM-опции должны управляться **конфигурацией, а не хардкодом**. Пользуйся либо `JAVA_TOOL_OPTIONS`, либо переменной `JAVA_OPTS`, которую подставляет entrypoint, и задавай значения через Helm/ConfigMap. Тогда смена GC или процентной доли памяти не потребует пересборки образа и будет частью управляемого деплой-потока.
+
+---
+
+## Стартовый скрипт/entrypoint: exec-формат, корректная обработка сигналов; tini как опция
+
+ENTRYPOINT в Docker — это точка входа в контейнер, и от того, как он написан, зависит, как приложение будет реагировать на сигналы (SIGTERM, SIGINT), как будут убираться дочерние процессы, будет ли происходить аккуратный shutdown. В контейнерном мире процесс под PID 1 ведёт себя особым образом: по умолчанию не форвардит сигналы и не «прихорашивает» зомби-процессы. Поэтому в проде важно использовать **exec-формат** и при необходимости лёгкий init-процесс вроде `tini`.
+
+Разница между shell-формой и exec-формой ENTRYPOINT/CMD критична. Запись `ENTRYPOINT ["java", "-jar", "app.jar"]` запускает JVM напрямую как PID 1 и сигналы Kubernetes будут приходить прямо в Java-процесс. Запись `ENTRYPOINT ["sh", "-c", "java -jar app.jar"]` создаёт shell как PID 1, а Java становится дочерним процессом; тогда SIGTERM Kubernetes прилетит в `/bin/sh`, а не в JVM, и если shell не пробрасывает сигнал, graceful shutdown Spring Boot не сработает. Поэтому если уже используешь `sh -c`, обязательно добавляй `exec`.
+
+Хорошей практикой является явный стартовый скрипт, который настраивает окружение (например, подставляет `JAVA_OPTS` из env) и затем делает `exec java ...`. Скрипт проще менять, чем переписывать ENTRYPOINT для каждого кейса. При этом сам Dockerfile должен вызывать скрипт в exec-формате, чтобы сигналы доезжали до JVM, а не терялись в оболочке.
+
+`tini` — минимальный init-процесс, который решает две задачи: корректно форвардит сигналы дочерним процессам и «собирает» зомби-процессы, если приложение порождает отдельные процессы. Для Spring Boot это чаще всего не обязательно, но если внутри контейнера есть дополнительные процессы (агенты, sidecar в том же Pod’е — реже), или если очень строго относишься к PID 1, — имеет смысл поставить `tini` и использовать его как ENTRYPOINT.
+
+Ниже пример простого стартового скрипта, который поднимает Spring Boot с `JAVA_OPTS` и завершает shell через `exec`, передавая управление JVM. Такой скрипт хорошо сочетается с multi-stage и позволяет централизованно управлять запускаемыми опциями.
+
+```bash
+#!/usr/bin/env sh
+set -e
+
+echo "Starting Spring Boot with JAVA_OPTS='${JAVA_OPTS}'"
+
+exec java ${JAVA_OPTS} -jar /app/app.jar
+```
+
+Dockerfile для такого случая станет очень простым, а поведение — предсказуемым: PID 1 — это `java`, сигналы доходят напрямую, shutdown-хуки Spring Boot вызываются корректно.
+
+```dockerfile
+FROM eclipse-temurin:17-jre-jammy
+
+WORKDIR /app
+
+COPY build/libs/app.jar app.jar
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+```
+
+Чтобы показать, что приложение действительно корректно обрабатывает shutdown, можно добавить `@PreDestroy`-хук и наблюдать логи при остановке Pod’а. Kubernetes отправит SIGTERM, Spring Boot аккуратно остановит контекст, закроет соединения, и наш хук отработает.
+
+```java
+package com.example.docker.entrypoint;
+
+import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ShutdownLogger {
+
+    private static final Logger log = LoggerFactory.getLogger(ShutdownLogger.class);
+
+    @PreDestroy
+    public void onShutdown() {
+        log.info("Graceful shutdown started, cleaning up resources...");
+    }
+}
+```
+
+```kotlin
+package com.example.docker.entrypoint
+
+import jakarta.annotation.PreDestroy
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+
+@Component
+class ShutdownLogger {
+
+    private val log = LoggerFactory.getLogger(ShutdownLogger::class.java)
+
+    @PreDestroy
+    fun onShutdown() {
+        log.info("Graceful shutdown started, cleaning up resources...")
+    }
+}
+```
+
+Использование `tini` в Dockerfile сводится к установке пакета и изменению ENTRYPOINT. Это может быть полезно в окружениях, где есть подозрения на проблемы с зомби-процессами, либо когда политика компании требует init-процесса.
+
+```dockerfile
+FROM eclipse-temurin:17-jre-jammy
+
+RUN apt-get update && apt-get install -y tini && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY build/libs/app.jar app.jar
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+```
+
+В Kubernetes всё это дополняется `terminationGracePeriodSeconds` и preStop-hook’ами, но базовое поведение зависит именно от корректного ENTRYPOINT в Dockerfile. Если там shell-форма без exec, никакие graceful-shutdown опции Spring Boot не спасут — процесс просто будет «убит» по истечении grace-таймера.
+
+---
+
+## HEALTHCHECK: ping actuator/ready; интервалы/таймауты без ложных тревог
+
+Docker поддерживает встроенный `HEALTHCHECK`, который позволяет пометить контейнер как «здоровый» или «больной» на уровне runtime. В Kubernetes роль health-проверок выполняют `livenessProbe` и `readinessProbe`, но при использовании Docker Compose или «голого» Docker встроенный `HEALTHCHECK` может быть полезен. Для Spring Boot логично использовать Actuator-эндпоинты (`/actuator/health`, `/actuator/health/readiness`) как цель для этих проверок.
+
+При этом важно не путать **готовность** (readiness) и «живость» (liveness). Эндпоинт `/actuator/health` по умолчанию считает сервис здоровым, пока жив JVM-процесс и базовые компоненты. Readiness часто настраивают так, чтобы учесть зависимость от БД/кэша/очереди. В Docker-HEALTHCHECK, как правило, проверяют, что HTTP-порт отвечает и базовая логика жива; в Kubernetes readiness и liveness разводят на отдельные пропсы, чтобы не убивать Pod при временной недоступности внешней системы.
+
+Интервалы и таймауты для health-проверок должны быть агрессивными, но не истеричными. Если проверять каждую секунду и ставить таймаут 500 мс, то при любой небольшой задержке сети контейнер начнёт считаться «unhealthy», хотя фактически всё работает нормально. В проде разумные значения для web-сервисов: интервал 10–30 секунд, таймаут 2–3 секунды, `retries` 3–5. В Compose можно позволить себе чуть более мягкие настройки.
+
+Ниже пример Dockerfile c HEALTHCHECK, использующим `wget` для запроса `/actuator/health`. В Alpine-образах можно использовать `wget` или `curl`, но нужно помнить, что они должны быть установлены в runtime-слой, иначе проверка будет всегда падать.
+
+```dockerfile
+FROM eclipse-temurin:17-jre-jammy
+
+WORKDIR /app
+
+COPY build/libs/app.jar app.jar
+
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8080/actuator/health || exit 1
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]
+```
+
+На стороне Spring Boot нужно включить Actuator и экспонировать `health`-эндпоинт. Это делается через зависимости и `application.yml`. В проде обычно включают только нужные эндпоинты (`health`, `info`, `prometheus`), а не всё подряд.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+}
+```
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health"
+  endpoint:
+    health:
+      probes:
+        enabled: true
+```
+
+Иногда стандартного health-состава недостаточно, и хочется добавить свои проверки (например, пинг внешнего API или проверку доступности темы в Kafka). Для этого можно реализовать `HealthIndicator` и добавить его в контекст. Тогда `/actuator/health` будет учитывать и эту логику.
+
+```java
+package com.example.docker.health;
+
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.stereotype.Component;
+
+@Component("externalApi")
+public class ExternalApiHealthIndicator implements HealthIndicator {
+
+    @Override
+    public Health health() {
+        // Здесь могла бы быть проверка внешнего API
+        boolean ok = true;
+
+        if (ok) {
+            return Health.up().withDetail("externalApi", "ok").build();
+        } else {
+            return Health.down().withDetail("externalApi", "unreachable").build();
+        }
+    }
+}
+```
+
+```kotlin
+package com.example.docker.health
+
+import org.springframework.boot.actuate.health.Health
+import org.springframework.boot.actuate.health.HealthIndicator
+import org.springframework.stereotype.Component
+
+@Component("externalApi")
+class ExternalApiHealthIndicator : HealthIndicator {
+
+    override fun health(): Health {
+        val ok = true
+        return if (ok) {
+            Health.up().withDetail("externalApi", "ok").build()
+        } else {
+            Health.down().withDetail("externalApi", "unreachable").build()
+        }
+    }
+}
+```
+
+В Kubernetes встроенный Docker HEALTHCHECK чаще всего **не используют**, чтобы не дублировать проверки и не плодить две разные системы статусов. Вместо этого `livenessProbe` и `readinessProbe` явно настраиваются в манифесте Deployment, а Dockerfile остаётся без HEALTHCHECK. Но для Docker Compose, одиноких VM или edge-кейсов HEALTHCHECK остаётся полезным инструментом и вполне уместен в продовом Dockerfile.
+
+Ключевая мысль: health-проверки должны быть быстрыми и дешёвыми, не блокировать тяжёлые операции (особенно БД) и не зависеть от внешних, нестабильных компонентов больше, чем необходимо. Иначе ты рискуешь войти в спираль: зависимость тормозит — health падает — оркестратор перезапускает контейнеры — зависимость становится ещё хуже.
+
+---
+
+## Часовой пояс/локаль/SSL-сертификаты: копирование truststore/ca-bundle, контроль TZ через env
+
+Контейнер по умолчанию живёт в своей собственной вселенной, и часто это вселенная с часовым поясом **UTC** и минимальным набором локалей. Для Spring-приложения это обычно хорошо: все timestamps в базе и логах идут в UTC, а отображение пользователю выполняется на фронте. Но иногда требуется специфичный TZ (например, для cron-логики или отчётов), и его нужно задавать явно — через env `TZ` и настройку JVM/приложения.
+
+В Dockerfile на полноценных базовых образах (Debian/Ubuntu) обычно устанавливают `tzdata` и задают `TZ=Europe/Warsaw`, если действительно есть бизнес-требование к этому поясу. В других случаях разумнее держать контейнер в UTC, а в приложении работать с `ZoneId`/`ZoneOffset`, не завязанными на системный TZ. Для Spring Boot это значит: хранить всё в UTC, а при необходимости явно конвертировать в нужный часовой пояс.
+
+SSL-сертификаты — ещё один важный аспект. В большинстве образов есть системный набор корневых сертификатов (`ca-certificates`), но во внутренних корпоративных сетях часто используются свои CA для прокси/внутренних сервисов. Тогда их нужно добавить либо в системный truststore (для `curl`/OS-библиотек), либо в Java truststore, от которого работают `HttpClient`, JDBC-драйверы и т.п. Это можно сделать либо на этапе сборки (COPY сертификата и обновление truststore), либо через секреты в Kubernetes.
+
+Ниже простой Dockerfile, который устанавливает `tzdata` и корневые сертификаты, настраивает часовой пояс и оставляет остальное приложению. В реальной жизни сюда же добавляют копирование корпоративного CA (как `.crt`) и вызов `update-ca-certificates`.
+
+```dockerfile
+FROM eclipse-temurin:17-jre-jammy
+
+RUN apt-get update && \
+    apt-get install -y tzdata ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Europe/Warsaw
+
+WORKDIR /app
+
+COPY build/libs/app.jar app.jar
+
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+```
+
+На уровне Spring Boot можно явно выставить дефолтный часовой пояс для JVM при старте. Это полезно, если хочешь жёстко зафиксировать поведение приложения, независимо от того, что прописано в `TZ` внутри контейнера.
+
+```java
+package com.example.docker.time;
+
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.time.ZoneId;
+import java.util.TimeZone;
+
+@Component
+public class TimezoneInitializer {
+
+    private static final Logger log = LoggerFactory.getLogger(TimezoneInitializer.class);
+
+    @PostConstruct
+    public void init() {
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+        ZoneId zoneId = ZoneId.systemDefault();
+        log.info("Default JVM timezone set to UTC, system zoneId={}", zoneId);
+    }
+}
+```
+
+```kotlin
+package com.example.docker.time
+
+import jakarta.annotation.PostConstruct
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+import java.time.ZoneId
+import java.util.TimeZone
+
+@Component
+class TimezoneInitializer {
+
+    private val log = LoggerFactory.getLogger(TimezoneInitializer::class.java)
+
+    @PostConstruct
+    fun init() {
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+        val zoneId = ZoneId.systemDefault()
+        log.info("Default JVM timezone set to UTC, system zoneId={}", zoneId)
+    }
+}
+```
+
+С SSL-truststore ситуация похожая: можно положиться на системные CA, а можно явно указать Java-truststore через системные свойства (`javax.net.ssl.trustStore` и `javax.net.ssl.trustStorePassword`). В проде чаще всего корпоративные CA прокидываются в контейнер как секрет, а затем либо добавляются в системный store, либо собирается отдельный `truststore.jks`, который использует JVM.
+
+На уровне Spring Boot 3.x есть дополнительный слой в виде `spring.ssl.bundle.*`, но базовая идея та же: контейнер получает секрет с сертификатом, приложение знает, где его искать. В Dockerfile при этом важно **не запекать приватные ключи** в образ — только публичные сертификаты/CA, если уж очень нужно; приватные — только через секреты k8s.
+
+Локаль влияет на формат дат/чисел/сообщений. В контейнере она часто ограничена (`C` или `POSIX`). Для бэкенда это обычно не критично, потому что форматирование перекладывают на фронт или делают явно. Но если вдруг бизнес-логика завязана на `Locale.getDefault()` (например, при генерации CSV/Excel), лучше установить нужную локаль в JVM через `user.language`, `user.country` или явные `Locale` в коде, а не надеяться на системную настройку контейнера.
+
+И наконец, всё это — часть продового Dockerfile, а не «мелкие детали». Часовой пояс, локаль и truststore могут незаметно «поехать» между dev и prod, если не зафиксировать их явно. В контейнерном мире ты либо управляешь этими параметрами сам, либо за тебя это делает платформа. В любом случае, Spring-приложение должно чётко понимать, в каком времени и с какими сертификатами оно живёт.
+
+# 3. Конфигурация, секреты и профили
+
+## Externalized config: environment, system properties, mounted files; profiles (dev/test/prod)
+
+Первый принцип конфигурации в контейнерном мире — **ничего важного не должно быть захардкожено внутри образа**. Spring Boot из коробки поддерживает внешнюю конфигурацию («externalized configuration»): он собирает свойства из `application.yml/properties`, переменных окружения, системных свойств, аргументов командной строки и дополнительных файлов. Важно привыкнуть к мысли, что в Docker/K8s главным источником становятся именно переменные окружения и примонтированные файлы, а `application.yml` в образе задаёт только разумные дефолты.
+
+Spring Boot имеет чёткий приоритет источников конфигурации: аргументы командной строки и переменные окружения перекрывают настройки из `application.yml`. В контейнере это позволяет описать базовую конфигурацию в образе (общие опции, не зависящие от окружения), а конкретные параметры среды — URL БД, профили, ключи интеграций — передавать извне. Такой подход облегчает эксплуатацию: для смены БД или ломания фича-флага не нужно пересобирать образ, достаточно изменить значения в Deployment/ConfigMap.
+
+В Docker и Kubernetes есть три основных способа подать конфигурацию приложению: переменные окружения (`env`), системные свойства (`JAVA_TOOL_OPTIONS`, `SPRING_APPLICATION_JSON`) и файловые конфиги (монтируемые как volume). В простых случаях достаточно env: `SPRING_DATASOURCE_URL`, `SPRING_PROFILES_ACTIVE`, `APP_FEATURE_X_ENABLED`. Для больших конфигов (например, JSON/JKS) удобнее монтировать файл, а Spring Boot настраивать через путь `app.config.file=/config/app-config.json`. Важно выбирать форму, в которой конфиг удобно ревьюить и версионировать.
+
+Профили Spring Boot (`dev`, `test`, `prod`) становятся естественным механизмом разделения конфигов по окружениям. В образ можно положить `application.yml` с общими настройками и, например, `application-prod.yml` с продовыми значениями, а активный профиль задавать через `SPRING_PROFILES_ACTIVE=prod` в k8s-манифесте. Тогда один и тот же образ будет вести себя по-разному в dev/stage/prod, но код и бинарник останутся идентичными — это критично для воспроизводимости и отладки.
+
+Хорошая практика — минимизировать количество environment-зависимых значений в `application.yml` и вместо этого использовать плейсхолдеры с дефолтами. Например, `url: ${APP_DB_URL:jdbc:postgresql://postgres:5432/app}`. На локальной машине это позволит жить с дефолтами, а в проде значения будут перекрываться через env. Такой подход прозрачен для ревью: видно, какие параметры ожидаются снаружи и какие дефолты будут, если их не передали.
+
+Для работы с типизированной конфигурацией в Spring Boot удобно использовать `@ConfigurationProperties`. В Docker/K8s это особенно полезно: можно описать ожидаемые свойства, их типы и потом спокойно читать их в коде, не дергая `Environment` руками. Ниже пример Java-класса конфигурации, который собирает настройки сервиса и будет заполняться из `application.yml` и переменных окружения.
+
+```java
+package com.example.springdocker.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+@Component
+@ConfigurationProperties(prefix = "app.service")
+public class ServiceProperties {
+
+    /**
+     * Базовый URL внешнего API.
+     */
+    private String externalBaseUrl;
+
+    /**
+     * Тайм-аут в миллисекундах.
+     */
+    private int timeoutMs = 2000;
+
+    public String getExternalBaseUrl() {
+        return externalBaseUrl;
+    }
+
+    public void setExternalBaseUrl(String externalBaseUrl) {
+        this.externalBaseUrl = externalBaseUrl;
+    }
+
+    public int getTimeoutMs() {
+        return timeoutMs;
+    }
+
+    public void setTimeoutMs(int timeoutMs) {
+        this.timeoutMs = timeoutMs;
+    }
+}
+```
+
+```kotlin
+package com.example.springdocker.config
+
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.stereotype.Component
+
+@Component
+@ConfigurationProperties(prefix = "app.service")
+class ServiceProperties {
+
+    /**
+     * Базовый URL внешнего API.
+     */
+    var externalBaseUrl: String? = null
+
+    /**
+     * Тайм-аут в миллисекундах.
+     */
+    var timeoutMs: Int = 2000
+}
+```
+
+В `application.yml` конфигурация может выглядеть так, с учётом dev/prod профилей и внешних переменных окружения. Обрати внимание: часть значений берётся прямо из env, а часть — имеет безопасные дефолты для dev.
+
+```yaml
+app:
+  service:
+    external-base-url: "${APP_EXTERNAL_BASE_URL:http://mock-api:8080}"
+    timeout-ms: ${APP_EXTERNAL_TIMEOUT_MS:2000}
+
+spring:
+  profiles:
+    active: "${SPRING_PROFILES_ACTIVE:dev}"
+```
+
+Чтобы включить генерацию metadata для `@ConfigurationProperties` (подсказки в IDE и более строгая проверка), в Gradle стоит добавить configuration-processor. Для Java это обычный `annotationProcessor`, для Kotlin — через `kapt`.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter'
+    annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter")
+    annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
+}
+```
+
+В Docker Compose externalized config реализуется через секцию `environment` и `.env` файлы. Простой пример сервиса, который поднимает Spring Boot контейнер и пробрасывает ему профиль и URL внешнего API, может выглядеть так: значения легко менять под dev/stage, не трогая образ.
+
+```yaml
+version: "3.9"
+
+services:
+  orders-service:
+    image: registry.example.com/orders-service:1.0.0
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      APP_EXTERNAL_BASE_URL: http://mock-api:8080
+    ports:
+      - "8080:8080"
+```
+
+В Kubernetes тот же принцип реализуется через `env` и ConfigMap. Пример фрагмента Deployment’а: профиль `prod` и URL внешнего сервиса передаются через переменные окружения, а Spring Boot уже сам соберёт `ServiceProperties` из этих значений.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: registry.example.com/orders-service:1.0.0
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: APP_EXTERNAL_BASE_URL
+              value: "https://external-api.internal"
+```
+
+В итоге externalized-config в связке Spring + Docker/K8s сводится к нескольким твёрдым правилам: не зашивать окружение в код/образ, использовать профили для поведения, env и монтируемые файлы — для данных, и всегда иметь явный типизированный слой конфигурации, который можно тестировать и валидировать.
+
+---
+
+## Secrets: файловые и env-секреты; шифрование конфигурации, ключи/сертификаты, ротация
+
+Секреты — это подмножество конфигурации, которое по-хорошему вообще не должно попадать ни в образ, ни в Git. Речь о паролях к БД, токенах, ключах, приватных сертификатах. В Docker/K8s их передают либо через переменные окружения, либо через файлы, примонтированные в контейнер (Secrets/volumes). Spring Boot в обоих случаях видит их как обычные свойства, но твоя задача — не сделать так, чтобы они случайно «приварились» к образу и лежали рядом с кодом.
+
+В Kubernetes базовый механизм — ресурс `Secret`. Он хранит данные в etcd кластера (обычно в base64, иногда с шифрованием at-rest), а в Pod’ы попадает либо как env (`envFrom`, `env`), либо как файловый том (`secret` volume). Переменные окружения удобны для коротких строк: `DB_PASSWORD`, `JWT_SECRET`. Файлы — для длинных структур: `keystore.jks`, `tls.key`, `tls.crt`. В Docker Compose `.env` файлы и `secrets` работают похожим образом, но защиты меньше — там всё сильно зависит от дисциплины команды.
+
+Spring Boot совместим с обоими подходами. Пароль к БД можно прокинуть через env `SPRING_DATASOURCE_PASSWORD`, а TLS-ключ — как файл, путь к которому прописан в `application.yml` (`server.ssl.key-store=/etc/ssl/keystore.jks`). Главное — не держать значения в `application-prod.yml` внутри образа. Этот файл в образе может содержать только плейсхолдеры и дефолты, но не реальные секреты.
+
+Пример Kubernetes Secret для БД может выглядеть так (на практике значения будут base64, здесь для читаемости — обычная строка). Подключается он в Deployment, а Spring Boot считывает их через стандартные свойства.
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: demo-tls
+  name: db-credentials
 type: Opaque
-data:
-  keystore.p12: <base64>
+stringData:
+  username: app_user
+  password: s3cr3tP@ss
 ```
-
-`application.yml`:
 
 ```yaml
-server:
-  ssl:
-    enabled: true
-    key-store: /etc/ssl/keystore.p12
-    key-store-password: ${SSL_PASSWORD}
-    key-store-type: PKCS12
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: registry.example.com/orders-service:1.0.0
+          env:
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
 ```
 
-Java:
+В коде Spring Boot при этом достаточно описать `DataSource` или довериться автоконфигурации. Но часто секреты нужны и в бизнес-логике (например, ключ подписи токенов). Тогда удобно опять же использовать `@ConfigurationProperties`, при этом важно никогда не логировать значения и не «светить» их в `/actuator/env`.
 
 ```java
-package com.example.demo;
+package com.example.springdocker.secrets;
 
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 @Component
-class SecretConsumer {
-  SecretConsumer(@Value("${server.ssl.key-store}") String path) {
-    System.out.println("Keystore path = " + path);
-  }
+@ConfigurationProperties(prefix = "security.jwt")
+public class JwtSecretProperties {
+
+    /**
+     * Секрет для подписи JWT.
+     */
+    private String signingKey;
+
+    public String getSigningKey() {
+        return signingKey;
+    }
+
+    public void setSigningKey(String signingKey) {
+        this.signingKey = signingKey;
+    }
 }
 ```
 
-Kotlin:
-
 ```kotlin
-package com.example.demo
+package com.example.springdocker.secrets
 
-import org.springframework.beans.factory.annotation.Value
+import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
 
 @Component
-class SecretConsumer(
-    @Value("\${server.ssl.key-store}") path: String
-) {
-    init { println("Keystore path = $path") }
+@ConfigurationProperties(prefix = "security.jwt")
+class JwtSecretProperties {
+
+    /**
+     * Секрет для подписи JWT.
+     */
+    var signingKey: String? = null
 }
 ```
 
-Docker Compose (фрагмент):
+В `application.yml` ты не пишешь сам секрет, а только ожидаемый ключ и, при желании, дефолт для локальной разработки (например, слабый тестовый ключ). В проде его всегда перекрывает Secret. Так обеспечивается разделение: образ знает, что секрет нужен, но не знает сам секрет.
 
 ```yaml
-services:
-  app:
-    environment:
-      SSL_PASSWORD: "${SSL_PASSWORD}"
-    volumes:
-      - ./secrets/keystore.p12:/etc/ssl/keystore.p12:ro
+security:
+  jwt:
+    signing-key: "${JWT_SIGNING_KEY:dev-secret-key}"
 ```
+
+Отдельная тема — шифрование конфигурации. В больших системах часто используют Spring Cloud Config + шифрование значений (через KMS/Vault), либо напрямую интегрируются с Vault через Spring Vault. Тогда секреты вообще не лежат в Kubernetes Secret, а подтягиваются приложением при старте по защищённому каналу и кэшируются в памяти. Это усложняет конфигурацию, но даёт гибкую ротацию и централизованный контроль доступа.
+
+Ротация секретов — больное место. Хорошая практика — делать так, чтобы приложение могло пережить смену пароля/ключа без полного простоя: обновление Secret в k8s, rolling restart Pod’ов, при необходимости поддержка нескольких ключей подписи (старый+новый) на время миграции. Для этого бизнес-код должен быть готов к ситуации «ключ поменялся», а схема хранения — позволять хранить несколько версий ключей и метаданные о том, какой активен.
+
+В Docker Compose секреты часто проваливаются через `.env` файлы. Здесь важно жестко контролировать практики: `.env` никогда не коммитится в Git, лежит только локально или в secret-хранилище CI; образ не содержит `ENV DB_PASSWORD=...`; в логах и exception’ах секреты не печатаются. Даже в dev-окружении лучше приучить команду не хардкодить пароли в конфиг, чтобы не привыкать к плохому.
+
+И наконец, код должен быть написан так, чтобы секреты **случайно не утекали**: не логировать целиком URL с кредами, не печатать `JwtSecretProperties` через `toString()`, не отдавать `/actuator/env` анонимно в проде. В Spring Boot 3 многие вещи уже прикрыты (маскирование некоторых свойств), но лучше осознанно проходиться по конфигурации и логам, чем надеяться на магию.
 
 ---
 
-## 12-фактор: неизменяемый образ, параметры — извне; отдельные билды на «dev-фича» не допускаются.
+## 12-фактор: неизменяемый образ, параметры — извне; отдельные билды на «dev-фича» не допускаются
 
-Смысл 12-фактора — один и тот же образ катится на все окружения, а **параметры** меняются снаружи. Не делайте разные сборки «dev/prod» с разными JAR’ами — это увеличивает риск дрейфа и ловли «окруженческих» багов.
+Принцип 12-факторных приложений говорит: **один код — одно приложение — много окружений, конфиг снаружи**. В контейнерном мире это означает, что у тебя есть **один Docker-образ** сервисa, который запускается в dev, stage и prod, а различается только набором переменных окружения, секретов, монтируемых конфигов и, максимум, активными профилями. Идея «соберём отдельный образ для dev/prod с разными `application.yml`» напрямую нарушает этот принцип и сильно усложняет жизнь.
 
-Версионируйте только код/инфраструктуру, а не конфиги. Для dev используйте `docker-compose.override.yml` или профили, но образ — тот же. В K8s — разные values для Helm, один chart, один образ.
+Неизменяемый образ — это артефакт, который после сборки **не меняется**. Его нельзя «подправить руками» на сервере, нельзя «докинуть пару jar-ников» или изменить конфиг внутри контейнера. Все изменения происходят через новую сборку образа и новый деплой. В связке Spring + Docker это реализуется через жёсткий договор: Dockerfile + `build.gradle` в репозитории, любые изменения только через PR и CI, никакого `docker commit` на проде.
 
-Feature-flags выносятся в конфигурацию или сервис фичей. Нельзя bake’ить «на лету» флаги в контейнер и выкатывать «специальный образ» для тестов.
+Разделение «dev-образ» и «prod-образ» выглядит заманчиво: в dev включить Actuator-эндпоинты и Swagger, в prod выключить; в dev использовать in-memory БД, в prod Postgres. Но всё это отлично решается Spring-профилями и внешней конфигурацией. Оставаясь в рамках одного образа, ты сохраняешь гарантию, что то, что тестировалось в stage, — это действительно тот же бинарник, который пойдёт в prod, а не собранный по-другому артефакт.
 
-**Код/конфиг:**
-Java:
+Spring Boot профили помогают реализовать это разделение органично. В `application.yml` можно задать общие части конфигурации, а в `application-prod.yml` и `application-dev.yml` — различия. В Dockerfile нет ни слова про dev/prod, только старт приложения. Активный профиль задаётся через `SPRING_PROFILES_ACTIVE`. Тогда новый релиз — это: собрать образ → протестировать в dev/stage → тем же образом, с другим профилем/конфигом, задеплоить в prod.
 
-```java
-package com.example.demo;
+Пример минимального `application.yml`, который рассчитан на такой подход: основные параметры приходят из env, профили — снаружи, а дефолты позволяют комфортно работать локально. Никаких «prod only» значений в образе не хранится.
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.web.bind.annotation.*;
+```yaml
+spring:
+  profiles:
+    active: "${SPRING_PROFILES_ACTIVE:dev}"
 
-@RestController
-class FeatureFlagController {
-  @Value("${feature.newFlow:false}")
-  private boolean newFlow;
+app:
+  feature-x-enabled: ${APP_FEATURE_X_ENABLED:false}
+  external-url: "${APP_EXTERNAL_URL:http://localhost:8081}"
+```
 
-  @GetMapping("/feature")
-  public String flag() {
-    return newFlow ? "new flow" : "old flow";
-  }
+В Gradle/Jib или buildpacks политика тегов также должна отражать неизменяемость артефакта. Сборка одна, образ один, теги могут быть разными (`1.2.3`, `1.2.3+sha`), но содержимое образа не меняется. На стороне Kubernetes разные окружения ссылаются на один и тот же образ, просто с разными values-файлами (Helm) или разными `Deployment`/`ConfigMap` в разный namespace.
+
+```groovy
+// build.gradle (Groovy) — пример иммутабельного тегирования
+jib {
+    to {
+        image = "registry.example.com/orders-service:${version}"
+        tags = [ "${version}-${System.getenv('GIT_SHA') ?: 'dev'}" ]
+    }
 }
 ```
 
-Kotlin:
+```kotlin
+// build.gradle.kts (Kotlin)
+jib {
+    to {
+        image = "registry.example.com/orders-service:$version"
+        tags = setOf("$version-${System.getenv("GIT_SHA") ?: "dev"}")
+    }
+}
+```
+
+Чтобы прочувствовать 12-факторность на уровне кода, можно добавить простой контроллер, который показывает текущий профиль и фича-флаг. При запуске одного и того же образа с разными env поведение меняется, но бинарник остаётся тем же самым.
+
+```java
+package com.example.springdocker.twelvefactor;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Arrays;
+import java.util.Map;
+
+@RestController
+public class ProfileInfoController {
+
+    private final Environment environment;
+
+    @Value("${app.feature-x-enabled:false}")
+    private boolean featureXEnabled;
+
+    public ProfileInfoController(Environment environment) {
+        this.environment = environment;
+    }
+
+    @GetMapping("/api/profile-info")
+    public Map<String, Object> profileInfo() {
+        return Map.of(
+                "activeProfiles", Arrays.asList(environment.getActiveProfiles()),
+                "featureXEnabled", featureXEnabled
+        );
+    }
+}
+```
 
 ```kotlin
-package com.example.demo
+package com.example.springdocker.twelvefactor
 
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.core.env.Environment
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
-class FeatureFlagController(
-    @Value("\${feature.newFlow:false}") private val newFlow: Boolean
+class ProfileInfoController(
+    private val environment: Environment,
+    @Value("\${app.feature-x-enabled:false}")
+    private val featureXEnabled: Boolean
 ) {
-    @GetMapping("/feature")
-    fun flag(): String = if (newFlow) "new flow" else "old flow"
+
+    @GetMapping("/api/profile-info")
+    fun profileInfo(): Map<String, Any> =
+        mapOf(
+            "activeProfiles" to environment.activeProfiles.toList(),
+            "featureXEnabled" to featureXEnabled
+        )
 }
 ```
 
-Helm values (dev/prod различаются только параметрами):
-
-```yaml
-env:
-  - name: FEATURE_NEWFLOW
-    value: "true"
-```
-
-`application.yml`:
-
-```yaml
-feature:
-  newFlow: ${FEATURE_NEWFLOW:false}
-```
+Ключевая анти-практика, которой надо избегать, — «dev-ветка собирается в один образ, prod — в другой, ещё и с разными Dockerfile». Так легко получить ситуацию, когда dev и prod разъехались на уровне базового образа, JVM-версии, зависимостей. При любом прод-инциденте отладка превращается в кошмар: то, что вы починили в dev, может не иметь отношения к тому, что лежит в prod. Один образ и внешняя конфигурация — не модная мантра, а реальный способ держать систему в вменяемом состоянии.
 
 ---
 
-## Проверка конфигов на старте: fail-fast, валидация значений, безопасные дефолты.
+## Проверка конфигов на старте: fail-fast, валидация значений, безопасные дефолты
 
-Лучше упасть на старте, чем работать с неожиданными дефолтами. В Spring Boot используйте `@ConfigurationProperties` + `@Validated` для строгой схемы конфигурации. Опциональные параметры — с безопасными дефолтами; обязательные — без дефолтов, со strict-валидацией.
+Даже самая аккуратная externalized-конфигурация бессмысленна, если приложение **молча стартует с неправильными значениями** и падает уже в рантайме. В мире Docker/K8s правильный подход — fail-fast: если что-то не так с конфигом, лучше упасть на старте Pod’а, чем принимать часть трафика, отдавать 500 и загадочно падать через несколько минут. Для Spring Boot естественный инструмент — `@ConfigurationProperties` + `@Validated` с `jakarta.validation` аннотациями.
 
-Проверяйте порты/URL/таймауты на валидность, минимумы/максимумы, что секреты не пустые. В логи выводите **факты** (включена ли фича), но не значения секретов. В CI можно прогонять «dry-run» с реальными values.
+В конфигурационных классах можно описать ожидаемые свойства и повесить на них ограничения: `@NotBlank`, `@Min`, `@Max`, `@Pattern`. Boot при старте создаст бин, провалидирует значения и, если они не удовлетворяют ограничениям, завалит контекст. В Docker/K8s это выглядит как CrashLoopBackoff с понятной ошибкой в логах: «property X must not be blank». Так проще найти ошибку в ConfigMap/Secret, чем ловить непонятные NPE в середине бизнес-кода.
 
-Если конфиг критичен (например, обязательная зависимость), в `SmartLifecycle`/`ApplicationRunner` можно выполнить явную проверку доступности (с таймаутом) и упасть, чтобы не «зависнуть» в `CrashLoopBackOff`.
-
-**Код/конфиг:**
-Gradle Groovy:
-
-```groovy
-dependencies {
-  annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
-}
-```
-
-Gradle Kotlin:
-
-```kotlin
-dependencies {
-    annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
-}
-```
-
-Java:
+Ниже пример Java-класса конфигурации с валидацией. Он описывает параметры подключения к внешнему API и тайм-ауты. Если кто-то забудет задать URL, приложение не стартанёт.
 
 ```java
-package com.example.demo;
+package com.example.springdocker.validation;
 
-import jakarta.validation.constraints.*;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
 
 @Component
-@ConfigurationProperties("app")
+@ConfigurationProperties(prefix = "external.api")
 @Validated
-class AppProps {
-  @NotBlank
-  private String externalUrl;
+public class ExternalApiProperties {
 
-  @Min(100) @Max(10000)
-  private int httpTimeoutMs = 1000;
+    @NotBlank
+    private String baseUrl;
 
-  public String getExternalUrl() { return externalUrl; }
-  public void setExternalUrl(String v) { this.externalUrl = v; }
-  public int getHttpTimeoutMs() { return httpTimeoutMs; }
-  public void setHttpTimeoutMs(int v) { this.httpTimeoutMs = v; }
+    @Min(100)
+    private int connectTimeoutMs = 500;
+
+    @Min(100)
+    private int readTimeoutMs = 2000;
+
+    public String getBaseUrl() {
+        return baseUrl;
+    }
+
+    public void setBaseUrl(String baseUrl) {
+        this.baseUrl = baseUrl;
+    }
+
+    public int getConnectTimeoutMs() {
+        return connectTimeoutMs;
+    }
+
+    public void setConnectTimeoutMs(int connectTimeoutMs) {
+        this.connectTimeoutMs = connectTimeoutMs;
+    }
+
+    public int getReadTimeoutMs() {
+        return readTimeoutMs;
+    }
+
+    public void setReadTimeoutMs(int readTimeoutMs) {
+        this.readTimeoutMs = readTimeoutMs;
+    }
 }
 ```
 
-Kotlin:
-
 ```kotlin
-package com.example.demo
+package com.example.springdocker.validation
 
-import jakarta.validation.constraints.Max
 import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.NotBlank
 import org.springframework.boot.context.properties.ConfigurationProperties
@@ -1202,634 +1955,862 @@ import org.springframework.stereotype.Component
 import org.springframework.validation.annotation.Validated
 
 @Component
-@ConfigurationProperties("app")
+@ConfigurationProperties(prefix = "external.api")
 @Validated
-class AppProps {
-    @field:NotBlank
-    var externalUrl: String = ""
+class ExternalApiProperties {
 
-    @field:Min(100) @field:Max(10000)
-    var httpTimeoutMs: Int = 1000
+    @NotBlank
+    var baseUrl: String? = null
+
+    @Min(100)
+    var connectTimeoutMs: Int = 500
+
+    @Min(100)
+    var readTimeoutMs: Int = 2000
 }
 ```
 
-`application.yml` (пример корректного старта):
+Для того чтобы валидация заработала, в проекте должен быть подключён starter валидации. В Spring Boot 3 это `spring-boot-starter-validation`. В Gradle это выглядит так:
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-validation")
+}
+```
+
+В `application.yml` значения задаются как обычно, но с учётом того, что некоторые поля теперь обязательны. Например, `base-url` нельзя оставлять пустым ни в одном окружении, иначе сервис просто не поднимется. Это полезный способ зафиксировать инварианты на уровне конфигурации.
 
 ```yaml
-app:
-  external-url: https://example.org
-  http-timeout-ms: 500
+external:
+  api:
+    base-url: "${EXTERNAL_API_BASE_URL:}"
+    connect-timeout-ms: ${EXTERNAL_API_CONNECT_TIMEOUT_MS:500}
+    read-timeout-ms: ${EXTERNAL_API_READ_TIMEOUT_MS:2000}
 ```
+
+Помимо валидации конфигов, полезно реализовать явную **проверку критичных зависимостей на старте**. Например, если без БД сервис не имеет смысла, то можно при инициализации сделать тестовый запрос и, в случае недоступности БД, выбросить исключение. Тогда Pod не перейдёт в готовое состояние, а оркестратор решит, что его нужно перезапустить или пометить как неготовый. Это лучше, чем принимать половину запросов и падать в середине транзакции.
+
+```java
+package com.example.springdocker.validation;
+
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
+
+@Component
+public class DatabaseStartupCheck {
+
+    private static final Logger log = LoggerFactory.getLogger(DatabaseStartupCheck.class);
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public DatabaseStartupCheck(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @PostConstruct
+    public void check() {
+        try {
+            jdbcTemplate.execute("SELECT 1");
+            log.info("Database connectivity check passed");
+        } catch (Exception ex) {
+            log.error("Database connectivity check failed", ex);
+            throw new IllegalStateException("Cannot connect to database on startup", ex);
+        }
+    }
+}
+```
+
+```kotlin
+package com.example.springdocker.validation
+
+import jakarta.annotation.PostConstruct
+import org.slf4j.LoggerFactory
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.stereotype.Component
+
+@Component
+class DatabaseStartupCheck(
+    private val jdbcTemplate: JdbcTemplate
+) {
+
+    private val log = LoggerFactory.getLogger(DatabaseStartupCheck::class.java)
+
+    @PostConstruct
+    fun check() {
+        try {
+            jdbcTemplate.execute("SELECT 1")
+            log.info("Database connectivity check passed")
+        } catch (ex: Exception) {
+            log.error("Database connectivity check failed", ex)
+            throw IllegalStateException("Cannot connect to database on startup", ex)
+        }
+    }
+}
+```
+
+Безопасные дефолты — это про то, что **по умолчанию система должна вести себя максимально защитно**. Если фича требует внешнего API, разумно по умолчанию выключить её (`feature-enabled=false`) и явно включать в тех окружениях, где конфиг гарантированно корректный. То же с тайм-аутами и ретраями: лучше чуть завышенный тайм-аут и ограниченное число попыток, чем бесконечное зависание. При этом все дефолты должны быть задокументированы, чтобы не возникало сюрпризов.
+
+В связке Docker/K8s fail-fast и валидация конфигов работают особенно хорошо: если Pod не прошёл инициализацию, его статус быстро станет `CrashLoopBackOff`, и о проблеме узнают по алёртам/дашбордам. Важно только не путать «ошибки конфигурации» с временными сетевыми проблемами: для вторых чаще используют health-check’и и retry-политику, а не валят приложение на старте. Но для того, что можно проверить сразу (обязательные свойства, корректность форматов, URL, порты), падение на старте — правильная тактика.
 
 # 4. Сеть, протоколы и прокси
 
-## Порты и биндинг: server.port, host networking vs bridge; keep-alive/HTTP/2, gzip
+## Порты и биндинг: `server.port`, host networking vs bridge; keep-alive/HTTP/2, gzip
 
-В контейнерах приложение обычно слушает на `0.0.0.0`, иначе Kubernetes/Compose не смогут пробросить порт. В Spring Boot это поведение по умолчанию: биндинг на все интерфейсы. Для явности можно зафиксировать `server.address=0.0.0.0` и указать `server.port=8080`. На стороне Docker/K8s порты мапятся наружу через `ports:` (Compose) или `Service` (K8s). Для одиночного хоста есть соблазн использовать `--network host`, но это уменьшает изоляцию и мешает нескольким сервисам делить одни и те же порты; в 99% случаев **bridge/overlay** — правильный выбор.
+Первое, что важно понимать про сеть в Docker/K8s: контейнер живёт в своём отдельном сетевом пространстве. Spring Boot по умолчанию поднимает HTTP-сервер на порту `8080` и биндится на `0.0.0.0` (на все интерфейсы внутри контейнера). Для приложения, работаюшего в Docker, это как раз то, что нужно: контейнерный IP и порт 8080 будут доступны через Docker bridge или сервис в Kubernetes. Перенастраивать порт можно через `server.port`, но с точки зрения контейнера это всегда «внутренний» порт, который потом мапится на внешний.
 
-HTTP keep-alive критичен для производительности: он экономит TCP-рукопожатия и TLS-шифрование. В Boot keep-alive включён; если вы используете реверс-прокси (Nginx/Ingress), следите, чтобы оно не закрывало соединения слишком агрессивно (таймауты должны быть согласованы с сервером приложений). Для высоконагруженных API полезен HTTP/2: мультиплексирование одно соединение/несколько запросов снижает накладные расходы, особенно за TLS.
+В Docker (compose/ручной запуск) связь между «внешним миром» и этим внутренним портом идёт через правила NAT: `-p 8080:8080` означает «порт 8080 хоста → порт 8080 контейнера». Сам Spring об этом ничего не знает — он просто слушает свой порт. В проде часто вообще не мапят контейнерный порт на хост напрямую, а прячут его за обратным прокси или NodePort/LoadBalancer сервисом. Образ при этом должен оставаться одинаково работающим: он не должен зависеть от того, как именно будет проброшен порт снаружи.
 
-Gzip/deflate/brotli — сжатие ответов экономит трафик и накладные расходы, но расходует CPU. Лучший компромисс — включать сжатие **на прокси у периметра** (Nginx/Ingress), а в приложении — только для отдельных случаев (например, когда ответ непроксифицируется). Если всё-таки включаете сжатие в Boot, ограничивайте минимальный размер тела и поддерживаемые MIME-типы, чтобы не сжимать мелочь и двоичные форматы (PNG/JPEG).
+Модель сети в Docker по умолчанию — bridge. Контейнеры получают свои IP в отдельной подсети и общаются через виртуальный мост. Для общения между сервисами используется DNS-имя сервиса/контейнера, а не `localhost`. В Kubernetes это ещё более явно: клиент обращается к `http://orders-service:8080` (ClusterIP Service), а не к IP Pod’а. Spring Boot должен быть настроен так, чтобы не закладываться на конкретный IP и спокойно жить за этими абстракциями.
 
-На уровне Tomcat/Jetty важно контролировать размеры буферов и заголовков (см. пункт об ограничениях). Иначе при нагрузке на длинные заголовки (JWT, cookies) можно попасть в неожиданные 400/431. Также учитывайте, что HTTP/2 в Tomcat требует включённого ALPN; на старых JDK/базовых образах нужны правильные пакеты/флаги.
+Режим host network (`hostNetwork: true` в K8s или `--network host` в Docker) фактически убирает изоляцию: контейнер использует сетевой стек хоста, и `server.port=8080` означает «слушать прям на 8080 хоста». Это иногда нужно для сервисов, которым критична задержка или нужен прямой доступ к низкоуровневым сетевым функциям, но для обычного Spring-сервиса это скорее антипаттерн. Выигрыш минимальный, а риски — конфликты портов, сложность диагностики, ослабление изоляции.
 
-Сетевые параметры контейнера и JVM пересекаются: если CPU/память задраны «впритык», keep-alive/HTTP/2 могут страдать от GC-пешек/контеншена. Наблюдайте pool’ы соединений, GC-паузы и таймауты — сеть «тянет» за собой тюнинг всей платформы. Для бэкпрешсера обязательно задавайте таймауты клиентам (HTTP/DB/Kafka), чтобы не зависать на зомби-коннектах.
+HTTP keep-alive — это возможность держать одно TCP-соединение открытым и отправлять по нему несколько HTTP-запросов подряд. Для Spring Boot это управляется сервером (Tomcat, Undertow, Netty) и сильно влияет на производительность: без keep-alive под каждый запрос пришлось бы заново открывать соединение, что при высокой RPS быстро убьёт и приложение, и балансер. Поэтому в проде keep-alive всегда включён, а лимиты на количество одновременных соединений и время жизни соединения выстраиваются в связке с прокси и клиентами.
 
-В практике: фиксируем `server.port`, включаем HTTP/2, если у вас TLS на приложении (или h2c за доверенным прокси), и оставляем сжатие на прокси. Для разработчика это пара свойств; для SRE — согласованные таймауты и лимиты на всех слоях.
+HTTP/2 добавляет поверх этого мультиплексирование: несколько параллельных запросов в рамках одного соединения. Для Spring Boot 3.x HTTP/2 включается через конфигурацию, чаще всего поверх TLS. В Docker/K8s это важный параметр: если фронтовой балансер (Ingress Controller, API Gateway) поддерживает HTTP/2, а backend нет, часть преимущества теряется. Но включать HTTP/2 «просто так» тоже не стоит: нужно понимать, что меняется модель соединений и как это повлияет на метрики и тюнинг.
 
-**Код (Java): минимальная проверка биндинга/HTTP-версии**
+Gzip-сжатие ответов — ещё один элемент сетевой конфигурации, который надо осознанно включать. С одной стороны, оно уменьшает трафик и ускоряет ответы на больших payload’ах (JSON, HTML), с другой — съедает CPU на сжатие. В контейнерной среде это особенно чувствительно: CPU лимитирован, и если отдать всё на gzip в приложении, можно словить throttling и деградацию. Поэтому часто компрессию делают либо на edge-прокси (Nginx/Ingress), либо аккуратно включают в приложении только для «тяжёлых» эндпоинтов.
+
+Ещё один аспект — грамотное выставление заголовков `Connection`, `Keep-Alive`, `Transfer-Encoding` и `Content-Encoding`. В связке «клиент → прокси → приложение» каждый слой имеет свои таймауты и лимиты, и если их не согласовать, можно получить странные эффекты: приложение считает, что соединение живо, а балансер уже его закрыл; или наоборот, приложение закрывает соединение, а прокси держит его открытым. Поэтому сетевые настройки Spring Boot нужно рассматривать в контексте всей цепочки.
+
+С точки зрения Kubernetes, `server.port` — это просто контейнерный порт. Дальше создаётся Service (ClusterIP/LoadBalancer), который мапит этот порт на сервисный. Важно не забывать, что `containerPort` в Pod’е — это только документация для k8s (на реальное поведение контейнера не влияет), а реальное биндинг-поведение задаётся именно Spring’ом (`server.port` и `server.address`). Практически всегда в контейнере нужно слушать на `0.0.0.0`, а не на `localhost`.
+
+Правильный сетевой слой в Docker/K8s для Spring-сервиса — это не только «что-то слушает 8080». Это согласованные порты, ясная модель соединений (keep-alive, HTTP/1.1 vs HTTP/2), чёткие границы ответственности (где работает gzip, где TCP-балансировка), и отсутствие «магии» в виде host-сетей или случайных NAT-правил. Если это не продумано, любая нагрузка или деградация сети превращается в лотерею: кто первым решит закрыть соединение и как отреагируют остальные.
+
+Ниже — минимальный `application.yml` для Spring Boot 3.x, где зафиксирован порт сервера, включена HTTP-компрессия и подготовка к HTTP/2. Это типичная стартовая точка для контейнерного приложения.
+
+```yaml
+server:
+  port: 8080
+  address: 0.0.0.0
+  compression:
+    enabled: true
+    mime-types: "application/json,text/plain,text/html"
+    min-response-size: 1024
+  http2:
+    enabled: true
+```
+
+Зависимости для веб-старта в Gradle (Groovy и Kotlin DSL) — стандартный `spring-boot-starter-web`. Это база для всех дальнейших сетевых настроек.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+}
+```
+
+Простейший контроллер, через который можно проверить, что порт, gzip и keep-alive работают, остаётся обычным. Важна именно окружная конфигурация, а не сам код контроллера.
 
 ```java
 package com.example.net;
 
-import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.SpringApplication;
-import org.springframework.web.bind.annotation.*;
-
-@SpringBootApplication
-public class NetApp {
-  public static void main(String[] args) { SpringApplication.run(NetApp.class, args); }
-}
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-class NetController {
-  @GetMapping("/who")
-  public String who(HttpServletRequest req) {
-    return "proto=" + req.getProtocol() + " remote=" + req.getRemoteAddr() + " host=" + req.getServerName();
-  }
+public class NetInfoController {
+
+    @GetMapping("/api/ping")
+    public String ping() {
+        return "pong";
+    }
 }
 ```
-
-**Код (Kotlin): то же**
 
 ```kotlin
 package com.example.net
 
-import jakarta.servlet.http.HttpServletRequest
-import org.springframework.boot.autoconfigure.SpringBootApplication
-import org.springframework.boot.runApplication
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
-@SpringBootApplication
-class NetApp
-
-fun main(args: Array<String>) = runApplication<NetApp>(*args)
-
 @RestController
-class NetController {
-    @GetMapping("/who")
-    fun who(req: HttpServletRequest) = "proto=${req.protocol} remote=${req.remoteAddr} host=${req.serverName}"
+class NetInfoController {
+
+    @GetMapping("/api/ping")
+    fun ping(): String = "pong"
 }
-```
-
-`application.yml` (фрагмент):
-
-```yaml
-server:
-  address: 0.0.0.0
-  port: 8080
-  http2:
-    enabled: true
-# сжатие лучше на прокси; если нужно тут:
-#  compression:
-#    enabled: true
-#    min-response-size: 2KB
-#    mime-types: application/json,text/plain,text/html
 ```
 
 ---
 
-## Реверс-прокси/ingress: X-Forwarded-*, доверенные прокси и корректные ссылки/редиректы
+## Реверс-прокси/ingress: `X-Forwarded-*`, доверенные прокси и корректные ссылки/редиректы
 
-За прокси (Nginx/Ingress) приложение видит IP и схему прокси, а не клиента. Чтобы Spring корректно восстанавливал `scheme/host/port` и формировал правильные абсолютные ссылки/редиректы, включите поддержку заголовков `X-Forwarded-*`/`Forwarded`. В Boot 3+ достаточно установить стратегию обработки заголовков и, при необходимости, ограничить доверенные прокси.
+В реальном проде Spring-приложение почти никогда не торчит в интернет «голым». Перед ним стоит обратный прокси или Ingress Controller (Nginx, HAProxy, Envoy, Traefik, cloud load balancer). Этот слой принимает внешние соединения, может терминировать TLS, выполнять аутентификацию, лимитировать трафик, а затем пробрасывает запросы к приложению по HTTP (часто внутри кластера). По пути он переписывает `Host`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` — и если Spring Boot об этом не знает, он начинает строить неправильные ссылки и редиректы.
 
-Доверять нужно **только** собственным прокси/балансировщикам, иначе злоумышленник может подделать `X-Forwarded-Proto: https` и обмануть вашу генерацию ссылок. В Tomcat это делается через `RemoteIpValve` с шаблоном «внутренних» адресов. В мире Kubernetes доверенными обычно являются IP подсети Ingress-контроллера/Service LB.
+Проблема выглядит так: пользователь приходит на `https://api.example.com/orders`, Ingress терминирует TLS и прокидывает в приложение `http://orders-service:8080/orders` с заголовками `X-Forwarded-Proto: https`, `X-Forwarded-Host: api.example.com`. Если приложение не доверяет этим заголовкам, оно будет считать, что схема — `http` и хост — внутренний. В результате генерация абсолютных ссылок (в redirect’ах, в OpenAPI, в Location-заголовках) будет указывать на `http://orders-service:8080/...`, что для внешнего клиента сломано и небезопасно.
 
-Убедитесь, что прокси действительно проксирует нужные заголовки (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`). В Nginx это `proxy_set_header ...`. В Ingress-аннотациях часто достаточно включить `use-forwarded-headers: "true"`. Проверить можно эндпойнтом, который печатает `request.getHeader(...)` — удобно для диагностики.
+Spring Boot умеет корректно интерпретировать `X-Forwarded-*`, если включить поддержку форварденых заголовков. В современных версиях это делается через `server.forward-headers-strategy=framework` или фильтр `ForwardedHeaderFilter`. Но важно не включать это вслепую: если приложение оказывается доступно напрямую и кто-то снаружи подделает `X-Forwarded-Proto: https`, можно получить некорректную генерацию ссылок и потенциальные security-дыры.
 
-Неверная настройка ведёт к поломанным редиректам на `http://` вместо `https://`, неправильным absolute URL в ссылках и ошибкам OAuth2 callback’ов (redirect_uri). Если у вас проблемы именно с редиректами через `Spring Security`, всегда сначала проверьте forwarded-заголовки и доверенные прокси.
+В Kubernetes типичный паттерн: Ingress Controller доверенный, Pod’ы с приложением живут за ним и не доступны напрямую извне. В этом случае можно смело включать обработку `X-Forwarded-*` на стороне Spring и получать правильные абсолютные URL’ы. Важно при этом, чтобы Ingress гарантированно выставлял нужные заголовки (это стандарт для большинства контроллеров, но лучше не считать это само собой разумеющимся).
 
-В микросервисах согласованная передача `X-Request-ID`/`Traceparent` облегчает трассировку запросов через несколько сервисов. Проследите, чтобы прокси не перезаписывал эти заголовки, если они уже пришли от внешнего клиента, но добавлял свои при их отсутствии.
+Кроме схемы и хоста, `X-Forwarded-For` критичен для логирования реального IP клиента и для rate limiting на сторонних компонентах. Если его не учитывать и логировать только `remoteAddr` с точки зрения приложения, все запросы будут казаться пришедшими от IP Ingress'а или балансера. Spring Web уже умеет вытаскивать оригинальный IP из `X-Forwarded-For`, если правильно настроен, но при этом возникает вопрос доверия: нельзя слепо верить заголовку, пришедшему от клиента, поэтому цепочка прокси должна быть чётко задокументирована.
 
-Наконец, помните: заголовки могут быть длинными. Заложите запас в лимитах размера заголовков как на прокси, так и на сервере приложений (см. пункт об ограничениях).
-
-**Код (Java): включаем обработку forwarded-заголовков и доверяем своим прокси**
-
-```java
-package com.example.proxy;
-
-import org.apache.catalina.valves.RemoteIpValve;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
-import org.springframework.boot.web.server.WebServerFactoryCustomizer;
-import org.springframework.context.annotation.Bean;
-import org.springframework.web.bind.annotation.*;
-
-import jakarta.servlet.http.HttpServletRequest;
-
-@SpringBootApplication
-public class ProxyApp {
-  public static void main(String[] args) { SpringApplication.run(ProxyApp.class, args); }
-
-  @Bean
-  WebServerFactoryCustomizer<TomcatServletWebServerFactory> tomcatForwardedCustomizer() {
-    return factory -> factory.addEngineValves(remoteIpValve());
-  }
-
-  private RemoteIpValve remoteIpValve() {
-    RemoteIpValve valve = new RemoteIpValve();
-    valve.setProtocolHeader("X-Forwarded-Proto");
-    valve.setRemoteIpHeader("X-Forwarded-For");
-    // доверенные прокси: подсеть ingress-контроллера/балансировщика
-    valve.setInternalProxies("10\\.0\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+");
-    return valve;
-  }
-}
-
-@RestController
-class UrlController {
-  @GetMapping("/url")
-  public String url(HttpServletRequest r) {
-    String scheme = r.getScheme(); // учитывает X-Forwarded-Proto при RemoteIpValve
-    String host = r.getHeader("Host");
-    return scheme + "://" + host + r.getRequestURI();
-  }
-}
-```
-
-**Код (Kotlin): то же**
-
-```kotlin
-package com.example.proxy
-
-import jakarta.servlet.http.HttpServletRequest
-import org.apache.catalina.valves.RemoteIpValve
-import org.springframework.boot.autoconfigure.SpringBootApplication
-import org.springframework.boot.runApplication
-import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory
-import org.springframework.boot.web.server.WebServerFactoryCustomizer
-import org.springframework.context.annotation.Bean
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-
-@SpringBootApplication
-class ProxyApp {
-    @Bean
-    fun tomcatForwardedCustomizer() =
-        WebServerFactoryCustomizer<TomcatServletWebServerFactory> { factory ->
-            factory.addEngineValves(RemoteIpValve().apply {
-                protocolHeader = "X-Forwarded-Proto"
-                remoteIpHeader = "X-Forwarded-For"
-                internalProxies = "10\\.0\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+"
-            })
-        }
-}
-
-fun main(args: Array<String>) = runApplication<ProxyApp>(*args)
-
-@RestController
-class UrlController {
-    @GetMapping("/url")
-    fun url(r: HttpServletRequest) = "${r.scheme}://${r.getHeader("Host")}${r.requestURI}"
-}
-```
-
-`application.yml` (дополнительно):
+Ниже простой `application.yml`, который включает стратегию работы с форварденными заголовками и задаёт доверенные прокси. В новых версиях Boot лучше использовать `forward-headers-strategy=framework`, старое `use-forward-headers` считается устаревшим.
 
 ```yaml
 server:
   forward-headers-strategy: framework
 ```
 
----
+На стороне reverse-proxy (например, Nginx) нужно явно включить проброс нужных заголовков. Пример upstream-конфига: внешний `https://api.example.com` проксируется на Spring Boot контейнер, при этом корректно передаются `Host`, `X-Real-IP` и `X-Forwarded-*`.
 
-## TLS-терминация: где заканчивается шифрование (edge vs app), mTLS к внутренним зависимостям
-
-TLS можно «закончить» на периметре (LB/Ingress) — тогда трафик до приложения идёт как HTTP внутри кластера. Это проще и дешевле по CPU, но требует доверенной внутренней сети. Второй вариант — TLS до приложения; это нужно, если сеть недоверенная или вы хотите сквозной h2. Комбинированный подход: edge-TLS для внешнего трафика и **mTLS** для внутренних вызовов между сервисами (двусторонняя аутентификация сертификатами).
-
-При mTLS каждый участник предъявляет сертификат; сервис проверяет **клиентский** сертификат (client auth). В Spring Boot серверная сторона включается через `server.ssl.*` с `client-auth=need/want`, а клиент — через `SslContext`/`HttpClient`/`RestClient` с указанием client keystore и truststore. Сертификаты желательно перекатывать и ротировать автоматически (например, через cert-менеджер в K8s).
-
-Если терминируете TLS на прокси, не забудьте пробрасывать схему в заголовках (`X-Forwarded-Proto: https`), иначе приложение будет считать, что протокол — `http` и генерировать неправильные ссылки. Для gRPC/H2 лучше держать TLS до приложения.
-
-Проверка клиентских сертификатов — место, где легко «выстрелить в ногу»: убедитесь, что доверяете **только** нужному CA (корпоративному), а не системному «всему миру». Иначе чужой сертификат может пройти проверку. Для повышения безопасности используйте SAN-ограничения и короткоживущие сертификаты.
-
-Производительность: TLS стоит CPU. На Java 17+ это недорого, но всё же учитывайте при sizing. ALPN обязателен для HTTP/2: убедитесь, что у вас нужные JDK и базовый образ поддерживают его из коробки.
-
-Для отладки TLS в контейнерах полезно логировать включение SSL, печатать «как минимум» используемый протокол/шифр при старте, но **не** логировать содержимое ключей/паролей.
-
-**Код (Java): сервер с TLS и mTLS, клиент с client-cert**
-
-```java
-package com.example.tls;
-
-import jakarta.annotation.PostConstruct;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.SpringApplication;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestClient;
-
-@SpringBootApplication
-public class TlsApp {
-  public static void main(String[] args) { SpringApplication.run(TlsApp.class, args); }
-}
-
-@RestController
-class TlsController {
-  @GetMapping("/secure")
-  public String secure() { return "ok"; }
-}
-
-@Configuration
-class MtlsClientConfig {
-  @PostConstruct
-  void log() { System.out.println("mTLS client ready"); }
-
-  @Bean
-  RestClient mtlsClient() throws Exception {
-    var ssl = org.springframework.http.client.JdkClientHttpRequestFactoryBuilder
-        .create().ssl((s) -> {
-          s.trustStore(new java.io.File("truststore.jks").toPath(), "changeit".toCharArray());
-          s.keyStore(new java.io.File("keystore.p12").toPath(), "changeit".toCharArray(), "changeit".toCharArray());
-        }).build();
-    return RestClient.builder().requestFactory(ssl).baseUrl("https://internal-service:8443").build();
-  }
+```nginx
+location / {
+    proxy_pass http://orders-service:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
 
-**Код (Kotlin): то же**
+В Kubernetes Ingress Controller (Nginx) аналогичная логика обычно включена по умолчанию. Но если нужен строгий контроль доверенных прокси, можно ограничить список IP, от которых принимаются `X-Forwarded-*`, через настройки контроллера или сетевых политик. На уровне Spring это делается уже более тонкими фильтрами, если нужно.
 
-```kotlin
-package com.example.tls
+Чтобы показать эффект, удобно иметь контроллер, который возвращает клиенту «как я тебя вижу»: схему, хост и remoteAddr. Так легко отлаживать ошибки конфигурации `X-Forwarded-*` и понимать, кто же на самом деле общается с приложением.
 
-import jakarta.annotation.PostConstruct
-import org.springframework.boot.autoconfigure.SpringBootApplication
-import org.springframework.boot.runApplication
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.client.RestClient
+```java
+package com.example.net;
 
-@SpringBootApplication
-class TlsApp
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-fun main(args: Array<String>) = runApplication<TlsApp>(*args)
+import java.util.Map;
 
 @RestController
-class TlsController {
-    @GetMapping("/secure")
-    fun secure() = "ok"
-}
+public class RequestInfoController {
 
-@Configuration
-class MtlsClientConfig {
-    @PostConstruct fun log() = println("mTLS client ready")
-
-    @Bean
-    fun mtlsClient(): RestClient {
-        val factory = org.springframework.http.client.JdkClientHttpRequestFactoryBuilder
-            .create().ssl {
-                it.trustStore(java.io.File("truststore.jks").toPath(), "changeit".toCharArray())
-                it.keyStore(java.io.File("keystore.p12").toPath(), "changeit".toCharArray(), "changeit".toCharArray())
-            }.build()
-        return RestClient.builder().requestFactory(factory).baseUrl("https://internal-service:8443").build()
+    @GetMapping("/api/request-info")
+    public Map<String, String> info(HttpServletRequest request) {
+        String scheme = request.getScheme();
+        String host = request.getServerName();
+        String remoteAddr = request.getRemoteAddr();
+        return Map.of(
+                "scheme", scheme,
+                "host", host,
+                "remoteAddr", remoteAddr
+        );
     }
 }
 ```
 
-`application.yml` (сервер, mTLS):
+```kotlin
+package com.example.net
+
+import jakarta.servlet.http.HttpServletRequest
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class RequestInfoController {
+
+    @GetMapping("/api/request-info")
+    fun info(request: HttpServletRequest): Map<String, String> {
+        val scheme = request.scheme
+        val host = request.serverName
+        val remoteAddr = request.remoteAddr
+        return mapOf(
+            "scheme" to scheme,
+            "host" to host,
+            "remoteAddr" to remoteAddr
+        )
+    }
+}
+```
+
+Ошибки с `X-Forwarded-*` особенно неприятны в OAuth2/OIDC сценариях: неправильная схема/хост приводят к битым redirect_uri, логики входа/выхода, CORS-проблемам. Поэтому при любом внедрении Ingress/прокси нужно обязательно проверить: редиректы, ссылки в Swagger/OpenAPI, абсолютные URL’ы в Location-заголовках, формирование ссылок в письмах, и всё это — в реальном окружении за балансером, а не только в локальном Docker.
+
+---
+
+## TLS-терминация: где заканчивается шифрование (edge vs app), mTLS к внутренним зависимостям
+
+TLS в контейнерной архитектуре — это не просто «поставить https в приложении». Есть как минимум два уровня: внешний периметр (edge), где шифруется трафик от пользователя до первого балансера/ingress, и внутренний периметр (внутри кластера), где решается, будет ли трафик идти в открытом виде или тоже под TLS. Spring Boot умеет и то, и другое, но организация чаще всего выбирает схему: внешнее TLS — на балансере, между балансером и приложением — либо чистый HTTP, либо внутренний TLS/mTLS.
+
+Edge-TLS — это классическая история: у тебя есть сертификат на домен `api.example.com`, он лежит на балансере/Ingress Controller, и все внешние связи шифруются до этого уровня. Дальше балансер дешифрует трафик и пускает его к Pod’ам по обычному HTTP. Преимущество такой схемы — централизованное управление сертификатами, общая кросс-команда инфраструктура TLS, минимум настроек в приложении. Недостаток — внутри кластера трафик в чистом виде (если нет сетевого шифрования на уровне overlay-сети).
+
+Если требуется шифрование и внутри кластера (банкинг, персональные данные, межрегиональные соединения), используют TLS до приложения и/или mTLS между сервисами. В этом случае Spring Boot поднимает `server.ssl.*`, слушает `https`, а балансер либо делает TLS passthrough (пробрасывает шифрованный поток до Pod’а), либо сам выступает TLS-клиентом к backend'у. Для mTLS приложение должно предъявлять сертификат клиента, а backend проверяет его (по truststore), и таким образом отсекаются незарегистрированные сервисы.
+
+Конфигурация TLS в Spring Boot делается через `application.yml`: задаётся путь к хранилищу ключей (JKS/PKCS12), пароль, alias. В Docker/K8s это хранилище должно приезжать в контейнер как secret-volume, а не быть запечённым в образ. Тогда ротация сертификатов упрощается: меняется Secret, Pod’ы перезапускаются с новым ключом, образ остаётся прежним.
+
+Ниже пример простого SSL-конфига для Spring Boot, когда приложение само терминирует TLS (например, в dev или в случае прямого TLS до Pod’а). В проде это чаще будет использоваться для внутренних mTLS, а внешний TLS останется за ингрессом.
 
 ```yaml
 server:
   port: 8443
   ssl:
     enabled: true
-    key-store: classpath:keystore.p12
-    key-store-password: ${SSL_PASSWORD}
-    key-store-type: PKCS12
-    client-auth: need
-    trust-store: classpath:truststore.jks
-    trust-store-password: ${TRUSTSTORE_PASSWORD}
+    key-store: "file:/etc/ssl/private/keystore.p12"
+    key-store-password: "${SSL_KEYSTORE_PASSWORD}"
+    key-store-type: "PKCS12"
+    key-alias: "app-cert"
 ```
+
+В Kubernetes секрет с keystore монтируется в Pod, а пароль передаётся через env. Так мы избегаем хранения приватных ключей в образе и упрощаем ротацию.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-tls
+type: Opaque
+data:
+  keystore.p12: <base64>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: registry.example.com/orders-service:1.0.0
+          env:
+            - name: SSL_KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-tls
+                  key: keystore-password
+          volumeMounts:
+            - name: tls-volume
+              mountPath: /etc/ssl/private
+              readOnly: true
+      volumes:
+        - name: tls-volume
+          secret:
+            secretName: app-tls
+```
+
+Код приложения при этом не меняется — это всё уровень конфигурации. Можно добавить простой контроллер, чтобы убедиться, что https работает и что мы действительно находимся под TLS (проверкой `isSecure()`).
+
+```java
+package com.example.tls;
+
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+@RestController
+public class TlsInfoController {
+
+    @GetMapping("/api/tls-info")
+    public Map<String, Object> info(HttpServletRequest request) {
+        return Map.of(
+                "secure", request.isSecure(),
+                "scheme", request.getScheme()
+        );
+    }
+}
+```
+
+```kotlin
+package com.example.tls
+
+import jakarta.servlet.http.HttpServletRequest
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class TlsInfoController {
+
+    @GetMapping("/api/tls-info")
+    fun info(request: HttpServletRequest): Map<String, Any> =
+        mapOf(
+            "secure" to request.isSecure,
+            "scheme" to request.scheme
+        )
+}
+```
+
+mTLS между сервисами требует уже клиентской настройки. Например, если наш Spring-сервис ходит к другому сервису по TLS с проверкой клиентского сертификата, нужно задать `key-store`/`trust-store` на стороне HTTP-клиента (WebClient/RestTemplate/Feign). Это чаще выносится в отдельную главу по безопасности, но на уровне Docker/K8s это снова вопрос монтирования секретов и аккуратной конфигурации truststore/keystore.
+
+Выбор места TLS-терминации влияет и на наблюдаемость. Если TLS заканчивается на балансере, то на уровне приложения все HTTP-метрики будут видны как plain HTTP, и, например, информация о TLS-версии/шифре будет известна только балансеру. Если TLS доходит до приложения, эти данные как минимум можно логировать и использовать для диагностики. Однако чаще всего безопасность периметра всё равно централизована, и приложениям получают уже унифицированный «внутренний» трафик.
+
+Важный практический момент: не пытаться «слегка включить https на приложении ради красоты» в Kubernetes, если реальное TLS живёт на ingress. Это только усложнит конфигурацию: нужна будет двойная терминация или TLS-passthrough, более сложный ingress-конфиг, дополнительные сертификаты. Гораздо проще: на периметре TLS, между компонентами — либо HTTP, либо чётко документированный mTLS там, где это действительно нужно.
 
 ---
 
 ## Ограничения: лимиты заголовков/тела, загрузка файлов, защита от slowloris
 
-Лимиты — ваш спасательный круг против злоупотреблений и аварий. На сервере приложений ограничьте размер **заголовков** и **тела**. Большие JWT/кучи cookies легко выбивают сервер ошибками 400/431. В Spring Boot есть `server.max-http-header-size`, multipart-лимиты — `spring.servlet.multipart.*`. На прокси тоже установите соответствующие лимиты, чтобы не пускать избыточный трафик внутрь.
+Сетевой слой — это ещё и место, где нужно жёстко ограничивать размеры входящих запросов. Без лимитов злоумышленник или просто неудачный клиент может отправить гигантский JSON, огромный multipart-upload или аномально длинные заголовки, что приведёт к истощению памяти, переполнению буферов или долгим GC-паузам. В Kubernetes и вокруг Spring Boot эти ограничения задаются на нескольких уровнях: Ingress/прокси, сам сервер (Tomcat/Netty) и уровень бизнес-логики (валидация payload’а).
 
-Файлоприём — отдельная история: в Java потоковая обработка предпочтительна, чтобы не держать гигабайты в памяти. Заранее определите максимальные размеры, временные каталоги (в контейнере их может не быть!) и место хранения. Никогда не доверяйте имени файла от клиента и ограничивайте расширения/конвертацию.
+У заголовков есть свои лимиты: `server.max-http-header-size` для Spring Boot, настройки `large-client-header-buffers`/`client_header_buffer_size` для Nginx. Если их оставить по дефолту и не подумать, можно словить либо «легитимные» ошибки (когда какой-нибудь IDP шлёт длинные JWT в заголовке Authorization), либо возможность DoS (когда злоумышленник забивает память сервера гигантским количеством заголовков). Правильный путь — выставить разумный предел (несколько десятков килобайт) и жить с ним.
 
-Slowloris-атаки (медленная отправка запроса/заголовков) «отъедают» коннекты. На прокси включайте «read timeout» на заголовки/тело, на Tomcat — `connection-timeout`. Для бэкендов, которые долго пишут ответ, выставляйте разумный write-timeout — иначе «залипшие» соединения съедят пул.
+Тело запроса регулируется через лимиты размера и механизмы multipart. В Spring Boot 3 для multipart-загрузок используются свойства `spring.servlet.multipart.max-file-size` и `spring.servlet.multipart.max-request-size`. Для обычных запросов есть `spring.mvc.contentnegotiation` и параметры underlying container’а (например, `server.tomcat.max-http-form-post-size`). На уровне Ingress-прокси обычно стоит более жёсткий лимит (`client_max_body_size` для Nginx) — он защищает приложение ещё до того, как трафик долетит до него.
 
-Сжатие и большие ответы усиливают влияние лимитов: на прокси и приложении таймауты/буферы должны быть согласованы. Для больших скачиваний лучше отдавать через статику прокси/S3-пресайнд и не держать долгоживущие коннекты в приложении.
+Slowloris и подобные атаки работают на другой стороне: вместо одного большого тела отправляется тело «по кусочкам» с огромными паузами между байтами. Сервер держит соединение открытым, буферизует данные, ждёт окончания запроса, а злоумышленник поддерживает множество таких полузаконченных запросов. Чтобы от этого защищаться, нужны тайм-ауты на «read header», «read body», лимиты на количество одновременно обрабатываемых запросов и механизмы отсечения подозрительно медленных клиентов.
 
-Наконец, логируйте причины отказов **без** утечек данных: статус/причина/идентификатор запроса, но не содержимое тела. Это поможет отличить баг в клиенте от атаки.
-
-Регулярно тестируйте лимиты нагрузкой/генератором «плохих» запросов. Лучше найти дисбаланс на стенде, чем в проде.
-
-**Код (Java): загрузка файла + ограничение размеров**
-
-```java
-package com.example.limits;
-
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
-import java.io.IOException;
-
-@RestController
-@RequestMapping("/upload")
-public class UploadController {
-  @PostMapping(consumes = "multipart/form-data")
-  public ResponseEntity<String> upload(@RequestParam("file") MultipartFile file) throws IOException {
-    if (file.getSize() > 10 * 1024 * 1024) { // дополнительная защита
-      return ResponseEntity.badRequest().body("File too large");
-    }
-    // обработка потоком
-    long bytes = file.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
-    return ResponseEntity.ok("received=" + bytes);
-  }
-}
-```
-
-**Код (Kotlin): то же**
-
-```kotlin
-package com.example.limits
-
-import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.*
-import org.springframework.web.multipart.MultipartFile
-
-@RestController
-@RequestMapping("/upload")
-class UploadController {
-    @PostMapping(consumes = ["multipart/form-data"])
-    fun upload(@RequestParam("file") file: MultipartFile): ResponseEntity<String> {
-        if (file.size > 10 * 1024 * 1024) return ResponseEntity.badRequest().body("File too large")
-        file.inputStream.use { it.transferTo(java.io.OutputStream.nullOutputStream()) }
-        return ResponseEntity.ok("received=${file.size}")
-    }
-}
-```
-
-`application.yml` (лимиты/таймауты):
+Ниже пример `application.yml`, где задаются базовые лимиты для заголовков и multipart-загрузок. Это хорошая отправная точка: значения можно потом уточнять под конкретный домен, но оставлять всё на дефолтах — плохая идея.
 
 ```yaml
 server:
   max-http-header-size: 16KB
-  tomcat:
-    connection-timeout: 10s
+
 spring:
   servlet:
     multipart:
       max-file-size: 10MB
-      max-request-size: 12MB
+      max-request-size: 20MB
 ```
 
----
+На уровне reverse-proxy (Nginx) аналогичные лимиты задаются отдельными директивами. Здесь, например, ограничен размер тела до 20MB и размер заголовков до пары килобайт. Балансер отрежет слишком крупные запросы ещё до приложения, экономя ему ресурсы.
+
+```nginx
+client_max_body_size 20m;
+large_client_header_buffers 4 8k;
+```
+
+Код контроллера для загрузки файлов в Spring Boot при этом остаётся стандартным. Важно лишь помнить, что без лимитов `@RequestPart MultipartFile` может принять сколь угодно большой файл, пока не закончится память/диск.
+
+```java
+package com.example.upload;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+@RestController
+@RequestMapping("/api/files")
+public class FileUploadController {
+
+    @PostMapping("/upload")
+    public ResponseEntity<String> upload(@RequestPart("file") MultipartFile file) {
+        long size = file.getSize();
+        String name = file.getOriginalFilename();
+        return ResponseEntity.ok("Received file " + name + " size=" + size);
+    }
+}
+```
+
+```kotlin
+package com.example.upload
+
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.bind.annotation.RequestPart
+import org.springframework.web.multipart.MultipartFile
+
+@RestController
+@RequestMapping("/api/files")
+class FileUploadController {
+
+    @PostMapping("/upload")
+    fun upload(@RequestPart("file") file: MultipartFile): ResponseEntity<String> {
+        val size = file.size
+        val name = file.originalFilename
+        return ResponseEntity.ok("Received file $name size=$size")
+    }
+}
+```
+
+Защита от slowloris в самой JVM-части обычно реализуется через настройки сервера (Tomcat/Undertow/Netty): тайм-аут на чтение запроса, лимиты на количество keep-alive запросов в одном соединении, лимиты на idle-время. В Spring Boot эти параметры можно настроить либо через специализированные свойства, либо через бины `TomcatServletWebServerFactory`/`NettyReactiveWebServerFactory`, если нужна кастомизация.
+
+Ещё один слой — rate limiting на входе. Если Ingress/BALancer умеет ограничивать количество одновременных соединений или запросов с одного IP, имеет смысл этим пользоваться: slowloris и подобные атаки хорошо отбиваются простыми соединениями по ворду «слишком много одновременных коннектов от одного клиента». В мире Kubernetes часто это делается либо в Nginx Ingress Controller, либо через сервис-мэш (Envoy/Linkerd).
+
+Ключевой принцип: защищаться надо **на всех уровнях**. Балансер защищает от очевидных аномалий (огромный body, слишком много соединений), приложение — от логических перегрузок (слишком тяжёлые запросы, паттерны использования API), JVM/сервер — от ресурсных перегрузок (лимиты соединений, тайм-ауты). Если какого-то слоя нет, слабое место будет найти очень просто.
+
 
 # 5. Логи, метрики и трассировка в контейнерах
 
 ## Логи в stdout/stderr, структурированные JSON; ротация лог-драйвером, а не приложением
 
-В контейнерах логи — это **stdout/stderr**. Никаких «каталоги логов внутри контейнера»: так вы теряете централизованный сбор и ротацию. Лог-драйвер Docker/K8s сам собирает вывод и отдаёт его в Fluent Bit/Vector/Logstash. Формат — лучше JSON, чтобы парсить поля без грубого grok.
+В контейнерном мире базовое правило простое: приложение пишет **всё** в `stdout`/`stderr`, а не в файлы внутри контейнера. В Docker и Kubernetes логами занимается платформа: Docker-демон собирает stdout/stderr контейнера, k8s — пишет их в `containerd`/journald, а дальше уже Fluent Bit/Fluentd/Vector отправляют поток в централизованное хранилище. Как только Spring-приложение начинает само крутить лог-файлы (rotation, gzip, delete) внутри контейнера, появляется куча проблем: лог-файлы не видит платформа, контейнер может переполнить файловую систему, ротация конфликтует с лог-драйвером. Поэтому в продовом Docker/K8s никаких `logs/app.log` внутри образа быть не должно — только консоль.
 
-Ротация — забота платформы (лог-драйвер/агент/Elasticsearch SLM), а не приложения. Если внутри приложения включить собственную ротацию, вы получите дубликаты, проблемы с inode и нетипичное поведение при ротации. Оставьте приложению только форматирование и уровень.
+Для нормальной работы с логами нужно добиться двух вещей: **структурированности** и **предсказуемого формата**. Структурированные JSON-логи — стандарт: каждая строка — валидный JSON с фиксированными полями (`timestamp`, `level`, `logger`, `thread`, `message`, `traceId`, `spanId`, `fields...`). Тогда сборщик логов (Fluent Bit, Loki, Elasticsearch) легко парсит строки и превращает их в поля, по которым можно фильтровать и строить дашборды. Если оставить дефолтный текстовый паттерн, придётся парсить строки regex’ами и ломать голову над локалями, форматами дат и т.п.
 
-Структурируйте поля: `ts, level, logger, thread, traceId, spanId, message, kv…`. Маскируйте секреты (см. ниже). Для высоконагруженных сервисов подумайте о асинхронном аппендере, но не «перестарайтесь»: при падении процесс может не сбросить буферы.
+В Spring Boot по умолчанию используется Logback, который умеет как обычный текстовый формат, так и JSON (через дополнительный encoder, чаще всего `logstash-logback-encoder`). Достаточно подключить зависимость и описать `logback-spring.xml`, где `ConsoleAppender` пишет JSON в `STDOUT`. Важно, что **консоль** — единственный appender в проде; никакого `FileAppender` с путями внутри контейнера, иначе можно забыть эти логи в FS Pod’а до её удаления.
 
-Уровни логов: в проде разумно держать `INFO/WARN/ERROR`, а `DEBUG/TRACE` включать точечно через `/actuator/loggers` на короткий период. **Запрещайте** логировать тела запросов/ответов для приватных API — это риск утечки.
+Подключение JSON-логгера делается на уровне билд-скрипта. Для Java/Kotlin достаточно общей зависимости, Gradle DSL отличается только синтаксисом. Зависимость вносится в `implementation`, и Logback автоматически подхватит encoder из classpath’а.
 
-На локали/стендах включайте «человеческие» паттерны (цвета/короткий формат), но в проде — JSON. Согласуйте формат со сборщиками логов и SRE — чтобы поля прилетали в унифицированную схему.
-
-Для корреляции добавляйте `traceId/spanId` (см. ниже). Это позволит найти все логи по одной операции через весь парк сервисов.
-
-**Код (Java): логируем в stdout, JSON формат, пример логирования**
-
-```java
-package com.example.logs;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.SpringApplication;
-import org.springframework.web.bind.annotation.*;
-
-@SpringBootApplication
-public class LogApp { public static void main(String[] args) { SpringApplication.run(LogApp.class, args); } }
-
-@RestController
-class LogController {
-  private static final Logger log = LoggerFactory.getLogger(LogController.class);
-
-  @GetMapping("/work")
-  public String work() {
-    log.info("start work taskId={}", java.util.UUID.randomUUID());
-    return "ok";
-  }
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
 }
 ```
-
-**Код (Kotlin): то же**
 
 ```kotlin
-package com.example.logs
-
-import org.slf4j.LoggerFactory
-import org.springframework.boot.autoconfigure.SpringBootApplication
-import org.springframework.boot.runApplication
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-
-@SpringBootApplication
-class LogApp
-
-fun main(args: Array<String>) = runApplication<LogApp>(*args)
-
-@RestController
-class LogController {
-    private val log = LoggerFactory.getLogger(LogController::class.java)
-    @GetMapping("/work")
-    fun work(): String {
-        log.info("start work taskId={}", java.util.UUID.randomUUID())
-        return "ok"
-    }
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("net.logstash.logback:logstash-logback-encoder:7.4")
 }
 ```
 
-`logback-spring.xml` (JSON вывод):
+Дальше описывается конфигурация Logback в `src/main/resources/logback-spring.xml`. Здесь мы задаём `ConsoleAppender` с JSON-encoder, указываем набор стандартных полей и пробрасываем MDC (в частности, `traceId`/`spanId` для корреляции с трассировками). Важно, что appender пишет в `STDOUT` и больше никуда.
 
 ```xml
+<!-- src/main/resources/logback-spring.xml -->
 <configuration>
-  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-    <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
-  </appender>
-  <root level="INFO">
-    <appender-ref ref="STDOUT"/>
-  </root>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp>
+                    <fieldName>timestamp</fieldName>
+                </timestamp>
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+                <loggerName>
+                    <fieldName>logger</fieldName>
+                </loggerName>
+                <threadName>
+                    <fieldName>thread</fieldName>
+                </threadName>
+                <mdcFields>
+                    <fieldName>mdc</fieldName>
+                </mdcFields>
+                <message/>
+                <arguments/>
+                <stackTrace>
+                    <fieldName>stacktrace</fieldName>
+                </stackTrace>
+            </providers>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="JSON_CONSOLE"/>
+    </root>
 </configuration>
 ```
 
-Gradle зависимости (Groovy/Kotlin):
-
-```groovy
-implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
-```
-
-```kotlin
-implementation("net.logstash.logback:logstash-logback-encoder:7.4")
-```
-
----
-
-## Actuator/Observation/Micrometer: экспонирование метрик, /actuator/health/prometheus/otel
-
-Micrometer — унифицированный API метрик. В Spring Boot вы включаете `spring-boot-starter-actuator`, и получаете `/actuator/health`, `/actuator/metrics/**`, `/actuator/prometheus` (при наличии регистра Prometheus). «Observation» — новый каркас для таймингов и трассировки; аннотация `@Observed` добавляет метрики/спаны поверх методов.
-
-Экспонирование для Prometheus делайте через `/actuator/prometheus` и scrape в Prometheus/Agent. Для OpenTelemetry можно добавить OTLP-экспорт в коллектор. Важно: **не** открывайте все эндпойнты наружу; выставляйте только то, что нужно, и ограничивайте доступ сетево/авторизацией.
-
-Создавайте бизнес-метрики: количество успешно обработанных событий, ретраи, состояние внутренних очередей. Это помогает SRE/дежурным понимать поведение, а не только CPU/GC. Для высоконагруженных путей используйте **гистограммы** с подходящими SLA-биннами, чтобы видеть перцентили.
-
-Health-пробы лучше разделять на liveness/readiness (см. ниже). Не заставляйте liveness зависеть от внешних систем — иначе получите перезапуски из-за временной деградации БД/кэша. Readiness — как раз место, где можно проверять зависимость.
-
-Следите за накладными расходами: тонкая выборка метрик, фильтрация ненужных регистров, выборочная регистрация таймеров. На «шумных» эндпойнтах не включайте подробные метрики без нужды.
-
-В проде полезно иметь `/actuator/info` с версией сборки (см. ранее) и git-метками. Это упрощает расследование инцидентов.
-
-**Код (Java): кастомная метрика и @Observed**
+В коде логирование остаётся обычным slf4j’шным: `logger.info("Order created id={}", id)`. Структура JSON-строки формируется на уровне Logback. Важно не тащить в message «сырые» объекты с секретами и PII, а логировать только безопасные поля. Ниже контроллер, который пишет в лог простое событие, — он одинаковый для Java и Kotlin, меняется только синтаксис.
 
 ```java
-package com.example.metrics;
+package com.example.logging;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.observation.annotation.Observed;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.SpringApplication;
-import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
-@SpringBootApplication
-public class MetricsApp { public static void main(String[] args) { SpringApplication.run(MetricsApp.class, args); } }
-
-@Service
-class Worker {
-  private final MeterRegistry meter;
-  Worker(MeterRegistry meter) { this.meter = meter; }
-
-  @Observed(name = "worker.process", contextualName = "process-job")
-  public String process() {
-    meter.counter("worker.process.count").increment();
-    return "done";
-  }
-}
-
 @RestController
-class MetricsController {
-  private final Worker worker;
-  MetricsController(Worker worker) { this.worker = worker; }
+@RequestMapping("/api/orders")
+public class OrderLoggingController {
 
-  @GetMapping("/do")
-  public String doWork() { return worker.process(); }
+    private static final Logger log = LoggerFactory.getLogger(OrderLoggingController.class);
+
+    @PostMapping
+    public String create(@RequestBody OrderRequest request) {
+        log.info("Creating order for customerId={} amount={}", request.customerId(), request.amount());
+        return "ok";
+    }
+
+    public record OrderRequest(Long customerId, Integer amount) {}
 }
 ```
 
-**Код (Kotlin): то же**
-
 ```kotlin
-package com.example.metrics
+package com.example.logging
 
-import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.observation.annotation.Observed
-import org.springframework.boot.autoconfigure.SpringBootApplication
-import org.springframework.boot.runApplication
-import org.springframework.stereotype.Service
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
+import org.slf4j.LoggerFactory
+import org.springframework.web.bind.annotation.*
 
-@SpringBootApplication
-class MetricsApp
+@RestController
+@RequestMapping("/api/orders")
+class OrderLoggingController {
 
-fun main(args: Array<String>) = runApplication<MetricsApp>(*args)
+    private val log = LoggerFactory.getLogger(OrderLoggingController::class.java)
 
-@Service
-class Worker(private val meter: MeterRegistry) {
-    @Observed(name = "worker.process", contextualName = "process-job")
-    fun process(): String {
-        meter.counter("worker.process.count").increment()
-        return "done"
+    @PostMapping
+    fun create(@RequestBody request: OrderRequest): String {
+        log.info("Creating order for customerId={} amount={}", request.customerId, request.amount)
+        return "ok"
     }
 }
 
-@RestController
-class MetricsController(private val worker: Worker) {
-    @GetMapping("/do")
-    fun doWork(): String = worker.process()
+data class OrderRequest(
+    val customerId: Long,
+    val amount: Int
+)
+```
+
+Ротация логов в Docker/K8s — задача платформы. В Docker это настраивается лог-драйвером (`json-file`, `local`, `gelf` и т.п.) с лимитами по размеру и количеству файлов; в Kubernetes — на уровне лог-сборщика и retention-политик. Приложение **никогда** не должно пытаться само «чистить» логи. Единственное, что ему стоит делать — логировать разумный объём: избегать мегабайтов JSON на одну запись и debug-спам в проде.
+
+В Kubernetes лог-пайплайн выглядит так: контейнер пишет JSON-строки в stdout → kubelet складывает их в файлы под `/var/log/containers` → Fluent Bit подхватывает файлы, читает line-by-line, парсит JSON и отправляет в Loki/Elastic/Cloud Logging. Если формат логов стабилен и предсказуем, SRE легко может сделать парсинг и на основе полей (`service`, `env`, `traceId`, `level`) настроить фильтры, алёрты и дешёвую агрегацию.
+
+В локальном Docker Compose JSON-логи тоже удобны: `docker logs` будет показывать «сырые» JSON-строки, но можно дописать маленький helper-скрипт, который будет их красиво выводить или фильтровать по полям. Главное, что формат в dev и prod одинаковый, и всё, что отлаживаешь в dev, переносится без сюрпризов в кластер.
+
+---
+
+## Actuator/Observation/Micrometer: экспонирование метрик, `/actuator/health/prometheus/otel`
+
+Вторая опора наблюдаемости — метрики. В Spring Boot за это отвечает связка **Actuator + Micrometer**. Actuator даёт HTTP-эндпоинты `/actuator/*`, а Micrometer — API для метрик и интеграцию с бэкендами (Prometheus, OTLP, Datadog и т.д.). В контейнерной среде почти всегда используется модель «пуллер» (Prometheus scrape): Prometheus периодически забирает метрики по HTTP у каждого Pod’а и складывает их в свою TSDB. Поэтому ключевая задача — корректно экспонировать `/actuator/prometheus` внутри кластера и не делать для этого кастомных endpoints.
+
+Подключение Actuator и Prometheus registry в Gradle выглядит просто: один starter для Actuator и второй — для Micrometer Prometheus. Версии подтягиваются через BOM Spring Boot, так что всё совместимо. Это справедливо и для Java, и для Kotlin — разница только в DSL Gradle.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
 }
 ```
 
-`application.yml` (Prometheus/health):
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("io.micrometer:micrometer-registry-prometheus")
+}
+```
+
+Дальше нужно включить нужные эндпоинты в `application.yml`. Как минимум — `health`, `info`, `metrics`, `prometheus`. В проде не стоит открывать всё подряд — достаточно того, что нужно для диагностики и мониторинга. При этом `health` и `prometheus` будут доступны внутри кластера (ClusterIP/Pod IP), а снаружи — только через защищённые каналы, если вообще нужны.
 
 ```yaml
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,loggers
+        include: "health,info,metrics,prometheus"
   endpoint:
     health:
       probes:
         enabled: true
+  metrics:
+    tags:
+      application: "orders-service"
 ```
+
+Micrometer из коробки собирает массу полезных метрик: HTTP (латентность, количество запросов, коды статусов), JVM (heap, GC, threads), базы данных (через datasource/driver), пулы потоков, кеши, Kafka, Redis и т.п. Для Spring Boot 3+ это делается автоматически, как только в classpath появляется нужный starter. Тебе остаётся только добавить **кастомные** метрики для доменных операций и настроить дистрибуции (percentiles/histograms) для latency.
+
+Простой пример: тебе нужно замерять длительность обработки заявки в бизнес-сервисе. Можно обернуть метод в `Timer` и регистрировать его в глобальном реестре Micrometer. В Java это выглядит так: мы инжектим `MeterRegistry`, создаём `Timer` и вокруг бизнес-логики вызываем `timer.record(() -> ...)`. Метрика появится в `/actuator/prometheus` с именем `orders_processing_duration_seconds` и тэгами `result=success|error`.
+
+```java
+package com.example.metrics;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import org.springframework.stereotype.Service;
+
+import java.time.Duration;
+
+@Service
+public class OrderProcessingService {
+
+    private final Timer processingTimer;
+
+    public OrderProcessingService(MeterRegistry meterRegistry) {
+        this.processingTimer = Timer.builder("orders_processing_duration")
+                .description("Order processing duration")
+                .publishPercentileHistogram()
+                .maximumExpectedValue(Duration.ofSeconds(10))
+                .register(meterRegistry);
+    }
+
+    public void processOrder(String orderId) {
+        processingTimer.record(() -> doProcess(orderId));
+    }
+
+    private void doProcess(String orderId) {
+        // бизнес-логика обработки заказа
+    }
+}
+```
+
+```kotlin
+package com.example.metrics
+
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
+import org.springframework.stereotype.Service
+import java.time.Duration
+
+@Service
+class OrderProcessingService(
+    meterRegistry: MeterRegistry
+) {
+
+    private val processingTimer: Timer = Timer.builder("orders_processing_duration")
+        .description("Order processing duration")
+        .publishPercentileHistogram()
+        .maximumExpectedValue(Duration.ofSeconds(10))
+        .register(meterRegistry)
+
+    fun processOrder(orderId: String) {
+        processingTimer.record {
+            doProcess(orderId)
+        }
+    }
+
+    private fun doProcess(orderId: String) {
+        // бизнес-логика обработки заказа
+    }
+}
+```
+
+Observation API в Spring Boot 3 — надстройка над Micrometer, которая объединяет метрики и трейсинг. Вместо того, чтобы вручную создавать `Timer`, можно создать `ObservationRegistry` и использовать `Observation.createNotStarted(...).observe(() -> ...)`, получая сразу и метрику, и span (если включён tracing). Это особенно удобно для HTTP-клиентов и репозиториев. Для контейнерной среды это означает: один раз настроил экспорт в Prometheus/OTLP → все Observations разлетаются в нужные backends.
+
+Prometheus в Kubernetes ловит `/actuator/prometheus` через ServiceMonitor/PodMonitor (Prometheus Operator). Под это создаётся сервис, который указывает targetPort на `management.server.port` или `server.port`, если Actuator сидит на том же порту. Важно заранее договориться: Actuator на том же порту, что и app, или на отдельном (`management.server.port=8081`). Первый вариант проще в k8s-манифестах, второй — безопаснее с точки зрения разделения трафика.
+
+Actuator `/actuator/health` в контейнерном мире — основной источник для readiness/liveness. Мы уже обсуждали это в предыдущей подтеме, но важно подчеркнуть: как только включается Actuator, health endpoint становится естественным target’ом для `HEALTHCHECK`, `readinessProbe` и `livenessProbe`. Важно настроить его так, чтобы он отражал реальное состояние зависимостей, а не просто «JVM жив».
+
+Если вместо Prometheus используется OTLP Metrics (OpenTelemetry), Micrometer умеет напрямую экспортировать в OTLP-коллектор. Тогда `/actuator/prometheus` может вообще не понадобиться, а данные пойдут по gRPC. Для контейнерной среды это означает дополнительный sidecar/daemonset с OTel Collector, но принципы те же: приложение знает только о Micrometer, всё остальное — забота платформы.
 
 ---
 
 ## Корреляция: traceId/spanId в MDC, интеграция с агентами и коллекторами; ресурсоёмкость и сэмплинг
 
-Корреляция — способность связать логи/метрики по одному идентификатору запроса. С Observability в Boot traceId/spanId автоматически попадают в MDC при наличии bridge-зависимостей (например, micrometer-tracing + otel). Если не используете агента — добавляйте `X-Request-ID` вручную и прокидывайте через MDC.
+Метрики решают вопрос «что происходит в среднем», трассировка — «что произошло с **конкретным** запросом». В контейнерном проде без корреляции логов и трассировок разбор инцидентов превращается в мучение: есть лог с ошибкой, есть трейсы с ошибкой, но связать одно с другим сложно. Стандартный ответ — **traceId/spanId в MDC** и единая трассировочная система (OpenTelemetry/Jaeger/Tempo/X-Ray), куда слетаются спаны от всех сервисов.
 
-Интеграция с OpenTelemetry: вы можете собрать спаны и отправлять в OTLP-коллектор (в DaemonSet/sidecar). Это даёт end-to-end трассировку через все сервисы. Но имейте в виду накладные: спаны стоят CPU/память/сеть. Настраивайте sampling (например, 0.1-1.0% на проде для «шумных» сервисов).
+В Spring Boot 3 tracing реализуется через Micrometer Tracing, а не через Sleuth (он устарел). Micrometer Tracing умеет работать в паре с OpenTelemetry/Brave и автоматически добавлять `traceId`/`spanId` в MDC. Если правильно сконфигурировать Logback (выводить `%X{traceId}` и `%X{spanId}`), каждая лог-строка будет содержать идентификатор трассы и спана. Тогда, глядя на лог в Loki/Grafana, можно одним кликом перейти к соответствующему trace в Jaeger/Tempo.
 
-Сэмплинг может быть динамическим: повышать долю для ошибок (tail sampling), снижать — для «зелёных» путей. В любом случае, traceId должен доходить до логов, чтобы по нему находить редкие случаи. Не забывайте проксировать/сохранять заголовки `traceparent`, `baggage`.
+Подключение tracing делается через зависимости: `micrometer-tracing-bridge-otel` для Java и Kotlin одинаково. Плюс — экспортер: либо Java-agent, либо OTel SDK + OTel Collector. В минимальном варианте достаточно добавить бридж и оставить остальное платформе (агент прописывается в `JAVA_TOOL_OPTIONS`).
 
-Клиентские библиотеки (WebClient/RestClient) уже умеют прокидывать контекст; для «сырого» HTTP клиента/DB драйвера иногда нужен ручной MDC/labels. Для Kafka/Rabbit стоит включить корреляцию на уровне consumer/producer через headers.
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+    implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
+}
+```
 
-Будьте аккуратны с MDC при использовании реактивных потоков или собственных пулов: контекст «теряется» между тредами; используйте `Context`/hooks или обёртки executors, чтобы переносить MDC.
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("io.micrometer:micrometer-tracing-bridge-otel")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+}
+```
 
-Главное: корреляция — часть операционки. Согласуйте формат traceId/spanId в логах и в графах трассировки, чтобы их было легко сопоставлять.
+В `logback-spring.xml` добавляется вывод MDC-полей `traceId` и `spanId`. В JSON-encoder это уже было, но если хочется и текстовый формат, паттерн будет примерно таким: `[traceId=...] [spanId=...]`. Это даёт быструю визуальную подсказку и позволяет фильтровать логи по traceId.
 
-**Код (Java): простой фильтр, добавляющий requestId в MDC**
+```xml
+<encoder>
+    <pattern>%d{ISO8601} %-5level [%thread] [%X{traceId:-},%X{spanId:-}] %logger - %msg%n</pattern>
+</encoder>
+```
+
+В коде приложение обычно напрямую с tracing API не работает — всё уже обёрнуто в Observations и Web/HTTP-клиенты. Но иногда полезно вручную создать span вокруг доменной операции. В Java это выглядит как использование `ObservationRegistry` и `Observation`. При этом traceId/spanId автоматом появятся и в MDC, и в экспортере.
 
 ```java
-package com.example.trace;
+package com.example.tracing;
+
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
+import org.springframework.stereotype.Service;
+
+@Service
+public class PaymentService {
+
+    private final ObservationRegistry observationRegistry;
+
+    public PaymentService(ObservationRegistry observationRegistry) {
+        this.observationRegistry = observationRegistry;
+    }
+
+    public void processPayment(String orderId) {
+        Observation.createNotStarted("payment.process", observationRegistry)
+                .lowCardinalityKeyValue("order.id", orderId)
+                .observe(() -> doProcess(orderId));
+    }
+
+    private void doProcess(String orderId) {
+        // бизнес-логика
+    }
+}
+```
+
+```kotlin
+package com.example.tracing
+
+import io.micrometer.observation.Observation
+import io.micrometer.observation.ObservationRegistry
+import org.springframework.stereotype.Service
+
+@Service
+class PaymentService(
+    private val observationRegistry: ObservationRegistry
+) {
+
+    fun processPayment(orderId: String) {
+        Observation.createNotStarted("payment.process", observationRegistry)
+            .lowCardinalityKeyValue("order.id", orderId)
+            .observe {
+                doProcess(orderId)
+            }
+    }
+
+    private fun doProcess(orderId: String) {
+        // бизнес-логика
+    }
+}
+```
+
+Чтобы `traceId` действительно проходил через все сервисы, нужно корректно обрабатывать заголовки W3C Trace Context (`traceparent`, `tracestate`) или b3. Micrometer Tracing и OTel Java agent делают это автоматически: входящий HTTP-запрос получает свой span, traceId извлекается из заголовков, а исходящие запросы (WebClient/RestTemplate/Feign) получают заголовок с этим же traceId. В контейнерной среде это особенно важно: один запрос легко прыгает через 5–10 микросервисов, и видеть цельную цепочку без traceId невозможно.
+
+Трассировка «дорогая» по ресурсам: каждый span — запись в память, сериализация, отправка в collector. Поэтому **sampling** необходим. Head sampling (на уровне агента) позволяет брать только часть запросов (например, 10%) и писать спаны только для них. Tail sampling (на уровне коллектора) даёт более умный подход: можно сохранять только медленные или с ошибками. В любом случае нельзя «трассировать всё» на высоконагруженных сервисах — это убьёт и приложение, и хранилище трасс.
+
+MDC важен не только для tracing, но и для бизнес-корреляции: туда можно положить `X-Request-Id`, `userId`, `tenantId`. Это делается фильтром, который на входе запроса извлекает заголовки, кладёт их в MDC, а на выходе — очищает. Так в логах появятся дополнительные ключи, по которым можно отфильтровать события конкретного клиента/тенанта. Важно только не класть в MDC PII и секреты.
+
+Ниже пример Java-фильтра, который обеспечивает request-id и заодно ставит его в MDC. Если заголовок `X-Request-Id` не пришёл, генерируем новый. Это дополняет tracing: даже при неработающем трейсинге или sampling=0 у тебя всё равно будет корреляция логов по request-id.
+
+```java
+package com.example.tracing;
 
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
+
 import java.io.IOException;
 import java.util.UUID;
 
 @Component
 public class RequestIdFilter implements Filter {
-  @Override public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain) throws IOException, ServletException {
-    HttpServletRequest r = (HttpServletRequest) req;
-    String id = r.getHeader("X-Request-ID");
-    if (id == null || id.isBlank()) id = UUID.randomUUID().toString();
-    MDC.put("requestId", id);
-    try { chain.doFilter(req, res); } finally { MDC.remove("requestId"); }
-  }
+
+    private static final String REQUEST_ID_HEADER = "X-Request-Id";
+
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+
+        HttpServletRequest httpRequest = (HttpServletRequest) request;
+        String requestId = httpRequest.getHeader(REQUEST_ID_HEADER);
+        if (requestId == null || requestId.isBlank()) {
+            requestId = UUID.randomUUID().toString();
+        }
+        MDC.put("requestId", requestId);
+        try {
+            chain.doFilter(request, response);
+        } finally {
+            MDC.remove("requestId");
+        }
+    }
 }
 ```
 
-**Код (Kotlin): то же**
-
 ```kotlin
-package com.example.trace
+package com.example.tracing
 
 import jakarta.servlet.Filter
 import jakarta.servlet.FilterChain
@@ -1838,130 +2819,248 @@ import jakarta.servlet.ServletResponse
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.MDC
 import org.springframework.stereotype.Component
+import java.io.IOException
 import java.util.UUID
+import jakarta.servlet.ServletException
 
 @Component
 class RequestIdFilter : Filter {
-    override fun doFilter(req: ServletRequest, res: ServletResponse, chain: FilterChain) {
-        val r = req as HttpServletRequest
-        val id = r.getHeader("X-Request-ID")?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
-        MDC.put("requestId", id)
-        try { chain.doFilter(req, res) } finally { MDC.remove("requestId") }
+
+    @Throws(IOException::class, ServletException::class)
+    override fun doFilter(request: ServletRequest, response: ServletResponse, chain: FilterChain) {
+        val httpRequest = request as HttpServletRequest
+        var requestId = httpRequest.getHeader("X-Request-Id")
+        if (requestId.isNullOrBlank()) {
+            requestId = UUID.randomUUID().toString()
+        }
+        MDC.put("requestId", requestId)
+        try {
+            chain.doFilter(request, response)
+        } finally {
+            MDC.remove("requestId")
+        }
     }
 }
 ```
+
+С точки зрения контейнерной эксплуатации, важно ограничивать объём трассировок и хранение: короткий retention, агрессивный sampling, ограничения на размер спана и количество атрибутов. Иначе trace-хранилище превращается в ещё один «монолит», который падает при каждом шторме или инциденте. Трассировка — инструмент для анализа сложных случаев, а не замена логам и метрикам.
 
 ---
 
 ## Диагностика на проде: безопасное включение debug-логов и маскирование секретов
 
-В проде иногда нужно «подсветить» конкретный пакет/класс. Делайте это через `/actuator/loggers` (меняя уровень в рантайме) и на короткое время. После — возвращайте в `INFO`. Никогда не включайте глобальный `DEBUG` — это лавина данных и риск утечек.
+Даже с нормальными логами, метриками и трассировкой иногда возникает ситуация «на проде странное поведение, в dev воспроизвести не можем». Возникает соблазн «а давайте включим DEBUG на всём сервисе». В контейнерной реальности это путь к себе же проблемам: резко растёт объём логов (утопим хранилище), увеличивается нагрузка на CPU/IO, в логах легко оказываются PII и секреты. Поэтому включать debug на проде нужно **точечно и временно**, а чувствительные данные — маскировать на уровне логгера или фильтров.
 
-Маскирование секретов критично: пароли/токены/ключи не должны попадать в логи. Можно использовать `TurboFilter`/`MaskingConverter` в Logback, который заменяет совпадения по regex на `***`. Плюс — дисциплина в коде: не логировать конфигурации целиком, а только факт наличия/статус.
+Spring Boot Actuator имеет endpoint `/actuator/loggers`, который позволяет **динамически** менять уровень логгера во время работы приложения. Это идеальный инструмент для продовой диагностики: можно на несколько минут поднять уровень для конкретного пакета (`com.example.payments`) до DEBUG, собрать нужные логи и вернуть уровень на INFO, не перезапуская Pod. Чтобы это работало, нужно включить endpoint и защитить его аутентификацией (в проде — обязательно).
 
-Для проблемных запросов используйте traceId/requestId и выборочную трассировку (см. сэмплинг). Для долгих операций — профилирующие endpoints/async стеки — но аккуратно: не включайте профилировщики на больших процентилях трафика.
+Конфигурация Actuator для `loggers` делается в `application.yml`. В dev можно включать его целиком, в prod — только внутри кластера и с auth. Для простоты здесь просто добавим его в список exposure.
 
-«Диагностические» флаги (вроде `?debug=true`) отключайте на проде или подвязывайте под аутентификацию. Если нужно видеть тело запроса, делайте это на стенде/теневом трафике, не в бою.
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,metrics,prometheus,loggers"
+```
 
-Удобно иметь «диагностическую» страницу с информацией версии/времени запуска/основных параметров — но без секретов. Это поможет при инцидентах, не заглядывая внутрь контейнера.
+В коде ничего менять не нужно: достаточно стандартного SLF4J-логирования. Но для удобства диагностики стоит договориться о форматах сообщений: важно логировать ключевые бизнес-идентификаторы, но не логировать полные payload’ы с PII и секретами. Например, `log.debug("Response from PSP status={} code={}", status, code)` вместо `log.debug("Response {}", body)`.
 
-Соблюдайте ретеншн-политику логов и PII/персональных данных: минимизируйте сбор, шифруйте хранение, ограничивайте доступ.
+Иногда, несмотря на договорённости, в лог всё же просачиваются чувствительные данные. Тогда стоит добавить уровень защиты в сам логгер: фильтр, который редактирует message/arguments и заменяет значения, похожие на номера карт, токены, пароли, на маски (`****`). В Logback это можно сделать через TurboFilter или custom Encoder. В контейнерном контексте это особенно важно: логи зачастую оказываются в централизованных системах, доступ к которым имеет больше людей, чем к самой базе данных.
 
-**Код (Java): маскирование секретов в Logback через TurboFilter (пример)**
+Ниже пример Java-кода, который демонстрирует, как безопасно использовать debug-логи в сервисе — без прописывания логики включения/выключения, опираясь только на уровень, установленный через Actuator. При выставленном уровне DEBUG для `com.example.debug` логика будет детально логироваться, иначе — только high-level.
 
 ```java
-package com.example.mask;
+package com.example.debug;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.spi.FilterReply;
-import ch.qos.logback.classic.turbo.TurboFilter;
-import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
-public class SecretMaskingTurboFilter extends TurboFilter {
-  private final Pattern pattern = Pattern.compile("(password|secret|token)=([^&\\s]+)", Pattern.CASE_INSENSITIVE);
-  @Override
-  public FilterReply decide(org.slf4j.Marker marker, ch.qos.logback.classic.Logger logger, Level level, String format, Object[] params, Throwable t) {
-    if (format != null) {
-      var m = pattern.matcher(format);
-      if (m.find()) {
-        String masked = m.replaceAll("$1=***");
-        logger.callAppenders(new ch.qos.logback.classic.spi.LoggingEvent(logger.getName(), logger, level, masked, t, params));
-        return FilterReply.DENY;
-      }
+@Service
+public class DebugExampleService {
+
+    private static final Logger log = LoggerFactory.getLogger(DebugExampleService.class);
+
+    public void handle(String input) {
+        log.info("Handling request");
+        if (log.isDebugEnabled()) {
+            log.debug("Detailed debug for input='{}'", input);
+        }
+        // основная логика
     }
-    return FilterReply.NEUTRAL;
-  }
 }
 ```
-
-**Код (Kotlin): простая маскировка в приложении (дополнение к фильтру)**
 
 ```kotlin
-package com.example.mask
+package com.example.debug
 
-object Masker {
-    private val regex = Regex("(password|secret|token)=([^&\\s]+)", RegexOption.IGNORE_CASE)
-    fun safe(msg: String) = msg.replace(regex, "$1=***")
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Service
+
+@Service
+class DebugExampleService {
+
+    private val log = LoggerFactory.getLogger(DebugExampleService::class.java)
+
+    fun handle(input: String) {
+        log.info("Handling request")
+        if (log.isDebugEnabled) {
+            log.debug("Detailed debug for input='{}'", input)
+        }
+        // основная логика
+    }
 }
 ```
 
-`logback-spring.xml` (подключение TurboFilter):
+Вызов `/actuator/loggers/com.example.debug` позволяет на лету менять уровень. Через POST можно поднять уровень до DEBUG, собрать логи и опустить обратно до INFO. Это удобно делать через k8s port-forward и защищённый доступ, чтобы не светить этот endpoint наружу.
 
-```xml
-<configuration>
-  <turboFilter class="com.example.mask.SecretMaskingTurboFilter"/>
-  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-    <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
-  </appender>
-  <root level="INFO"><appender-ref ref="STDOUT"/></root>
-</configuration>
+```bash
+curl -X POST "http://localhost:8080/actuator/loggers/com.example.debug" \
+  -H "Content-Type: application/json" \
+  -d '{"configuredLevel": "DEBUG"}'
 ```
 
----
+Маскирование секретов можно реализовать через фильтр, который перехватывает входящие HTTP-запросы и перед логированием «чистит» заголовки `Authorization`, `Cookie`, `X-Api-Key`. Вместо реального значения в логе остаётся, например, `***`. Это особенно актуально, если включён debug на уровне HTTP-клиентов/серверов, где легко случайно вывести токены.
+
+```java
+package com.example.debug;
+
+import jakarta.servlet.*;
+import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+
+@Component
+public class SensitiveHeaderLoggingFilter implements Filter {
+
+    private static final Logger log = LoggerFactory.getLogger(SensitiveHeaderLoggingFilter.class);
+
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+        throws IOException, ServletException {
+
+        HttpServletRequest req = (HttpServletRequest) request;
+        String auth = req.getHeader("Authorization");
+        if (auth != null) {
+            log.debug("Authorization header is present but will not be logged");
+        }
+        chain.doFilter(request, response);
+    }
+}
+```
+
+```kotlin
+package com.example.debug
+
+import jakarta.servlet.Filter
+import jakarta.servlet.FilterChain
+import jakarta.servlet.ServletException
+import jakarta.servlet.ServletRequest
+import jakarta.servlet.ServletResponse
+import jakarta.servlet.http.HttpServletRequest
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+import java.io.IOException
+
+@Component
+class SensitiveHeaderLoggingFilter : Filter {
+
+    private val log = LoggerFactory.getLogger(SensitiveHeaderLoggingFilter::class.java)
+
+    @Throws(IOException::class, ServletException::class)
+    override fun doFilter(request: ServletRequest, response: ServletResponse, chain: FilterChain) {
+        val httpRequest = request as HttpServletRequest
+        val auth = httpRequest.getHeader("Authorization")
+        if (auth != null) {
+            log.debug("Authorization header is present but will not be logged")
+        }
+        chain.doFilter(request, response)
+    }
+}
+```
+
+Ещё одна важная часть продовой диагностики — **масштаб и длительность** включения debug. Даже для одного модуля, если он обрабатывает тысячи запросов в секунду, дебаг-логирование может в считанные минуты выбить лимиты на лог-хранилище или привести к throttling’у. Поэтому включение debug должно быть строго регламентировано: кто может, на какой срок, какие namespace/логгеры, какие алёрты на рост объёма логов.
+
+В Kubernetes удобно использовать feature-флаги и конфиг-мэп для управления лог-уровнем. Можно, например, держать `logging.level.com.example.debug` в ConfigMap и при изменении перезапускать Pods. Но Actuator loggers проще и быстрее. Главное — не оставлять debug навсегда после «временной» диагностики: через неделю никто уже не вспомнит, почему сервис льёт мегабайты логов, а счёт за лог-хранилище напомнит сам.
+
+В довесок к этому всё, что связано с логами и диагностикой, должно быть задокументировано: какой endpoint включён, как менять уровень, какие поля логируются, какие маскируются, где лежат runbook’и по включению debug и сбору данных. Тогда в реальном инциденте команда не будет импровизировать, а будет выполнять проверенную процедуру.
 
 # 6. Жизненный цикл, здоровье и останов
 
 ## Liveness/Readiness/Startup: что именно проверять и какие статусы; зависимость от БД/кеша/очередей
 
-Liveness отвечает на вопрос «жив ли процесс». Если он отвечает — kube не должен его убивать. Нельзя в liveness проверять внешние зависимости: иначе при кратком падении БД процесс начнёт перезапускаться по кругу. Liveness — это «сам себе доктор»: внутренняя петля, deadlock-детектор, базовый ответ приложения.
+В Kubernetes у контейнера есть минимум три «состояния жизни», которые тебя интересуют: **liveness**, **readiness** и фактический **startup** самого Spring Boot. Liveness отвечает на вопрос «процесс вообще жив или завис», readiness — «можно ли сейчас слать бизнес-трафик», а startup — «успело ли приложение корректно подняться». Spring Boot через Actuator даёт готовые health-эндпоинты, которые удобно использовать в качестве probe, но важно не путать их между собой и не запихивать всю логику проверки в один единственный `/actuator/health`.
 
-Readiness — «готов ли принимать трафик». Здесь уже можно проверять доступность БД/кеша/очередей. Если зависимость падает — readiness должен стать `DOWN`, чтобы маршрутизатор перестал слать трафик, но процесс продолжал жить и пытаться восстановиться.
+Хорошая модель следующая: liveness проверяет, что **JVM и сам процесс не в коме** (нет вечных дедлоков, OutOfMemoryError и т.п.), а readiness учитывает **готовность зависимостей**: БД, кэша, очередей, внешних API, миграций схемы. Тогда при временной недоступности, например, Redis, Pod останется живым (liveness OK), но перестанет принимать новый трафик (readiness FAIL) — трафик уйдёт на другие Pod’ы, а этот будет пытаться восстановиться. Если же приложение совсем умерло, liveness сработает, Pod перезапустят.
 
-Startup-проба помогает длинно стартующим сервисам. Пока она не `UP`, kube не включает liveness/readiness. Полезно для сервисов с прогревом кэшей/компиляцией шаблонов/подключениями.
+В Spring Boot 3+ для Kubernetes это делается буквально одной настройкой: включается режим probes, и Actuator автоматически добавляет `liveness` и `readiness` поддеревья в `health`. При этом ты можешь явно помечать `HealthIndicator`-ы как влияющие только на readiness, либо на оба статуса. Это позволяет, например, считать временную деградацию внешнего API поводом вывести Pod из балансировки, но не убивать весь процесс.
 
-Золотое правило: **liveness — лёгкая и автономная**, **readiness — агрессивная и зависимая**. Не путайте их, иначе получите или ложные убийства процесса, или вечный трафик в неготовые инстансы.
+Зависимости — отдельная тема. Подключать БД, кеш и очереди в liveness обычно **не надо**: короткий всплеск проблем на стороне Postgres не должен приводить к мгновенному перезапуску всех Pod’ов; достаточно убрать их из балансировки через readiness. В liveness имеет смысл проверять базовые вещи: здоровье JVM, отсутствие «фатальных» ошибок в системе, внутреннее состояние самого приложения. Некоторые команды вообще делают liveness простым `always UP`, рассчитывая на то, что Kubernetes поймёт смерть процесса и без этого, а всю «тонкую» логку выносят в readiness.
 
-В Spring Boot включите «probes»: Boot сам учитывает состояния и отдаёт `livenessState/readinessState`. Добавляйте кастомные `HealthIndicator` для зависимостей, но аккуратно с таймаутами — readiness не должен зависать на минуты.
+Startup — это момент, когда приложение уже подняло контекст, проинициализировало важные бины, но ещё может быть не готово: миграции БД не завершены, кэш пустой, неблокирующие коннекты ещё устанавливаются. В Spring Boot 2.3+ есть отдельная фаза startup-probe, которую можно использовать для долгой инициализации, но в большинстве случаев достаточно readiness: до тех пор, пока `readinessProbe` не зелёная, Pod не будет получать трафик, и ты можешь спокойно инициировать тяжёлые вещи при старте.
 
-Проверяйте пробы нагрузкой и отказами: отключайте БД/кэш и смотрите, как быстро readiness падает и восстанавливается. Это важнее теории.
+Чтобы всё это заработало, сначала подключим Actuator и необходимые зависимости. Для Java и Kotlin это одни и те же стартеры, различается только Gradle DSL.
 
-**Код (Java): кастомный readiness HealthIndicator для БД**
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+}
+```
+
+Дальше включаем probes в `application.yml`. Spring Boot автоматически добавит `liveness` и `readiness`-health группы, которые можно биндить к probe. Параллельно задаём базовые тэги для метрик, что пригодится для мониторинга.
+
+```yaml
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,metrics,prometheus"
+```
+
+Теперь можем добавить кастомный `HealthIndicator`, который проверяет, например, доступность очереди или кэша. Его логично включить в readiness, но не в liveness. В Java это обычный бин, реализующий интерфейс HealthIndicator, который возвращает `UP` или `DOWN` на основе состояния зависимости.
 
 ```java
 package com.example.health;
 
-import org.springframework.boot.actuate.health.*;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.stereotype.Component;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
+@Component("cacheHealth")
+public class CacheHealthIndicator implements HealthIndicator {
 
-@Component("dbReadiness")
-public class DbReadinessIndicator implements HealthIndicator {
-  private final DataSource ds;
-  public DbReadinessIndicator(DataSource ds) { this.ds = ds; }
-  @Override public Health health() {
-    try (Connection c = ds.getConnection()) {
-      return Health.up().withDetail("db", "ok").build();
-    } catch (Exception e) {
-      return Health.down(e).withDetail("db", "down").build();
+    @Override
+    public Health health() {
+        boolean cacheOk = checkCache();
+        if (cacheOk) {
+            return Health.up().withDetail("cache", "available").build();
+        }
+        return Health.down().withDetail("cache", "unavailable").build();
     }
-  }
+
+    private boolean checkCache() {
+        // здесь могла бы быть проверка Redis/локального кеша
+        return true;
+    }
 }
 ```
-
-**Код (Kotlin): то же**
 
 ```kotlin
 package com.example.health
@@ -1969,1124 +3068,1740 @@ package com.example.health
 import org.springframework.boot.actuate.health.Health
 import org.springframework.boot.actuate.health.HealthIndicator
 import org.springframework.stereotype.Component
-import javax.sql.DataSource
 
-@Component("dbReadiness")
-class DbReadinessIndicator(private val ds: DataSource) : HealthIndicator {
-    override fun health(): Health = try {
-        ds.connection.use { Health.up().withDetail("db", "ok").build() }
-    } catch (e: Exception) {
-        Health.down(e).withDetail("db", "down").build()
+@Component("cacheHealth")
+class CacheHealthIndicator : HealthIndicator {
+
+    override fun health(): Health {
+        val cacheOk = checkCache()
+        return if (cacheOk) {
+            Health.up().withDetail("cache", "available").build()
+        } else {
+            Health.down().withDetail("cache", "unavailable").build()
+        }
+    }
+
+    private fun checkCache(): Boolean {
+        // здесь могла бы быть проверка Redis/локального кеша
+        return true
     }
 }
 ```
 
-`application.yml`:
+На стороне Kubernetes readiness и liveness настраиваются через `readinessProbe` и `livenessProbe` в Deployment. Частый паттерн: readiness проверяет `/actuator/health/readiness`, liveness — `/actuator/health/liveness`. Тайм-ауты и период опроса нужно подгонять под реальную нагрузку и время ответов.
 
 ```yaml
-management:
-  endpoint.health.probes.enabled: true
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: registry.example.com/orders-service:1.0.0
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
 ```
+
+Связь с БД и очередями важно **разделять**: кратковременная недоступность Postgres — ещё не повод перезапускать Pod (liveness), но точно повод временно перестать брать трафик (readiness). Если же приложение не прошло миграции при старте и вообще не смогло открыть соединение, лучше сразу дать ему упасть (fail-fast), чем держать его наполовину живым. В сочетании с health-группами это даёт гибкую модель: критические вещи — в liveness, операционные зависимые — в readiness.
+
+Если игнорировать liveness/readiness и использовать только один health-эндпоинт для обоих probe, получишь либо постоянный CrashLoop при любой проблеме с БД, либо наоборот — живой Pod, который happily отвечает 500 на все запросы. Правильная модель — это явное разделение ролей и чёткая договорённость с SRE: что мы проверяем где, какие статусы значат «перезапустить», а какие — «вывести из балансировки и дать шанс восстановиться».
 
 ---
 
 ## Graceful shutdown: Spring Boot graceful-period, обработка SIGTERM, preStop-хуки и дренирование трафика
 
-Graceful shutdown — корректное завершение: перестать принимать новые запросы, дождаться завершения текущих, закрыть ресурсы. В Boot 3 включите `server.shutdown=graceful` и задайте время на останов. Kubernetes сначала отправит `SIGTERM`, затем подождёт `terminationGracePeriodSeconds`, после чего пришлёт `SIGKILL`.
+В Kubernetes Pod не убивают сразу. Сначала kubelet посылает контейнеру `SIGTERM`, ждёт некоторое время (`terminationGracePeriodSeconds`), и только потом, если процесс не завершился сам, присылает `SIGKILL`. В этот промежуток у приложения есть шанс завершить активные запросы, закрыть ресурсы, записать финальные логи. Если этим пренебречь, будешь ловить оборванные HTTP-запросы, частично выполненные транзакции и странные ошибки во время деплоев.
 
-Важно, чтобы прокси «дренировали» трафик: перед SIGTERM полезно иметь `preStop`-хук, который сначала дергает `/sleep`/`/ready=false` или просто спит пару секунд, чтобы убрать Pod из балансировки. И только потом — `SIGTERM`. Так вы избежите 5xx в конце релиза.
+Spring Boot 2.3+ умеет **graceful shutdown** из коробки. По сути, это режим, когда при получении сигнала остановки сервер перестаёт принимать новые соединения, но даёт завершиться тем, что уже в работе, в течение заданного таймаута. Для Tomcat это означает, что connector перестаёт принимать новые запросы, а существующие worker-потоки дорабатывают свои задачи. Если запросы долго живут (например, стриминг), таймаут нужно подобрать аккуратно, а ещё — договориться с балансером о дренировании трафика.
 
-Долгие фоновые задачи нужно прерывать. В Java ловите `InterruptedException`, проверяйте флаг `Thread.interrupted()` в петлях. Для consumer’ов (Kafka/Rabbit) закрывайте подписки в `@PreDestroy`.
-
-Не ставьте слишком маленький `terminationGracePeriodSeconds`: сложные сервисы с открытыми коннектами (DB, внешние API) могут не успеть корректно завершиться. Лучше чуть «перебдеть», чем ронять активные запросы.
-
-Тестируйте останов: запускайте сервис, шлите нагрузку, посылайте `SIGTERM` и смотрите, что происходит. Это помогает найти «забытые» фоновые потоки и блокировки.
-
-Логируйте начало/конец graceful shutdown и количество «незавершённых» задач — это ключевые маркеры в расследованиях.
-
-**Код (Java): graceful-хуки и прерывание работы**
-
-```java
-package com.example.grace;
-
-import jakarta.annotation.PreDestroy;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.SpringApplication;
-import org.springframework.stereotype.Component;
-import java.util.concurrent.*;
-
-@SpringBootApplication
-public class GraceApp { public static void main(String[] args) { SpringApplication.run(GraceApp.class, args); } }
-
-@Component
-class Worker implements Runnable {
-  private final ExecutorService pool = Executors.newFixedThreadPool(2);
-  public Worker() { pool.submit(this); }
-  @Override public void run() {
-    try {
-      while (!Thread.currentThread().isInterrupted()) {
-        // имитация работы
-        Thread.sleep(200);
-      }
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-    }
-  }
-  @PreDestroy
-  public void stop() throws InterruptedException {
-    pool.shutdown();
-    if (!pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) pool.shutdownNow();
-    System.out.println("Graceful stopped");
-  }
-}
-```
-
-**Код (Kotlin): то же**
-
-```kotlin
-package com.example.grace
-
-import jakarta.annotation.PreDestroy
-import org.springframework.boot.autoconfigure.SpringBootApplication
-import org.springframework.boot.runApplication
-import org.springframework.stereotype.Component
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-
-@SpringBootApplication
-class GraceApp
-
-fun main(args: Array<String>) = runApplication<GraceApp>(*args)
-
-@Component
-class Worker : Runnable {
-    private val pool = Executors.newFixedThreadPool(2)
-    init { pool.submit(this) }
-    override fun run() {
-        try {
-            while (!Thread.currentThread().isInterrupted) Thread.sleep(200)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-        }
-    }
-    @PreDestroy
-    fun stop() {
-        pool.shutdown()
-        if (!pool.awaitTermination(5, TimeUnit.SECONDS)) pool.shutdownNow()
-        println("Graceful stopped")
-    }
-}
-```
-
-`application.yml` и K8s preStop:
+Включается graceful shutdown в `application.yml` через свойство `server.shutdown=graceful` и настройку `spring.lifecycle.timeout-per-shutdown-phase`. Второе задаёт общий тайм-аут остановки контекста. Его нужно согласовать с `terminationGracePeriodSeconds` в Deployment: если Kubernetes убьёт Pod раньше, чем Spring успеет завершить всё, идею graceful shutdown’а можно считать проваленной.
 
 ```yaml
 server:
   shutdown: graceful
+
 spring:
   lifecycle:
-    timeout-per-shutdown-phase: 10s
+    timeout-per-shutdown-phase: 30s
 ```
 
+На стороне Kubernetes этот таймаут отражается в `terminationGracePeriodSeconds`. Простой шаблон: выставить его чуть больше, чем тайм-аут Spring (например, 40–60 секунд), чтобы у приложения был запас. Плюс — preStop-hook, который даёт ingress’у/сервису время перестать слать трафик на Pod прежде, чем тот начнёт закрываться.
+
 ```yaml
-lifecycle:
-  preStop:
-    exec:
-      command: ["/bin/sh","-c","sleep 3"]
-terminationGracePeriodSeconds: 20
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-service
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: app
+          image: registry.example.com/orders-service:1.0.0
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
 ```
+
+PreStop-hook часто используют очень просто: `sleep N` секунд. За это время Pod всё ещё работает, но kube-proxy уже убрал его из списка эндпоинтов для сервиса (readinessProbe перестаёт быть зелёной, и Pod выпадает из балансировки). В идеале порядок такой: сначала readiness падает (Pod больше не получает новый трафик), потом preStop выдерживает небольшую паузу, затем приложение переходит в фазу graceful shutdown. Так минимизируется риск того, что балансер в момент остановки ещё шлёт новые запросы.
+
+В коде Spring Boot можно слушать события остановки контекста и аккуратно завершать свои ресурсы: закрывать пулы, останавливать фоновые задачи, фиксировать состояние. Для этого достаточно подписаться на `ContextClosedEvent`. В Java это обычный `ApplicationListener`, в Kotlin — аналогично.
+
+```java
+package com.example.shutdown;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ShutdownListener implements ApplicationListener<ContextClosedEvent> {
+
+    private static final Logger log = LoggerFactory.getLogger(ShutdownListener.class);
+
+    @Override
+    public void onApplicationEvent(ContextClosedEvent event) {
+        log.info("Context is shutting down, releasing resources...");
+        // закрыть пулы, остановить фоновые задачи
+    }
+}
+```
+
+```kotlin
+package com.example.shutdown
+
+import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationListener
+import org.springframework.context.event.ContextClosedEvent
+import org.springframework.stereotype.Component
+
+@Component
+class ShutdownListener : ApplicationListener<ContextClosedEvent> {
+
+    private val log = LoggerFactory.getLogger(ShutdownListener::class.java)
+
+    override fun onApplicationEvent(event: ContextClosedEvent) {
+        log.info("Context is shutting down, releasing resources...")
+        // закрыть пулы, остановить фоновые задачи
+    }
+}
+```
+
+Для проверки behavior’а удобно иметь эндпоинт, который эмулирует долгий запрос: например, `GET /api/slow`, который спит 10 секунд. При корректно настроенном graceful shutdown этот запрос должен **доехать до конца** даже при перекатывании Deployment’а. Если увидишь обрывы соединений и 502 со стороны ingress — значит, таймауты и preStop подобраны неправильно.
+
+```java
+package com.example.shutdown;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class SlowController {
+
+    @GetMapping("/api/slow")
+    public String slow() throws InterruptedException {
+        Thread.sleep(10_000L);
+        return "done";
+    }
+}
+```
+
+```kotlin
+package com.example.shutdown
+
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class SlowController {
+
+    @GetMapping("/api/slow")
+    fun slow(): String {
+        Thread.sleep(10_000L)
+        return "done"
+    }
+}
+```
+
+Важно помнить о фоновых задачах: `@Scheduled`, `@Async`, воркеры очередей. Они тоже должны корректно отрабатывать shutdown: реагировать на прерывание потока, проверять флаг остановки, не начинать новые тяжёлые операции после того, как контекст пошёл на закрытие. Иначе даже с graceful shutdown’ом Spring контур остановки может занять весь grace-period, а в худшем случае — превысить его и быть убитым `SIGKILL`.
+
+Если в конфигурации всё настроено неправильно — нет graceful shutdown, terminationGracePeriod слишком маленький, preStop отсутствует, readiness не падает заранее — rolling update будет сопровождаться короткими провалами трафика, обрывами запросов и загадочными ошибками именно «во время релиза». Эти вещи потом долго и мучительно отлавливают по логам и трассировке; проще сразу сделать нормальный shutdown-пайплайн и один раз прогнать его под нагрузкой.
 
 ---
 
 ## Инициализация: Liquibase/Flyway, прогрев кэшей/соединений; отдельные init-контейнеры/джобы
 
-Миграции схемы БД должны выполняться **до** старта приложений, которым нужна новая схема. В Kubernetes это удобно делать отдельной Job (или init-контейнером), чтобы сам сервис не зависел от прав на миграции. Для малых проектов допустимо оставить Liquibase/Flyway внутри сервиса, но аккуратно с параллельным стартом нескольких Pod’ов.
+Фаза инициализации контейнера — не менее важна, чем остановка. Здесь решается, **когда и где** выполнять миграции схемы БД, как прогревать кэши и коннекшн-пулы, нужно ли запускать отдельные init-контейнеры и Kubernetes-джобы. Ошибки на этом этапе выражаются в том, что Pod вечно крутится в `CrashLoopBackOff` из-за непроходящих миграций или долго «прогревается», пока всё остальное уже давно ожидает трафик.
 
-Прогрев кэшей/соединений ускоряет первые запросы. Полезно заранее прогреть Hikari-пул, JIT/кэш шаблонов, подготовить часто используемые данные. Делайте это в `ApplicationRunner`/`SmartLifecycle.start()`, но не держите readiness «UP», пока прогрев не завершился.
+Spring Boot умеет запускать Liquibase/Flyway прямо на старте приложения. Это удобно в dev/stage: поднял Pod — схемы мигрировали, сервис готов. В проде так тоже можно жить, но нужно понимать риски: если миграция долгая или требует эксклюзивного доступа, первый Pod повиснет на миграции, readiness останется красным, rolling update будет ждать. Если миграция провалится, Pod упадёт, Kubernetes попробует перезапустить, и так по кругу. Поэтому для тяжёлых миграций выгоднее вынести их в отдельный процесс: job или init-container.
 
-Init-контейнеры хороши для загрузки артефактов/сертификатов/генерации конфигов. Они запускаются перед основным контейнером и гарантируют «правильное» состояние файловой системы/секретов.
+Типичный подход: лёгкие миграции (добавить колонку, индекс) оставляем на старте приложения, тяжёлые (переезд таблиц, backfill миллионов строк) — в отдельный pipeline или Kubernetes Job. На уровне Spring Boot достаточно пометить миграции тегами или разделить changeLog и запускать разные наборы для разных задач. В любом случае fail-fast остаётся must-have: если миграция обязана быть выполнена до старта, лучше упасть на старте, чем подняться на старой схеме.
 
-Если миграций много, разделяйте **DDL-джобу** и **деплой приложения** — так вы сможете скатывать миграции отдельно, проверять их, откатывать без влияния на движок сервиса. В Helm это два шаблона: Job и Deployment.
-
-Важно: миграции должны быть **идемпотентны** и быстры по максимуму. Большие DDL лучше через maintenance-окна/онлайн-алгоритмы.
-
-Наблюдаемость и логи миграций: отправляйте в stdout и собирайте централизованно. Не храните лог-файлы в контейнере.
-
-**Код (Java): прогрев кэша при старте**
-
-```java
-package com.example.init;
-
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-@Configuration
-public class WarmupConfig {
-  @Bean
-  ApplicationRunner warmup() {
-    return args -> {
-      // прогреваем что-то часто используемое
-      Thread.sleep(500);
-      System.out.println("Warmup done");
-    };
-  }
-}
-```
-
-**Код (Kotlin): то же**
-
-```kotlin
-package com.example.init
-
-import org.springframework.boot.ApplicationRunner
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-
-@Configuration
-class WarmupConfig {
-    @Bean
-    fun warmup() = ApplicationRunner {
-        Thread.sleep(500)
-        println("Warmup done")
-    }
-}
-```
-
-`application.yml` (Liquibase внутри приложения, пример):
+Пример включения Liquibase в Spring Boot через `application.yml` минимален: задаём changelog и включаем auto-run. В dev это удобно, в prod — можно добавить профиль или отдельный конфиг, чтобы при необходимости выносить миграции.
 
 ```yaml
 spring:
   liquibase:
+    change-log: "classpath:db/changelog/db.changelog-master.yaml"
     enabled: true
-    change-log: classpath:db/changelog/db.changelog-master.yaml
 ```
 
-K8s Job для миграций (упрощённо):
+Стартовая changeLog может описывать базовую структуру таблицы. Пример YAML-changelog’а, который создаёт таблицу `orders`. Это типичный кусок, который будет выполняться на старте первого разворачивания схемы.
 
 ```yaml
-apiVersion: batch/v1
-kind: Job
-metadata: { name: demo-liquibase }
+databaseChangeLog:
+  - changeSet:
+      id: 1-create-orders
+      author: app
+      changes:
+        - createTable:
+            tableName: orders
+            columns:
+              - column:
+                  name: id
+                  type: bigint
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: status
+                  type: varchar(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamp
+                  constraints:
+                    nullable: false
+```
+
+Для прогрева кэшей и соединений удобно использовать `ApplicationRunner`/`CommandLineRunner`: после поднятия контекста делаем пару типичных запросов к внешним системам, чтобы пол заполнить, выгрузить горячие данные и т.п. Важно не блокировать startup-health: как только readiness станет зелёным, приложение должно быть действительно готово, а не продолжать длительный warmup.
+
+```java
+package com.example.init;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.stereotype.Component;
+
+@Component
+public class WarmupRunner implements ApplicationRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(WarmupRunner.class);
+
+    private final SomeCacheService cacheService;
+
+    public WarmupRunner(SomeCacheService cacheService) {
+        this.cacheService = cacheService;
+    }
+
+    @Override
+    public void run(org.springframework.boot.ApplicationArguments args) {
+        log.info("Warming up caches...");
+        cacheService.preloadPopularItems();
+        log.info("Warmup finished");
+    }
+}
+```
+
+```kotlin
+package com.example.init
+
+import org.slf4j.LoggerFactory
+import org.springframework.boot.ApplicationArguments
+import org.springframework.boot.ApplicationRunner
+import org.springframework.stereotype.Component
+
+@Component
+class WarmupRunner(
+    private val cacheService: SomeCacheService
+) : ApplicationRunner {
+
+    private val log = LoggerFactory.getLogger(WarmupRunner::class.java)
+
+    override fun run(args: ApplicationArguments) {
+        log.info("Warming up caches...")
+        cacheService.preloadPopularItems()
+        log.info("Warmup finished")
+    }
+}
+```
+
+Если миграции выносятся в отдельный init-container, схема такая: в Deployment добавляется init-container с тем же образом (или специализированным миграционным), который запускает Liquibase/Flyway в специальном режиме и завершает работу. Только после успешного завершения init-контейнера Kubernetes запустит основной контейнер. Это позволяет развести жизненный цикл миграций и приложения, но всё равно требует аккуратной настройки, чтобы не получить бесконечный CrashLoop на init’ах.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-service
 spec:
   template:
     spec:
-      restartPolicy: Never
+      initContainers:
+        - name: db-migration
+          image: registry.example.com/orders-service:1.0.0
+          command: ["java", "-jar", "app.jar", "--spring.profiles.active=migration"]
       containers:
-        - name: liquibase
-          image: registry/demo:1.0.0
-          args: ["java","-jar","/app/app.jar","--spring.liquibase.enabled=true","--spring.main.web-application-type=none"]
-          envFrom: [ { secretRef: { name: db-secret } } ]
+        - name: app
+          image: registry.example.com/orders-service:1.0.0
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
 ```
+
+В профиле `migration` можно включать только Liquibase/Flyway и отключать веб-часть, чтобы процесс завершался сразу после миграций. В Java/Kotlin коде это часто делается через условные бины или отдельный `@SpringBootApplication` для миграций, но суть проста: миграционный профиль — это CLI-mode, который делает миграции и завершает JVM.
+
+начальная инициализация соединений к внешним системам (БД, очереди, HTTP-клиенты) должна быть ограничена по времени: если соединение не поднялось за N секунд, лучше упасть, чем висеть в состоянии «вроде скоро подключусь». Это опять же создаёт прозрачный CrashLoop, который SRE быстро увидит и привяжет к конкретной ошибке в конфиге или инфраструктуре, а не к «мистическим подвисаниям».
 
 ---
 
 ## Стратегии перезапуска и защита от crashloop: экспоненциальные задержки, быстрая диагностика причин
 
-CrashLoopBackOff — когда контейнер падает сразу после старта. Причины: неверные конфиги/секреты, миграции, порты. Первая линия защиты — **fail-fast** и внятные логи старта. Либо всё Ok и сервис работает, либо он быстро и очевидно падает.
+CrashLoopBackOff — это состояние, которое ты увидишь в Kubernetes, когда Pod постоянно падает сразу после старта. k8s пытается его перезапустить, каждый раз он падает, и таймаут между попытками растёт экспоненциально. С точки зрения платформы это защита от бесконечно быстро падающих Pod’ов, но для разработчика это сигнал: приложение в текущей конфигурации **вообще не способно стартовать**. Причина может быть банальной (ошибка в `application.yml`, отсутствующий секрет) или серьёзной (непроходящие миграции, несовместимая схема БД).
 
-Экспоненциальные backoff’ы на клиентах (HTTP/Kafka/DB) помогают не завалить зависимость штормом ретраев при инциденте. Но не путайте это с рестарт-политиками K8s — они про процесс, а не про сетевые вызовы. В приложении делайте короткий retry с джиттером и чёткими лимитами.
+Стратегия перезапуска начинается с того, что приложение в случае фатальных проблем **должно падать быстро**. Никаких бесконечных ретраев на старте, никаких «подождём ещё 5 минут, вдруг БД придёт в себя». Если оно не может подняться в разумный срок — пусть падает. Тогда CrashLoopBackOff будет честным сигналом о том, что новый билд или конфиг сломан, и нужно вмешательство, а не «оно вроде бы работает, но иногда отдаёт 500». Это и есть принцип fail-fast в контексте деплоя.
 
-Для сервисов-консьюмеров удобно иметь «safe-mode» профиль, где консьюминг не запускается, пока вы не проверите готовность зависимостей. Это спасает при раскрутке сложных сред.
+В Docker Compose стратегии перезапуска задаются через `restart` (`no`, `on-failure`, `always`, `unless-stopped`). Для Spring-сервиса в dev обычно хватает `restart: on-failure`, в проде это всё равно обычно управляется оркестратором. Пример docker-compose сервиса, который перезапускается только при ненулевом коде выхода: это простая защита от случайных падений во время локальной разработки.
 
-Диагностика: выводите конфиг-факты при старте (без секретов), подключайтесь к логу контейнера, смотрите события Pod’а/Job’а. Статусы `/actuator/health` должны отражать истинное состояние.
+```yaml
+version: "3.9"
 
-Иногда лучше «умереть» быстро, чем «жить» в полурабочем состоянии. Если обязательная зависимость недоступна при старте и без неё сервис бессмысленен — падайте. Но если зависимость может появиться позже — держите сервис живым с `readiness=DOWN`.
+services:
+  orders-service:
+    image: registry.example.com/orders-service:1.0.0
+    restart: on-failure
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+```
 
-И ещё: тестируйте падения. «Чёрный ящик» старта/остановки должен быть прозрачен SRE и разработчикам.
+В Kubernetes политика перезапуска для Pod’ов в Deployments — всегда `Always`. CrashLoopBackOff уже реализует экспоненциальный backoff. Но помимо restartPolicy к важным параметрам относятся `backoffLimit` для Job’ов и правильная настройка health-probe. Если liveness настроена агрессивно и считает миграцию или стартовую инициализацию ошибкой, Pod будет убиваться ещё до того, как успеет подняться, и CrashLoop будет бесконечным.
 
-**Код (Java): fail-fast в ApplicationRunner и простой экспоненциальный retry**
+Чтобы улучшить диагностику, полезно разделить «ошибки конфигурации» и «временные инфраструктурные проблемы». В первом случае приложение падает сразу (отсутствует обязательный property, неймспейс БД не тот, Secret не найден), во втором — предпочитает стартовать и переходить в состояние readiness=DOWN, пока инфраструктура не исправится. Тогда CrashLoop будет означать именно конфигурационный дефект, а не временный сбой очереди или базы.
+
+Пример Java-класса, который делает fail-fast на старте при некорректной конфигурации, мы уже фактически использовали: `@ConfigurationProperties` + `@Validated`. Если обязательные поля не заданы, Spring вообще не стартует контекст. Дополнительно можно использовать `SmartLifecycle` или `ApplicationRunner`, чтобы при невозможности подключиться к критичной системе бросить `IllegalStateException` и тем самым остановить приложение.
 
 ```java
-package com.example.crash;
+package com.example.crashloop;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Component;
 
-@Configuration
-public class StartupChecks {
-  @Bean
-  ApplicationRunner checkRequiredEnv() {
-    return args -> {
-      String url = System.getenv("REQUIRED_URL");
-      if (url == null || url.isBlank()) throw new IllegalStateException("REQUIRED_URL is missing");
-    };
-  }
+@Component
+public class CriticalDependencyCheck implements ApplicationRunner {
 
-  public static <T> T retry(java.util.concurrent.Callable<T> call) throws Exception {
-    long delay = 100;
-    for (int i=0; i<5; i++) {
-      try { return call.call(); }
-      catch (Exception e) { Thread.sleep(delay); delay *= 2; }
+    private static final Logger log = LoggerFactory.getLogger(CriticalDependencyCheck.class);
+
+    private final ExternalDependencyClient client;
+
+    public CriticalDependencyCheck(ExternalDependencyClient client) {
+        this.client = client;
     }
-    return call.call();
-  }
+
+    @Override
+    public void run(org.springframework.boot.ApplicationArguments args) {
+        log.info("Checking critical dependency on startup...");
+        if (!client.isAvailable()) {
+            log.error("Critical dependency is not available, failing fast");
+            throw new IllegalStateException("Critical dependency is not available");
+        }
+        log.info("Critical dependency is available");
+    }
 }
 ```
-
-**Код (Kotlin): то же**
 
 ```kotlin
-package com.example.crash
+package com.example.crashloop
 
+import org.slf4j.LoggerFactory
+import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-import java.util.concurrent.Callable
+import org.springframework.stereotype.Component
 
-@Configuration
-class StartupChecks {
-    @Bean
-    fun checkRequiredEnv() = ApplicationRunner {
-        val url = System.getenv("REQUIRED_URL")
-        require(!url.isNullOrBlank()) { "REQUIRED_URL is missing" }
-    }
-}
+@Component
+class CriticalDependencyCheck(
+    private val client: ExternalDependencyClient
+) : ApplicationRunner {
 
-@Throws(Exception::class)
-fun <T> retry(call: Callable<T>): T {
-    var delay = 100L
-    repeat(5) {
-        try { return call.call() } catch (_: Exception) { Thread.sleep(delay); delay *= 2 }
+    private val log = LoggerFactory.getLogger(CriticalDependencyCheck::class.java)
+
+    override fun run(args: ApplicationArguments) {
+        log.info("Checking critical dependency on startup...")
+        if (!client.isAvailable()) {
+            log.error("Critical dependency is not available, failing fast")
+            throw IllegalStateException("Critical dependency is not available")
+        }
+        log.info("Critical dependency is available")
     }
-    return call.call()
 }
 ```
 
----
+В Kubernetes для Job’ов и CronJob’ов стратегия перезапуска и лимит попыток задаются явно. `backoffLimit` определяет, сколько раз Job будет пытаться перезапуститься до того, как пометится как failed. Это удобно для миграционных job’ов: если миграция не прошла N раз, пора остановиться и дать человеку посмотреть на логи, а не пытаться бесконечно.
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migration
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrator
+          image: registry.example.com/orders-service:1.0.0
+          command: ["java", "-jar", "app.jar", "--spring.profiles.active=migration"]
+```
+
+Основная защита от CrashLoop — не магические настройки Kubernetes, а **предсказуемое поведение самого приложения**: чёткая граница «если критически — падаем сразу, если не критически — стартуем и сигнализируем через readiness». Если же приложение при любом чихе пытается бесконечно ретраиться на старте, CrashLoop превращается в странную полузависшую систему: Pod вроде как жив, но никогда не готов принимать трафик.
+
+Для быстрой диагностики важно настроить нормальные логи и события k8s. CrashLoopBackOff всегда сопровождается сообщениями `kubectl describe pod`, где видно, какой код выхода, сколько было рестартов, какая последняя причина. Если приложение падает с Exception, но пишет stacktrace только в stdout, а лог-пайплайн настроен, эти stacktrace’ы окажутся в центральных логах. Если же лог пишет в файл внутри контейнера — после смерти Pod’а этот файл пропадает, и CrashLoop превращается в «падает по неизвестной причине».
+
+Наконец, стоит помнить, что даже при CrashLoop сервис может продолжать получать трафик: если deployment содержит несколько реплик, одна может падать, а остальные — обслуживать запросы. Поэтому CrashLoop одного Pod’а — ещё не конец света, но это повод проверить, **что именно** в этом Pod’е отличается (конфиг, версия образа, секреты) и не превратится ли это вскоре в массовую проблему после следующего релиза.
 
 # 7. Ресурсы и производительность в контейнере
 
 ## Requests/limits и влияние на JVM: нитепулы, реакция на throttling; настройка parallelism
 
-В Kubernetes requests/limits задают «квоты» CPU/памяти. JVM с cgroup-осведомлённостью учитывает эти лимиты, но не магически: если limit CPU низкий, thread-pools, которые вы задали «по умолчанию = N CPU», начнут конкурировать. Настройте размеры пулов (Tomcat, @Async, scheduler, DB) исходя из `availableProcessors()` **и** реальной нагрузки.
+В Kubernetes CPU и память больше не «размытые ресурсы сервера», а формальный контракт: `requests` — сколько ресурса мы гарантированно просим у кластера, `limits` — жёсткий потолок, выше которого нам дадут по рукам. Для JVM-сервиса это не косметика, а часть производственной архитектуры: от этих чисел зависит, сколько потоков ты можешь себе позволить, как поведёт себя GC и как часто будешь ловить throttling от ядра. Игнорировать requests/limits — значит жить в иллюзии «у нас 16 ядер», когда контейнер на самом деле конкурирует за 0.5 CPU с десятком соседей.
 
-CPU-throttling (когда вы упёрлись в limit) виден как задержки: GC/таймеры/пулы начинают «рвано» работать. Симптомы — скачки латентности без роста RPS. Лекарства: поднимите limit, уменьшите параллелизм, распараллеливайте задачи по нескольким Pod’ам.
+Современная JVM (Java 17+) умеет читать cgroup-ограничения и подстраивать под них GC и thread pools. Но она не знает о твоей бизнес-нагрузке. Если ты выставил `limits: 250m`, а Tomcat настрелен на 200 потоков, то на высокой нагрузке получишь постоянный CPU throttling: ядро будет отбирать у контейнера квоту, запросы начнут растягиваться по времени, а latency p95/p99 поползёт вверх. Снаружи это выглядит как «сервис тупит при любой нагрузке», а причина — в нестыковке нитепулов и CPU-лимитов.
 
-Requests — база для HPA. Если зададите слишком маленький request, Pod’ов может поместиться слишком много на ноду, и все начнут драться за CPU; слишком большой — недоиспользование кластера. Ищите баланс по метрикам.
+Requests и limits важно рассматривать в паре: если у тебя `requests: 100m`, `limits: 2000m`, то планировщик может набить на один нод кучу таких Pod’ов, а при нагрузке они начнут жестко конкурировать за CPU. Сервис вроде как может взять до 2 CPU, но гарантии нет. В продакшене здоровая практика — requests должен быть близок к реальному среднему потреблению, а limits — не сильно выше (обычно 1.5–2×). Тогда JVM будет жить в более предсказуемой среде, а HPA сможет масштабировать нагрузку адекватно.
 
-Пулы задач должны учитывать и IO-характер — CPU-bound vs IO-bound. Для CPU-bound держите размер ~N CPU; для IO-bound — больше, но с бэкпрешсером и таймаутами. Не забывайте про GC-паузы: много тредов ≠ быстро.
+От нитепулов зависит, сколько параллельной работы сервис может потянуть при заданных CPU. Если это классический Spring MVC на Tomcat, критичен `server.tomcat.threads.max` (по умолчанию 200). На 0.5–1 CPU такой пул превращается в фабрику контекст-свитчей: сотни потоков борются за одно ядро, каждый делает чуть-чуть работы и тут же вытесняется. В результате и CPU забит до 100%, и throughput не растёт. Поэтому под каждый deployment стоит увязать max-threads с requests CPU: условно, 50–100 потоков на 1 CPU для I/O bound-нагрузки — более-менее разумный порядок величины.
 
-Проверяйте `Runtime.getRuntime().availableProcessors()` в рантайме — это «видимый» JVM CPU после cgroups. Но не слепо умножайте на константы — профилируйте. Иногда уменьшение параллелизма даёт лучший tail latency.
+При WebFlux история другая: Netty использует event-loop, и количество event-loop потоков чаще всего равно количеству CPU. Но дальше появляются `boundedElastic` и кастомные executor’ы, которые для блокирующих операций тоже плодят фоновые потоки. Если в контейнере у тебя `limits: 1`, а `boundedElastic` позволяет по умолчанию сотни блокирующих задач, эффект будет похожий: ядро будет постоянно резать CPU, а latency начнёт «гулять». Нельзя просто «врубить WebFlux и забыть про ресурсы».
 
-Согласуйте Hikari-пул/HTTP-клиент/экзекьюторы, чтобы они не создавали «бурю» параллельных работ при пиках.
+Жёсткий CPU throttling особенно неприятен тем, что на графиках CPU usage всё красиво: контейнер как будто использует «ровно свой limit», а на самом деле ядро отбрасывает его квоту десятки раз в секунду. Это хорошо видно по `container_cpu_cfs_throttled_seconds_total` и latency HTTP. Если где-то у тебя spike по throttled seconds и одновременно «ступор» по запросам — почти наверняка limits слишком тесные или нитепулы слишком широкие.
 
-**Код (Java): настраиваем пул @Async от числа «видимых» CPU**
+Хорошая практическая тактика — явно задать параметры нитепулов через `application.yml` и биндить их к переменным окружения, зависящим от requests/limits. Например, вынести `MAX_THREADS` в env и выбирать значение пропорционально CPU. Тогда один и тот же образ сможет жить как в маленьком контейнере на 0.5 CPU, так и в большом на 2 CPU, не переоткручивая нитепул на 200 потоков везде подряд.
 
-```java
-package com.example.res;
+Ниже простой пример `application.yml`, где мы уменьшаем количество Tomcat-потоков и задаём их через переменную окружения. Это позволяет под каждый deployment в k8s выставить свои значения, не пересобирая образ. Аналогичную технику можно использовать для любых executor’ов и `TaskExecutor` в `@Async`.
 
-import org.springframework.context.annotation.*;
-import org.springframework.scheduling.annotation.*;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+```yaml
+server:
+  tomcat:
+    threads:
+      max: ${TOMCAT_MAX_THREADS:100}
+      min-spare: 20
+```
 
-@EnableAsync
-@Configuration
-public class AsyncConfig {
-  @Bean(name = "ioPool")
-  public ThreadPoolTaskExecutor ioPool() {
-    int cpus = Runtime.getRuntime().availableProcessors();
-    ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
-    ex.setCorePoolSize(Math.max(2, cpus * 2));
-    ex.setMaxPoolSize(Math.max(4, cpus * 4));
-    ex.setQueueCapacity(1000);
-    ex.setThreadNamePrefix("io-");
-    ex.initialize();
-    return ex;
-  }
+В Gradle зависимости для веб-приложения стандартны: `spring-boot-starter-web` и, возможно, actuator для метрик. Никаких специальных библиотек под requests/limits не требуется, всё завязано на конфиг и окружение.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
 }
 ```
 
-**Код (Kotlin): то же**
-
 ```kotlin
-package com.example.res
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+}
+```
 
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-import org.springframework.scheduling.annotation.EnableAsync
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
+Иногда полезно логировать доступное количество процессоров, которое JVM видит через cgroups. Это помогает убедиться, что контейнер действительно видит «правильное» число CPU, а не все ядра узла. Ниже маленький бин, который логирует это при старте; он одинаково полезен и в Java, и в Kotlin.
 
-@EnableAsync
-@Configuration
-class AsyncConfig {
-    @Bean("ioPool")
-    fun ioPool(): ThreadPoolTaskExecutor {
-        val cpus = Runtime.getRuntime().availableProcessors()
-        return ThreadPoolTaskExecutor().apply {
-            corePoolSize = maxOf(2, cpus * 2)
-            maxPoolSize = maxOf(4, cpus * 4)
-            setQueueCapacity(1000)
-            setThreadNamePrefix("io-")
-            initialize()
-        }
+```java
+package com.example.resources;
+
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class CpuInfoLogger {
+
+    private static final Logger log = LoggerFactory.getLogger(CpuInfoLogger.class);
+
+    @PostConstruct
+    public void logCpuInfo() {
+        int availableProcessors = Runtime.getRuntime().availableProcessors();
+        log.info("JVM sees {} available processors", availableProcessors);
     }
 }
+```
+
+```kotlin
+package com.example.resources
+
+import jakarta.annotation.PostConstruct
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+
+@Component
+class CpuInfoLogger {
+
+    private val log = LoggerFactory.getLogger(CpuInfoLogger::class.java)
+
+    @PostConstruct
+    fun logCpuInfo() {
+        val availableProcessors = Runtime.getRuntime().availableProcessors()
+        log.info("JVM sees {} available processors", availableProcessors)
+    }
+}
+```
+
+И наконец, сами requests/limits на уровне Deployment. В этом примере под один Pod выделяется 0.5 CPU гарантированно и максимум 1 CPU. Для такого контейнера max-threads Tomcat в 100 будет разумным компромиссом между параллелизмом и контекст-свитчами; при росте нагрузки проще добавить ещё одну реплику, чем задирать лимиты до 2–3 CPU для одного Pod’а.
+
+```yaml
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
 ```
 
 ---
 
 ## Память: Xms/Xmx vs MaxRAMPercentage; off-heap (Netty, кеши), tmpfs и размер слоёв
 
-В контейнере лучше использовать **процентную модель** памяти (`-XX:MaxRAMPercentage=`), чтобы JVM адаптировалась к лимиту. Ставить `Xms=Xmx` имеет смысл только если вы уверены в профиле нагрузки и хотите избегать роста heap. Не забывайте про metaspace/кодач/стек/буферы — оставляйте запас.
+В контейнере память — самый капризный ресурс: её много не бывает, и за выход за лимит тебя не просто «поддушат», а убьют `OOMKilled` без шансов. JVM-сервис должен уважать cgroup-ограничения: нельзя настраивать `-Xmx` так, будто у тебя весь хост: если контейнеру дали `512Mi`, а ты выставил `-Xmx512m`, то вместе с метаспейсом, стеками потоков и off-heap легко выскочишь за лимит. В k8s это проявляется как внезапные падения без stacktrace внутри приложения — Pod просто убивают ядром.
 
-Off-heap: Netty/ByteBuffer/Hazelcast/Caffeine могут забирать память вне heap. Следите за суммарным потреблением и лимитируйте размер кэшей. Иначе словите OOM от нативной памяти, даже если `Xmx` маленький. Для Netty можно ограничивать арену/директ-буферы.
+Исторически JVM плохо дружила с контейнерами, но в Java 17 ситуация уже приличная: по умолчанию используются проценты от доступной памяти (`MaxRAMPercentage`), если не задан явный `-Xmx`. Типичное значение — около 25%–50% для heap, остальное оставляется под метаспейс, код, буферы и т.д. Но это «в среднем по больнице». Если у тебя много потоков, Netty, NIO-буферы, большие кеши, дефолт может оказаться недостаточно консервативным. Поэтому имеет смысл явно выставить `MaxRAMPercentage` или вообще зафиксировать `-Xmx` с запасом.
 
-Временные файлы: в distroless их стоит держать в `/tmp` или монтировать `emptyDir`/`tmpfs`. Большие аплоады в память — плохая идея; используйте потоковую обработку и файлы.
+Ещё одна ловушка — off-heap. Netty любит выделять direct-блоки памяти, Caffeine-кеши могут занимать приличные объёмы, библиотеки для сериализации и шифрования тоже создают буферы вне heap. Всё это не учитывается в `Runtime.getRuntime().maxMemory()`, но учитывается ядром при OOM. Поэтому, если ты видишь, что heap вроде живёт спокойно, а Pod периодически умирает от OOM, почти наверняка проблема в off-heap и/или слишком большом количестве потоков.
 
-Размер слоёв образа — это и скорость раскатки. Убирайте лишние артефакты из рантайм-слоя, чистите менеджеры пакетов на build-слое, используйте `--no-cache`. Layered JAR уменьшает частичные обновления.
+Tmpfs и слои образа косвенно влияют на память: если ты создаёшь большие файлы во временных каталогах (`/tmp` или volume без лимита), они могут оказаться в tmpfs и съесть часть памяти узла. В контейнерном мире лучше явно контролировать такие вещи: либо писать во внешний volume, либо ограничивать размер временных файлов. Большие слои образа сами по себе память не забирают, но увеличивают время старта и загрузки, что влияет на cold start и развёртывания.
 
-Следите за ошибками «Container killed due to OOM»: kube evicts Pod без шанса на дамп. Лучше заранее контролировать память и падать с понятным логом, чем тихо умирать.
+Практически удобно задавать JVM-параметры через `JAVA_TOOL_OPTIONS` или `JAVA_OPTS` в Deployment. Тогда один и тот же образ можно запускать с разными лимитами памяти и heap-тайнингом. Для Java 17 хороший шаблон — использовать `MaxRAMPercentage` и ограничить metaspace. Например, 60% под heap, 256m под metaspace и небольшой размер стека потоков, если их много.
 
-Мониторьте `process.memory.usage`, GC метрики, `container_memory_*` на уровне kube, и коррелируйте с RPS/latency, чтобы ловить утечки и неправильный sizing.
+```yaml
+env:
+  - name: JAVA_TOOL_OPTIONS
+    value: >
+      -XX:MaxRAMPercentage=60.0
+      -XX:MaxMetaspaceSize=256m
+      -XX:+UseContainerSupport
+```
 
-**Код (Java): печать видимой памяти/CPU + пример off-heap**
+В приложении иногда полезно логировать базовые показатели памяти: сколько heap доступно, сколько уже занято. Это не заменяет метрики Micrometer, но помогает быстро увидеть, что сервис в маленьком контейнере реально живёт с ограниченным heap, а не с наследованными настройками с bare-metal. Ниже пример небольшого логгера памяти на Java и Kotlin.
 
 ```java
-package com.example.mem;
+package com.example.memory;
 
-import org.springframework.web.bind.annotation.*;
-import java.nio.ByteBuffer;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
-@RestController
-public class MemController {
-  @GetMapping("/sys")
-  public String sys() {
-    long maxMb = Runtime.getRuntime().maxMemory() / (1024*1024);
-    int cpus = Runtime.getRuntime().availableProcessors();
-    return "maxMemMb=" + maxMb + " cpus=" + cpus;
-  }
+@Component
+public class MemoryInfoLogger {
 
-  @GetMapping("/offheap")
-  public String offheap() {
-    ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
-    return "allocatedDirect=" + buf.capacity();
-  }
+    private static final Logger log = LoggerFactory.getLogger(MemoryInfoLogger.class);
+
+    @PostConstruct
+    public void logMemory() {
+        long max = Runtime.getRuntime().maxMemory() / (1024 * 1024);
+        long total = Runtime.getRuntime().totalMemory() / (1024 * 1024);
+        log.info("JVM max heap={}MiB, total allocated heap={}MiB", max, total);
+    }
 }
 ```
-
-**Код (Kotlin): то же**
 
 ```kotlin
-package com.example.mem
+package com.example.memory
 
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-import java.nio.ByteBuffer
+import jakarta.annotation.PostConstruct
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
 
-@RestController
-class MemController {
-    @GetMapping("/sys")
-    fun sys(): String {
-        val maxMb = Runtime.getRuntime().maxMemory() / (1024*1024)
-        val cpus = Runtime.getRuntime().availableProcessors()
-        return "maxMemMb=$maxMb cpus=$cpus"
-    }
-    @GetMapping("/offheap")
-    fun offheap(): String {
-        val buf = ByteBuffer.allocateDirect(1024 * 1024)
-        return "allocatedDirect=${buf.capacity()}"
+@Component
+class MemoryInfoLogger {
+
+    private val log = LoggerFactory.getLogger(MemoryInfoLogger::class.java)
+
+    @PostConstruct
+    fun logMemory() {
+        val max = Runtime.getRuntime().maxMemory() / (1024 * 1024)
+        val total = Runtime.getRuntime().totalMemory() / (1024 * 1024)
+        log.info("JVM max heap={}MiB, total allocated heap={}MiB", max, total)
     }
 }
 ```
 
-Dockerfile (часть):
+При использовании Netty/WebFlux имеет смысл ограничивать размер пулов буферов и отключать лишний кешинг, если у тебя tight memory-лимит. Это делается через настройки Netty или Spring Boot. Даже в MVC-приложении можно неожиданно поймать off-heap за счёт HTTP-клиентов и драйверов, поэтому нельзя считать, что «мы без Netty, значит off-heap нет».
+
+Gradle-зависимости здесь опять же стандартные; если используешь WebFlux, добавляется `spring-boot-starter-webflux`. Памятью управляет не библиотека, а JVM и твоё конфигурирование.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
+}
+```
+
+В Dockerfile важно не забывать про размер слоёв. Если ты тащишь в runtime-образ JDK вместо JRE, плюс лишние утилиты и shell, образ раздувается, а при каждом релизе кластеры тратят время на скачивание и разворачивание. Multi-stage build с тонким runtime-образом (например, `eclipse-temurin:17-jre`) помогает сократить это время и косвенно улучшает производительность деплоя, хотя напрямую на heap не влияет.
 
 ```dockerfile
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
+FROM eclipse-temurin:17-jdk AS build
+WORKDIR /workspace
+COPY . .
+RUN ./gradlew bootJar
+
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY --from=build /workspace/build/libs/app.jar app.jar
+ENTRYPOINT ["java","-jar","app.jar"]
 ```
+
+И в завершение: тестировать настройки памяти нужно под нагрузкой. Локальный запуск на ноутбуке с неограниченной памятью не покажет тебе ни OOMKilled, ни GC-паузы под cgroup-лимитами. Нормальная практика — иметь perf-стенд с теми же requests/limits, что и в проде, и гонять на нём нагрузочные тесты — только так понимаешь, насколько агрессивно можно крутить `MaxRAMPercentage` и размер пулов.
 
 ---
 
 ## Стартап/тёплый JIT: CDS/AOT/native-image/CRaC; выбор под профиль нагрузки
 
-Время старта важно в автоскейлинге. Классический JVM-стартап можно ускорить Class Data Sharing (CDS/AppCDS): предзагрузка классов в архив уменьшает время загрузки. В Spring Boot 3.x есть AOT-оптимизации (генерируются при сборке), а также поддержка сборки **native-image** на GraalVM — это ещё быстрее стартует и ест меньше памяти, но имеет компромиссы по совместимости/функциональности (рефлексия, прокси и т.п.).
+Старт Spring Boot-приложения — это не только вопрос «через сколько секунд health станет зелёным». Это ещё и момент, когда JIT-компилятор только начинает оптимизировать горячие участки, кэши пустые, соединения к БД не установлены, и первые запросы будут выполняться заметно медленнее «устоявшегося» состояния. В контейнерной среде, где Pod’ы постоянно перезапускаются (деплои, autoscaling), холодный старт и период прогрева JIT напрямую влияют на SLO по латентности.
 
-CRaC (Coordinated Restore at Checkpoint) позволяет «заморозить» прогретую JVM и быстро «восстановить». Это интересно для serverless/быстрых рестартов, но требует аккуратной интеграции (ресурсы, сетевые сокеты).
+Class Data Sharing (CDS) — один из способов ускорить старт JVM: предкомпилировать внутренние структуры классов и расшарить их между процессами. В чистом виде это больше про стандартную библиотеку, чем про твой код, но в комбинации с AppCDS можно предкомпилировать и часть приложения. В Docker’е это требует дополнительного шага в сборке (создание shared-архива), зато на старте JVM меньше времени тратит на загрузку классов. Для Spring Boot эффект есть, но не драматический; тем не менее, для latency-чувствительных сервисов это плюс.
 
-Выбор: для «долго живущих» сервисов критична **устойчивость в нагрузке**, а не старт; JIT «разгоняется» через прогрев. Для serverless/высокоэластичных путей — native-image/CRaC даёт выигрыш. CDS — недорогая оптимизация почти без минусов.
+AOT и native-image (GraalVM) дают более радикальный вариант: вместо JVM-сборника байткода ты получаешь нативный бинарник, который стартует за миллисекунды и потребляет меньше памяти. Цена — более сложная сборка, ограничения на рефлексию, необходимость генерировать подсказки (hints) и часто худший peak throughput по сравнению с классической JVM. Это хороший вариант для edge-сервисов, serverless, CLI-утилит, но для тяжёлых бизнес-сервисов не всегда оправдан.
 
-Наблюдайте **tail latency** при прогреве: первые минуты нагрузка может «гулять» из-за JIT/кэш-прогрева. Хитрый приём — прогревать оффлайн в init-фазе типовые запросы.
+CRaC (Coordinated Restore at Checkpoint) — интересный компромисс: ты запускаешь JVM, доводишь приложение до «тёплого» состояния (все кэши и коннекты на месте), а потом создаёшь checkpoint. При следующем старте контейнера он не проходит всю цепочку bootstrap, а просто «раскатывает» этот снапшот. Это сильно ускоряет старт и прогрев JIT, но требует поддержки со стороны платформы и аккуратной обработки внешних ресурсов (сокеты и файлы, открытые до checkpoint, нужно корректно переоткрыть).
 
-При native-image следите за агентами/инструментами: не всё переносится (например, dynamic attach агенты). Проверяйте метрики/трейсинг/логирование.
+Для большинства типичных Spring Boot-сервисов разумный путь такой: для обычных прод-сервисов остаёмся на JVM, избегая излишнего усложнения; для латентность-критичных сценариев можно рассмотреть AOT/native-image; для сценариев с частыми рестартами или масштабированием до нуля в теории интересен CRaC. Важно не гнаться за модной технологией, а смотреть на профиль нагрузки: если у сервиса SLA по латентности 200–300 мс, а деплои не каждую минуту, то выигрыш от native-image может не окупить сложность.
 
-Учитывайте размер образа: native-бинарь может быть увесистым, но рантайм-образ упрощается (без JVM). Это полезно для холодных запусков.
-
-**Код (Java): AOT/Native базовый сервис**
+С точки зрения кода Spring Boot-приложение для JVM и native-image выглядит одинаково: обычный `@SpringBootApplication` и `SpringApplication.run`. Разница в конфиге сборки и имеющихся в classpath зависимостях (для native-image нужны дополнительные модули). Ниже — минимальный main-класс на Java и Kotlin; он одинаково хорошо работает и в JVM, и в native-конфигурации.
 
 ```java
-package com.example.start;
+package com.example.app;
 
-import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.SpringApplication;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class StartApp { public static void main(String[] args) { SpringApplication.run(StartApp.class, args); } }
+public class OrdersApplication {
 
-@RestController
-class Hello {
-  @GetMapping("/hello") public String hello() { return "hi"; }
+    public static void main(String[] args) {
+        SpringApplication.run(OrdersApplication.class, args);
+    }
 }
 ```
 
-**Код (Kotlin): то же**
-
 ```kotlin
-package com.example.start
+package com.example.app
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
 
 @SpringBootApplication
-class StartApp
+class OrdersApplication
 
-fun main(args: Array<String>) = runApplication<StartApp>(*args)
-
-@RestController
-class Hello {
-    @GetMapping("/hello") fun hello() = "hi"
+fun main(args: Array<String>) {
+    runApplication<OrdersApplication>(*args)
 }
 ```
 
-Gradle (Groovy/Kotlin) — GraalVM plugin:
+Сборка native-image с помощью Spring Boot 3 и Buildpacks на GraalVM делается через Gradle-задачу `bootBuildImage` с соответствующими параметрами. В зависимостях добавляется `spring-boot-starter-actuator`, но ключевое — включить `BP_NATIVE_IMAGE=true` в environment задачи. В результате получается Docker-образ с нативным бинарником вместо JVM.
 
 ```groovy
-plugins { id 'org.graalvm.buildtools.native' version '0.10.3' }
+// build.gradle (Groovy)
+plugins {
+    id 'org.springframework.boot' version '3.3.0'
+    id 'io.spring.dependency-management' version '1.1.5'
+    id 'java'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+}
+
+bootBuildImage {
+    imageName = "registry.example.com/orders-service-native:${version}"
+    environment = [
+        "BP_NATIVE_IMAGE" : "true"
+    ]
+}
 ```
 
 ```kotlin
-plugins { id("org.graalvm.buildtools.native") version "0.10.3" }
+// build.gradle.kts (Kotlin)
+plugins {
+    id("org.springframework.boot") version "3.3.0"
+    id("io.spring.dependency-management") version "1.1.5"
+    kotlin("jvm") version "1.9.25"
+    kotlin("plugin.spring") version "1.9.25"
+}
+
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+}
+
+tasks.bootBuildImage {
+    imageName.set("registry.example.com/orders-service-native:${project.version}")
+    environment.set(mapOf("BP_NATIVE_IMAGE" to "true"))
+}
 ```
 
-Сборка native через Buildpacks:
+CDS/AppCDS в Docker требует отдельного шага: сначала запускается JVM для генерации shared-архива, затем этот архив копируется в runtime-образ и приложение стартует с `-Xshare:on`. В проде это используется редко, но как иллюстрация: ещё один способ ускорить bootstrap. При этом код приложения не меняется; вся магия в Dockerfile и JVM-флагах.
 
-```bash
-./gradlew bootBuildImage --imageName registry/demo:native --builder paketobuildpacks/builder-jammy-tiny --environment BP_NATIVE_IMAGE=true
-```
+Отдельная тема — прогрев JIT. Даже без CDS/native имеет смысл постепенно поднимать нагрузку: rolling update с небольшим `maxUnavailable` и «тёплый запуск», когда новые Pod’ы сначала получают небольшой процент трафика, а затем всё больше по мере прогрева. Это можно делать руками через настройки HPA и weight у ingress/mesh, либо использовать более продвинутые механизмы canary rollout.
+
+В некоторых командах для ускорения старта и прогрева используют отдельный warmup-скрипт: после старта Pod’а запускается job, которая делает серию синтетических запросов на разные эндпоинты, заполняя кэши и раскручивая JIT. Это можно оформить как Kubernetes Job или просто как step в CI/CD pipeline, который дергает сервис после деплоя. Главное — не забывать, что такой трафик будет виден в метриках, и не путать его с реальной нагрузкой.
+
+Ну и важно помнить: любой «ускоритель старта» (CDS, native-image, CRaC) — это не магия, а набор компромиссов. Перед тем как его включать, нужно прогнать сервис под нагрузкой на perf-стенде, посмотреть на latency, throughput, потребление памяти и сложность сопровождения. Для многих Spring Boot-сервисов грамотный тюнинг JVM и ресурсов контейнера даст больше пользы, чем сложный переход на native, особенно если команда не готова к его ограничениям.
 
 ---
 
 ## IO/FD-лимиты: количество соединений, connection pools (HTTP/DB), таймауты и backpressure
 
-Файловые дескрипторы (FD) — это и сокеты. При высокой параллельности легко упереться в лимиты. В K8s/контейнерах обычно лимит достаточен, но при агрессивных клиентах/сервер-sent events его стоит мониторить. На уровне сервера приложений контролируйте `max-connections` (Tomcat) и очереди.
+Количество файловых дескрипторов (FD) и соединений в контейнере — тот самый «жёсткий потолок», о который бьются все высоконагруженные сервисы. В Linux это `ulimit -n`, в Kubernetes — комбинация системных лимитов и настроек контейнер-рантайма. Приложение обычно о них не знает, пока не получает «Too many open files» на ровном месте. Поэтому дизайн connection pool’ов (БД, HTTP, Kafka) и ограничение параллелизма на уровень приложения — обязательная часть ресурсного дизайна.
 
-Пулы соединений должны быть соразмерны нагрузке и ресурсам: HikariCP для БД, HTTP-клиенты (Apache, JDK, Netty). Важно выставить **таймауты** (connect/read/write) и политику ретраев — иначе зависшие коннекты «съедят» пул. Для БД добавьте `connectionTimeout`, `maxLifetime`, `validationTimeout`.
+Пул соединений к БД — первый кандидат на тюнинг. HikariCP по умолчанию ставит разумное значение `maximumPoolSize`, но оно не знает ни о твоих CPU-лимитах, ни о FD-лимитах. Если ты выставил пул на 100 соединений в каждом из 10 Pod’ов, а Postgres рассчитан на 300 соединений, то любой небольшой рост нагрузки приведёт к connection storm: новые Pod’ы будут бороться за коннекты, время ожидания соединения вырастет, латентность поползёт, а метрики покажут привычное «CPU ниже потолка, а всё тормозит». Пулы должны быть согласованы и между собой, и с лимитами базы.
 
-Backpressure — защита от перегрузки: очереди/буферы ограничены, при переполнении — отклоняем запросы или замедляем производителей. Иначе вы просто копите работы в памяти и «умираете поздно и громко».
+HTTP-клиенты вроде WebClient или RestTemplate с Apache HttpClient/OkHttp тоже используют пул соединений. Если его не ограничивать, каждый Pod может открыть сотни TCP-коннектов к внешнему API. Это опять же бьётся о FD-лимиты и квоты на стороне провайдера. Хорошая практика — ограничить количество параллельных исходящих соединений per-host и per-route, опираясь на реальные потребности и SLO. При этом всегда должны быть таймауты: connect/read, чтобы висящие соединения не занимали слот вечно.
 
-Сетевые таймауты должны быть согласованы через весь путь: клиент → прокси → приложение → внешняя зависимость. Иначе получится «шахматка» таймаутов и ретраев, которая только усугубляет шторма.
+Backpressure — ещё один важный элемент. Если у тебя WebFlux-приложение, а downstream-сервис начинает тормозить, нужно, чтобы вызовы к нему не накапливались бесконечно в очередях. Это достигается лимитами на количество параллельных запросов (через semaphores/bulkhead) и настройкой таймаутов. В мире блокирующего MVC это делается через размеры нитепулов и connection pool’ов: ограничение количества одновременно выполняющихся запросов не даёт приложению утонуть в ожидании медленной зависимости.
 
-Для загружаемых файлов/стриминга используйте потоковые API, не буферизуйте всё в памяти, и учитывайте, что прокси может рвать соединение — готовьте возобновление/чанкинг.
+Конфигурация HikariCP в Spring Boot делается через `spring.datasource.hikari.*`. Даже если ты используешь Spring Data JPA, под капотом всё равно Hikari. В `application.yml` можно явно задать размер пула и таймаут получения соединения. Ниже пример, где пул ограничен 20 соединениями, а ожидание соединения — не больше 1 секунды. Это адекватно для сервиса с небольшим CPU-лимитом и не слишком тяжёлой бизнес-логикой.
 
-Наконец, мониторьте: connection pool usage, rejected executions, очередь задач, FD count. Это лучший индикатор реальных проблем с ресурсами.
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/app
+    username: app
+    password: app
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 1000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+```
 
-**Код (Java): Hikari и RestClient с таймаутами**
+Для HTTP-клиента WebClient используется ConnectionProvider из Reactor Netty. В нём можно задать максимальное количество соединений и максимальное количество запросов, ожидающих свободного соединения. Это ключевые параметры для контроля FD-лимитов и защиты внешних сервисов от штормов. Ниже Java-конфигурация WebClient с пулом на 50 соединений и максимум 100 ожидающих запросов.
 
 ```java
 package com.example.io;
 
-import com.zaxxer.hikari.HikariDataSource;
-import org.springframework.context.annotation.*;
-import org.springframework.http.client.JdkClientHttpRequestFactoryBuilder;
-import org.springframework.web.client.RestClient;
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.Connection;
+import reactor.netty.http.client.HttpClient;
+import reactor.netty.resources.ConnectionProvider;
 
-import javax.sql.DataSource;
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 
 @Configuration
-public class IoConfig {
-  @Bean
-  DataSource dataSource() {
-    HikariDataSource ds = new HikariDataSource();
-    ds.setJdbcUrl("jdbc:postgresql://db:5432/app");
-    ds.setUsername("app"); ds.setPassword("app");
-    ds.setMaximumPoolSize(10);
-    ds.setConnectionTimeout(1000);
-    ds.setMaxLifetime(30_000);
-    return ds;
-  }
+public class WebClientConfig {
 
-  @Bean
-  RestClient httpClient() {
-    var factory = JdkClientHttpRequestFactoryBuilder.create()
-        .connectTimeout(Duration.ofMillis(800))
-        .readTimeout(Duration.ofMillis(1500))
-        .build();
-    return RestClient.builder().requestFactory(factory).build();
-  }
+    @Bean
+    public WebClient externalWebClient() {
+        ConnectionProvider provider = ConnectionProvider.builder("external-pool")
+                .maxConnections(50)
+                .pendingAcquireMaxCount(100)
+                .build();
+
+        HttpClient httpClient = HttpClient.create(provider)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 1000)
+                .responseTimeout(Duration.ofSeconds(2))
+                .doOnConnected((Connection conn) ->
+                        conn.addHandlerLast(new ReadTimeoutHandler(2, TimeUnit.SECONDS)));
+
+        return WebClient.builder()
+                .baseUrl("https://external-api.example.com")
+                .clientConnector(new reactor.netty.transport.ClientTransport() {
+                })
+                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
+                .build();
+    }
 }
 ```
-
-**Код (Kotlin): то же**
 
 ```kotlin
 package com.example.io
 
-import com.zaxxer.hikari.HikariDataSource
+import io.netty.channel.ChannelOption
+import io.netty.handler.timeout.ReadTimeoutHandler
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.http.client.JdkClientHttpRequestFactoryBuilder
-import org.springframework.web.client.RestClient
+import org.springframework.http.client.reactive.ReactorClientHttpConnector
+import org.springframework.web.reactive.function.client.WebClient
+import reactor.netty.Connection
+import reactor.netty.http.client.HttpClient
+import reactor.netty.resources.ConnectionProvider
 import java.time.Duration
-import javax.sql.DataSource
+import java.util.concurrent.TimeUnit
 
 @Configuration
-class IoConfig {
-    @Bean
-    fun dataSource(): DataSource = HikariDataSource().apply {
-        jdbcUrl = "jdbc:postgresql://db:5432/app"
-        username = "app"; password = "app"
-        maximumPoolSize = 10
-        connectionTimeout = 1000
-        maxLifetime = 30_000
-    }
+class WebClientConfig {
 
     @Bean
-    fun httpClient(): RestClient {
-        val factory = JdkClientHttpRequestFactoryBuilder.create()
-            .connectTimeout(Duration.ofMillis(800))
-            .readTimeout(Duration.ofMillis(1500))
+    fun externalWebClient(): WebClient {
+        val provider = ConnectionProvider.builder("external-pool")
+            .maxConnections(50)
+            .pendingAcquireMaxCount(100)
             .build()
-        return RestClient.builder().requestFactory(factory).build()
+
+        val httpClient = HttpClient.create(provider)
+            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 1000)
+            .responseTimeout(Duration.ofSeconds(2))
+            .doOnConnected { conn: Connection ->
+                conn.addHandlerLast(ReadTimeoutHandler(2, TimeUnit.SECONDS))
+            }
+
+        return WebClient.builder()
+            .baseUrl("https://external-api.example.com")
+            .clientConnector(ReactorClientHttpConnector(httpClient))
+            .build()
     }
 }
 ```
 
-`application.yml` (Tomcat max connections):
+Зависимости для этого конфигурационного класса: нам нужен `spring-boot-starter-webflux`. Даже если основное приложение на MVC, WebClient можно использовать параллельно, это нормально.
 
-```yaml
-server:
-  tomcat:
-    max-connections: 8192
-    accept-count: 200
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+}
 ```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
+}
+```
+
+На уровне операционной системы FD-лимиты настраивает не приложение, а инфраструктура: sysctl, container runtime, настройки k8s-нод. Но приложение должно ограничивать своё потребление FD за счёт connection pool’ов и аккуратной работы с файлами и сокетами: не забывать закрывать ресурсы, использовать try-with-resources и не создавать лишних клиентов на каждый запрос. Если ты на каждый запрос создаёшь новый WebClient или новый DataSource — FD-лимит рано или поздно скажет «привет».
+
+Backpressure на входящих HTTP-запросах в MVC-мире реализуется через размер нитепула и очередь задач (accept queue). У Tomcat есть `acceptCount`, который определяет, сколько подключений может висеть в очереди, ожидая свободного worker-потока. Если его не ограничивать, при медленном downstream-сервисе очередь нарастёт, и сервис начнёт отвечать с огромной задержкой. Логичнее ограничить очередь и, если всё забито, отдавать 503 или 429 — это честнее по отношению к клиентам.
+
+И последнее: все эти настройки нужно смотреть через призму нагрузки. Прямо в Grafana: количество открытых соединений к БД, загруженность пулов, FD usage на нодах, количество соединений в состоянии TIME_WAIT. Без наблюдаемости любая конфигурация — гадание. Настроил «на глаз», потестил под нагрузкой, увидел, что пул БД всегда забит на 100%, FD usage под 80% — уменьшил количество соединений и параллелизм, добавил реплик. Так и строится «ресурсно грамотный» сервис в контейнерах.
 
 # 8. Docker Compose: одиночный хост и тестовый прод
 
+Docker Compose — это минимальный «оркестратор» для одного хоста, который позволяет описать приложение и все его зависимости в одном YAML-файле и запускать всё одной командой. Для Spring Boot это стандартный инструмент для локальной разработки и иногда — для простого «тестового прода» на одном сервере. В отличие от Kubernetes, Compose очень прост, но при грамотной структуре файла можно добиться поведения, довольно близкого к продакшн-сценариям.
+
+Важная идея: образ приложения должен быть одинаковым для всех окружений, а Compose-файлы — всего лишь описывают «как» этот образ запустить: какие сети, какие volume, переменные окружения, лимиты ресурсов, зависимости. Если вы держите эту границу жёсткой, миграция с Compose на Kubernetes превращается в замену оболочки, а не переписывание всего окружения.
+
+---
+
 ## Сети/volumes: изоляция сервисов, зависимости (depends_on + healthcheck)
 
-В Compose мы получаем быстрый «тестовый прод»: несколько контейнеров с сетью по имени проекта и предсказуемыми DNS-именами. Практика — разбивать сервисы на отдельные сети: «frontend», «backend», «datastore». Это ограничивает область видимости и упрощает аудит. Изоляция особенно важна, когда вы одновременно поднимаете несколько стеков на одной машине — пересечения портов и коллизии имён прекрасно устраняются сетями Compose. Отдельные тома (volumes) держат состояние БД/кеша между перезапусками, а также позволяют делиться артефактами вроде миграций. В проде обычно томами управляет кластер (PVC), но на одном хосте volumes — «минимальный аналог».
+Первый кирпичик Compose — сети. По умолчанию Compose создаёт одну bridge-сеть для проекта и подключает туда все сервисы, делая их видимыми друг для друга по имени сервиса (DNS-резолв работает автоматически). Для маленького стенда этого достаточно, но как только составляющих становится больше, имеет смысл явно заводить несколько сетей: например, `backend` и `infra`, чтобы отделить приложение от внешних прокси или от других проектных групп.
 
-Зависимости между контейнерами не гарантируют фактическую готовность сервиса: `depends_on` ждёт «контейнер запущен», но не «сервис готов принимать трафик». Поэтому добавляйте `healthcheck` на зависимости и управляйте порядком через `depends_on: condition: service_healthy`. Это особенно заметно при старте Postgres/Kafka — без healthcheck консьюмеры могут «проснуться» слишком рано и уйти в бесконечные ретраи.
+Изоляция через сети важна потому, что в Compose нет понятий namespace/ingress как в Kubernetes. Если все сервисы в одной сети и слушают порты наружу, легко получить неожиданные зависимости и «магические» связи по localhost. Когда же сети описаны явно, становится очевидно, кто с кем общается: приложение видит `postgres` и `redis` по своим доменным именам внутри `backend`-сети, но не видит соседний экспериментальный сервис.
 
-Внутренние имена сервисов в Compose становятся DNS-именами. Это значит, что в приложении вы можете писать `jdbc:postgresql://db:5432/app` вместо `localhost`. Такой подход не только удобен — он приближает вас к Kubernetes, где сервисы также резолвятся по DNS. Переход с Compose на K8s в этом смысле становится механическим: меняются только значения хостов.
+Важный момент: в Compose имя сервиса — это DNS-имя внутри сети. Если вы описали сервис `db:`, то в Spring-конфиге можно смело писать `jdbc:postgresql://db:5432/app` вместо использования IP-адреса. Это намного ближе к Kubernetes-модели (`postgresql.default.svc.cluster.local`) и позволяет не завязываться на конкретные IP или localhost, которые в контейнерном мире всегда плавают.
 
-Volumes полезны и для разработчика: монтируйте локальную папку с миграциями/скриптами в контейнер и выполняйте их в «нативной среде». Это избавит от дрейфа «версия psql у меня vs в контейнере». Скучная, но реальная выгода — меньше «случайных» багов между машинами.
+Volumes — второй ключевой элемент. Для PostgreSQL, Redis, Kafka и любых других состояний вам нужны named volumes, чтобы данные переживали перезапуск контейнеров. Bind-mount директорий из хоста удобно использовать в dev (например, чтобы «подглядывать» в файлы или лог), но в тестовом проде лучше опираться на named volumes, чтобы не зависеть от layout файловой системы сервера. На уровне Compose это одна строка, но на практике — граница между случайной потерей данных и предсказуемым поведением.
 
-Завершая, помните, что «здоровье» сервиса должно быть быстрой и честной метрикой. Не заставляйте healthcheck выполнять тяжёлые запросы; достаточно `pg_isready`/`/actuator/health/readiness`. Цель — не флипать статусом, а защищать потребителей от гонок старта.
+Нельзя забывать и про «быстрое форматирование» стенда: на dev часто хочется «обнулить всё» — удалить volume и начать с чистой базы. Для этого в Compose удобно именовать volume'ы по шаблону `project-service-data`, чтобы одной командой `docker volume rm` можно было подчистить ровно ожидаемый набор. На тестовом проде такой трюк уже опасен, поэтому там вы либо отдельно описываете volume для данных, либо вообще выносите базу из Compose в отдельный управляемый сервис.
 
-**Код (Compose, сети/тома/зависимости/healthcheck)**
+`depends_on` в Compose решает только порядок запуска контейнеров, но не их готовность. Если указать, что приложение зависит от `db`, это всего лишь гарантирует, что контейнер с PostgreSQL запустится первым; вполне возможно, что к моменту старта приложения база ещё не слушает порт или накатывает свои миграции. Чтобы приложению не приходилось за это бороться, нужно комбинировать `depends_on` с `healthcheck` и условием `condition: service_healthy` — тогда Compose дождётся, пока зависимость станет healthy.
+
+Healthcheck для Spring Boot обычно указывает на `/actuator/health` или `/actuator/health/liveness`. Контейнер будет считаться здоровым только после того, как этот HTTP-эндпоинт начнёт возвращать 200. В связке с `depends_on` получается почти оркестрация: сначала поднимается база, healthcheck ждёт её готовности, только потом стартует приложение. Это не заменяет внутренний fail-fast, но значительно повышает стабильность и повторяемость локальных запусков.
+
+Пример docker-compose для простого Spring Boot + Postgres стенда показывает все эти идеи в одном месте: отдельная сеть `backend`, volume `postgres-data`, `depends_on` по health’у и явные имена сервисов, совпадающие с хостами из `application.yml`.
 
 ```yaml
 version: "3.9"
+
 services:
-  app:
-    image: registry.local/demo:1.0.0
-    depends_on:
-      db:
-        condition: service_healthy
-    networks: [ backend ]
-    ports: [ "8080:8080" ]
-    environment:
-      DB_URL: jdbc:postgresql://db:5432/app
-      DB_USER: app
-      DB_PASSWORD: app
   db:
     image: postgres:16
-    networks: [ backend ]
-    healthcheck:
-      test: ["CMD-SHELL","pg_isready -U app -d app"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
+    container_name: demo-db
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
+    ports:
+      - "5432:5432"
+    networks:
+      - backend
     volumes:
-      - dbdata:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    image: demo/orders-service:latest
+    container_name: demo-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8080:8080"
+    networks:
+      - backend
+
 networks:
-  backend: {}
+  backend:
+
 volumes:
-  dbdata: {}
+  postgres-data:
 ```
 
-**Код (Java): простой ping для healthcheck приложением)**
+В `application-docker.yml` приложение обращается к базе по имени сервиса `db` и стандартному порту 5432. Spring Boot автоматически прочитает этот профиль, если выставлен `SPRING_PROFILES_ACTIVE=docker`, и такие же настройки можно использовать в Kubernetes, просто поменяв hostname на сервис Kubernetes’а.
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://db:5432/app
+    username: app
+    password: app
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+```
+
+Простое REST-API, читающее сущности из базы, будет одинаково выглядеть на Java и Kotlin — Compose лишь даёт ему окружение. В Java это обычный контроллер и репозиторий, использующие конфиг из `application-docker.yml`.
 
 ```java
-package com.example.compose;
+package com.example.orders;
 
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.SpringApplication;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.web.bind.annotation.*;
 
-@SpringBootApplication
-public class ComposeApp {
-  public static void main(String[] args) { SpringApplication.run(ComposeApp.class, args); }
+import java.util.List;
+
+@Entity
+class OrderEntity {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String description;
+
+    protected OrderEntity() {
+    }
+
+    public OrderEntity(String description) {
+        this.description = description;
+    }
+
+    // getters/setters опущены для краткости
+}
+
+interface OrderRepository extends JpaRepository<OrderEntity, Long> {
 }
 
 @RestController
-class PingController {
-  @GetMapping("/ping")
-  public String ping() { return "pong"; }
+@RequestMapping("/api/orders")
+class OrderController {
+
+    private final OrderRepository repository;
+
+    OrderController(OrderRepository repository) {
+        this.repository = repository;
+    }
+
+    @GetMapping
+    public List<OrderEntity> findAll() {
+        return repository.findAll();
+    }
+
+    @PostMapping
+    public OrderEntity create(@RequestBody OrderEntity order) {
+        return repository.save(order);
+    }
 }
 ```
-
-**Код (Kotlin): тот же ping)**
 
 ```kotlin
-package com.example.compose
+package com.example.orders
 
-import org.springframework.boot.autoconfigure.SpringBootApplication
-import org.springframework.boot.runApplication
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.Id
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.web.bind.annotation.*
 
-@SpringBootApplication
-class ComposeApp
+@Entity
+class OrderEntity(
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+    var description: String = ""
+)
 
-fun main(args: Array<String>) = runApplication<ComposeApp>(*args)
+interface OrderRepository : JpaRepository<OrderEntity, Long>
 
 @RestController
-class PingController {
-    @GetMapping("/ping") fun ping() = "pong"
+@RequestMapping("/api/orders")
+class OrderController(
+    private val repository: OrderRepository
+) {
+
+    @GetMapping
+    fun findAll(): List<OrderEntity> = repository.findAll()
+
+    @PostMapping
+    fun create(@RequestBody order: OrderEntity): OrderEntity =
+        repository.save(order)
 }
 ```
+
+Такой сетап даёт хороший баланс: сетевое окружение предсказуемо, данные базы не теряются при перезапусках, приложение стартует только после готовности Postgres. При миграции на Kubernetes структура останется той же: отдельная сеть поменяется на namespace + service, volume — на PersistentVolumeClaim, а healthcheck — на readinessProbe.
 
 ---
 
 ## Переменные окружения и секреты: .env, override файлы, режимы restart
 
-Один из главных плюсов Compose — согласованная передача конфигурации через env. Файл `.env` в корне проекта автоматически подхватывается и подставляет значения в `docker-compose.yml`. Это удобно для локали, где секреты «псевдосекреты», но всё же не надо хранить их в Git. Для разных разработчиков значения могут отличаться — вы раздаёте только `.env.example` и каждый делает свой `.env`.
+Переменные окружения — стандартный канал конфигурации в докерном мире. Compose умеет подставлять значения из `.env`-файла в YAML через `${VAR}` и передавать их контейнерам через секцию `environment`. Это позволяет держать один и тот же `docker-compose.yml` для всех разработчиков и окружений, меняя только `.env` (который можно не коммитить) и override-файлы. Для Spring Boot это идеально ложится на поддержку `SPRING_*` переменных и placeholders в `application.yml`.
 
-Для «средовых» различий заводите `docker-compose.override.yml`. По умолчанию он применяется автоматически и может заменять порты/переменные/тома. Подход напоминает Helm values и приучает держать общее описание в одном файле, а конкретику — в overrides. В CI можно использовать `-f` со своими файлами, собирая нужный профиль.
+Правильный паттерн: в репозитории лежит пример `.env.example` с безопасными значениями (или пустыми), а реальный `.env` добавлен в `.gitignore`. Общие, не секретные вещи (например, версию образа, общий префикс для имён контейнеров, дефолтный порт) можно держать в коммитном `.env`, а вот пароли, токены, ключи — нет. В тестовом проде `.env` обычно живёт на сервере и управляется ручками или отдельным конфиг-репозиторием.
 
-Режим `restart` (`no`, `on-failure`, `always`, `unless-stopped`) важен на одиночных хостах. Для приложений уместно `unless-stopped`: контейнер поднимется после перезагрузки машины. Но помните: поломки конфигурации не чинит никакой `restart` — делайте fail-fast с понятной ошибкой.
+Override-файл `docker-compose.override.yml` подключается Compose автоматически и позволяет на одном и том же базовом описании собрать разные сценарии. Например, базовый `docker-compose.yml` описывает чисто инфраструктуру (Postgres, Redis, Kafka) и приложение без проброса портов наружу, а override-файл для разработки добавляет проброс `8080:8080`, bind-mount исходников для hot reload и более «слабые» ресурсы. Для тестового прода override-файл, наоборот, добавит restart-политику и более строгие лимиты.
 
-Секреты в Compose есть как сущность (`secrets:`), но на практике чаще используют env и тома. Если вы монтируете ключи/сертификаты — отдавайте их read-only и не держите в Git. На проде секрет-менеджер обязателен (Vault, KMS), но для локали — файл вполне допустим.
+Секреты в классическом Docker Compose остаются больным местом: есть отдельная секция `secrets`, но она полноценно работает только с Swarm-режимом. В большинстве реальных проектов в dev/test секреты либо передаются через env (и защищаются дисциплиной + .gitignore), либо подтягиваются из внешнего secret-store (Vault, AWS/GCP Secrets Manager) на уровне runtime. Главное правило: не коммитить секреты ни в `docker-compose.yml`, ни в `.env` внутри репозитория.
 
-Не забывайте про принцип «не зашивать значения в образ». Образ должен быть одинаков на всех окружениях; .env и overrides дают вам достаточно рычагов для конфигурации без пересборки.
+Режимы перезапуска (`restart`) в Compose задают, как сервис ведёт себя при выходе процесса. Для dev удобно `restart: "no"` или `on-failure`, чтобы видеть падения и не перегружать ноут. Для «тестового прода» чаще ставят `unless-stopped` или `always`: если процесс упал — Docker пытается его поднять. Это не полноценный оркестратор, но на одном сервере уже даёт базовое самовосстановление. Важно не забывать, что бесконечный CrashLoop и на Compose — тоже реальность, так что fail-fast на старте никуда не девается.
 
-**Код (.env и override)**
-
-```
-# .env
-DB_USER=app
-DB_PASSWORD=app
-SSL_PASSWORD=changeit
-```
+Пример Compose-файла с использованием `.env` и restart-политики выглядит так: мы читаем `APP_IMAGE` и `APP_TAG` из `.env`, подставляем их в `image`, подключаем env-файл для секретов БД и задаём политику `unless-stopped`. Для базы отдельно задаём пароль через env-file, чтобы не держать его прямо в YAML.
 
 ```yaml
-# docker-compose.override.yml
+version: "3.9"
+
 services:
-  app:
-    environment:
-      SPRING_PROFILES_ACTIVE: dev
-      SSL_PASSWORD: ${SSL_PASSWORD}
+  db:
+    image: postgres:${POSTGRES_VERSION:-16}
+    env_file:
+      - db.env
+    networks:
+      - backend
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
+
+  app:
+    image: ${APP_IMAGE:-demo/orders-service}:${APP_TAG:-latest}
+    env_file:
+      - app.env
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    networks:
+      - backend
+    restart: unless-stopped
+
+networks:
+  backend:
+
+volumes:
+  postgres-data:
 ```
 
-**Код (Java): чтение env для демонстрации внешней конфигурации**
+В `app.env` можно хранить параметры Spring, не являющиеся секретами, а секреты — либо тоже через env (но с отдельным управлением), либо через integration с внешними хранилищами. Простой пример `app.env`:
+
+```dotenv
+SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/app
+SPRING_DATASOURCE_USERNAME=app
+SPRING_DATASOURCE_PASSWORD=app
+SPRING_JPA_HIBERNATE_DDL_AUTO=validate
+```
+
+На стороне Spring Boot переменные окружения транслируются в свойства через стандартное правило (upper snake → dotted lower). Но иногда их удобно агрегировать в `@ConfigurationProperties`-класс, чтобы не разбрасывать `@Value` по коду. В Java такой класс будет выглядеть как обычный POJO с префиксом `app.db`.
 
 ```java
-package com.example.env;
+package com.example.config;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
 
-@RestController
-class EnvController {
-  EnvController(@Value("${spring.profiles.active:default}") String p,
-                @Value("${DB_USER:unset}") String user) {
-    this.p = p; this.user = user;
-  }
-  private final String p, user;
+@Component
+@ConfigurationProperties(prefix = "app.db")
+public class DbProperties {
 
-  @GetMapping("/env")
-  public String env() { return "profile=" + p + " user=" + user; }
+    private String url;
+    private String username;
+    private String password;
+
+    // getters/setters
+
+    public String getUrl() {
+        return url;
+    }
+
+    public void setUrl(String url) {
+        this.url = url;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
 }
 ```
-
-**Код (Kotlin): то же**
 
 ```kotlin
-package com.example.env
+package com.example.config
 
-import org.springframework.beans.factory.annotation.Value
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.stereotype.Component
 
-@RestController
-class EnvController(
-    @Value("\${spring.profiles.active:default}") private val p: String,
-    @Value("\${DB_USER:unset}") private val user: String
-) {
-    @GetMapping("/env") fun env() = "profile=$p user=$user"
+@Component
+@ConfigurationProperties(prefix = "app.db")
+class DbProperties {
+    lateinit var url: String
+    lateinit var username: String
+    lateinit var password: String
 }
 ```
+
+Чтобы связать параметры окружения с этим классом, можно добавить в `application.yml` маппинг и использовать placeholders. Compose передаёт env-переменные, Spring их читает и маппит в `app.db.*`.
+
+```yaml
+app:
+  db:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db:5432/app}
+    username: ${SPRING_DATASOURCE_USERNAME:app}
+    password: ${SPRING_DATASOURCE_PASSWORD:app}
+```
+
+Таким образом, один и тот же образ может запускаться локально, в «тестовом проде» и в Kubernetes: различаются только env-файлы и compose/helm-манифесты. А код приложения остаётся чистым от конкретных путей, паролей и номеров портов.
 
 ---
 
 ## Локальные зависимости: Postgres/Redis/Kafka; стратегия «максимально близко к прод»
 
-Чтобы на локали ловить «настоящие» ошибки, тяните те же версии зависимостей, что и в проде. Compose хорош тем, что легко собрать стек: Postgres + Redis + Kafka + schema-registry. Все они подключаются по DNS имён сервисов, и ваш Spring Boot почти не отличит это от k8s-сервиса.
+Compose позволяет поднять локальный «мини-прод» на одном сервере: Postgres, Redis, Kafka, приложение, возможно — Keycloak и nginx. Чем ближе это окружение к реальному продакшну по версиям, настройкам и портам, тем меньше сюрпризов при выкатках. Если в Kubernetes у тебя Postgres 16 и Redis 7, то и в Compose стоит поднимать такие же версии, а не «какие были под рукой».
 
-Kafka в связке с Spring Cloud Stream или обычным `spring-kafka` особенно требовательна к порядку старта: брокер должен быть «здоров», и только потом поднимается приложение. Healthcheck на брокере и ретраи консьюмера — обязательны. Для Postgres держите отдельный volume, чтобы не терять тестовые данные между перезапусками, но иногда полезно стартовать с чистой БД — добавьте make-цель «reset».
+Для Postgres важно не только совпадение версий, но и параметров: кодировки, timezone, режимов `max_connections`, `shared_buffers`. В Compose многое из этого можно задать через env или отдельный конфиг-файл, примонтированный как volume. Это особенно критично, если приложение сильно нагружает БД: поведение на дефолтном локальном Postgres и на тюнинговом продовом будет сильно отличаться. Чем меньше расхождение, тем честнее нагрузочные тесты и тем раньше всплывут проблемы с индексами или блокировками.
 
-Старайтесь не разъезжаться по версиям. Простой чек-лист: версии образов в Compose совпадают с образами helm-чартов; переменные окружения указывают те же имена пользователей/баз; порты совпадают с прод-портами (если это безопасно). Тогда CI интеграционные тесты и локальные прогоны максимально предсказуемы.
+Redis в локальном окружении чаще всего поднимается с persistency выключенной или минимальной, чтобы не захламлять диск. Но при этом стоит повторить основные параметры: размер памяти, eviction policy, включён ли TLS. Для сервисов, сильно завязанных на Redis, имеет смысл в Compose поднять его в конфигурации, максимально близкой к продовой, а для разработчиков оставить облегчённый профиль `dev`, чтобы не тратить ресурсы.
 
-И ещё: когда вам нужна «нестандартная» настройка, например TLS к Redis или аутентификация в Kafka — добавляйте её уже на локали. Не оставляйте «в бою включим». Потратите больше времени на настройку, но вернёте в надёжности.
+Kafka — отдельный зверь. Настоящий прод — это, как минимум, кластер брокеров и zookeeper/KRaft, сложная конфигурация retention, ACL, авторизации (SASL_SSL). В Compose почти всегда используют упрощённый single-node вариант (bitnami/confluent). Но при этом можно и нужно повторить ключевые моменты: протоколы безопасности (SASL_PLAINTEXT vs SASL_SSL), набор топиков, ключевые консьюмер-группы. Тогда код, работающий в dev через Compose, не будет «шокирован» продовым брокером.
 
-Отдельный бонус — Testcontainers. Если Compose «тяжёлый» или конфликтует с текущими портами, тесты могут сами поднимать Postgres/Kafka из Java-кода. Архитектурно важно только одно: везде единые настройки соединений и таймаутов.
+Стратегия «максимально близко к прод» означает, что Compose-файлы описывают те же самые хостнеймы, порты и логические имена сервисов, что и в Kubernetes (насколько это возможно). Например, если в k8s у тебя `postgres` как DNS-имя сервиса, в Compose можно использовать такой же `db`/`postgres`, а URL в `application-*.yml` строить одинаково. Это снижает количество условных веток в конфиге и позволяет держать единый `docker`/`k8s` профиль без разного SQL и URL.
 
-**Код (Compose: Postgres + Kafka + приложение)**
+Типичный Compose-фрагмент с Postgres, Redis и Kafka может выглядеть так: каждый сервис в сети `backend`, свои volumes (для БД и кэша), приложение в той же сети. Для Kafka используются порты только внутри сети (без проброса наружу), а приложение знает о нём только по hostname `kafka`.
 
 ```yaml
+version: "3.9"
+
 services:
-  db:
+  postgres:
     image: postgres:16
     environment:
+      POSTGRES_DB: app
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
-    ports: [ "5432:5432" ]
-    healthcheck:
-      test: ["CMD-SHELL","pg_isready -U app -d app"]
-      interval: 5s
-      timeout: 2s
-      retries: 20
+    networks:
+      - backend
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "no"]
+    networks:
+      - backend
 
   kafka:
     image: bitnami/kafka:3.7
     environment:
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_ZOOKEEPER_CONNECT: ""
       KAFKA_ENABLE_KRAFT: "yes"
-      KAFKA_CFG_NODE_ID: "1"
       KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
-      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
-    ports: [ "9092:9092" ]
-    healthcheck:
-      test: ["CMD","bash","-lc","kafka-topics.sh --bootstrap-server kafka:9092 --list"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+    networks:
+      - backend
 
   app:
-    image: registry.local/demo:1.0.0
-    depends_on:
-      db: { condition: service_healthy }
-      kafka: { condition: service_healthy }
+    image: demo/orders-service:latest
     environment:
-      SPRING_PROFILES_ACTIVE: dev
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/app
-      SPRING_DATASOURCE_USERNAME: app
-      SPRING_DATASOURCE_PASSWORD: app
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-    ports: [ "8080:8080" ]
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - backend
+    ports:
+      - "8080:8080"
+
+networks:
+  backend:
+
+volumes:
+  postgres-data:
 ```
 
-**Код (Java): минимальный Kafka consumer для smoke-теста)**
+В `application-docker.yml` можно завести отдельные секции для БД, Redis и Kafka, строя URL на основе хостов из Compose. При переходе на k8s достаточно будет переопределить только hostname, оставив остальное без изменений.
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/app
+    username: app
+    password: app
+
+  redis:
+    host: redis
+    port: 6379
+
+  kafka:
+    bootstrap-servers: kafka:9092
+```
+
+Иногда удобнее использовать профили: `dev` для локальной разработки с минимумом зависимостей и `docker` или `local-prod` для «мини-прода». В Java можно повесить `@Profile` на конфигурационный класс, создающий, например, KafkaTemplate только при активном профиле `docker`. Это позволяет изолировать инфраструктурные бины и не тянуть Kafka в юнит-тесты.
 
 ```java
 package com.example.kafka;
 
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Component;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.springframework.boot.autoconfigure.kafka.DefaultKafkaProducerFactoryCustomizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 
-@Component
-public class DemoConsumer {
-  @KafkaListener(topics = "demo", groupId = "demo-grp")
-  public void on(String msg) { System.out.println("Got: " + msg); }
+import java.util.Map;
+
+@Configuration
+@Profile("docker")
+public class KafkaDockerConfig {
+
+    @Bean
+    public DefaultKafkaProducerFactoryCustomizer producerCustomizer() {
+        return factory -> factory.updateConfigs(
+                Map.of(
+                        ProducerConfig.ACKS_CONFIG, "all",
+                        ProducerConfig.RETRIES_CONFIG, 3
+                )
+        );
+    }
 }
 ```
-
-**Код (Kotlin): тот же consumer)**
 
 ```kotlin
 package com.example.kafka
 
-import org.springframework.kafka.annotation.KafkaListener
-import org.springframework.stereotype.Component
+import org.apache.kafka.clients.producer.ProducerConfig
+import org.springframework.boot.autoconfigure.kafka.DefaultKafkaProducerFactoryCustomizer
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Profile
 
-@Component
-class DemoConsumer {
-    @KafkaListener(topics = ["demo"], groupId = "demo-grp")
-    fun on(msg: String) { println("Got: $msg") }
+@Configuration
+@Profile("docker")
+class KafkaDockerConfig {
+
+    @Bean
+    fun producerCustomizer(): DefaultKafkaProducerFactoryCustomizer =
+        DefaultKafkaProducerFactoryCustomizer { factory ->
+            factory.updateConfigs(
+                mapOf(
+                    ProducerConfig.ACKS_CONFIG to "all",
+                    ProducerConfig.RETRIES_CONFIG to 3
+                )
+            )
+        }
 }
 ```
+
+Важно не «влюбиться» в Compose настолько, чтобы всё проектировать только под него. В k8s другие паттерны storage, другая модель сети, другая история с секретами и ресурсами. Поэтому всё, что завязано на Compose (имена сервисов, volume, restart-режимы), должно быть максимально тонким и легко переносимым. Все же бизнес-смысл, конфиг и интеграции должны быть организованы так, чтобы их легко можно было описать и в Helm-чарте.
 
 ---
 
 ## Makefile/скрипты: удобный билд/апдейты/миграции; экспорт логов и профили dev/test
 
-Командная дисциплина экономит часы. Вместо длинных `docker compose ...` держите Makefile/скрипты: `make up`, `make logs`, `make reset-db`, `make migrate`. Так команде не нужно помнить десятки флагов, а CI использует те же скрипты, что и разработчики.
+С ростом количества команд `docker compose` разработчики быстро устают помнить точные флаги и имена файлов. Makefile или простые shell-скрипты превращаются в удобный «фасад» над Compose: `make up`, `make down`, `make logs`, `make migrate`. Это не замена оркестратору, а просто стабильно документированная CLI для проекта, которую можно запускать одинаково и на ноутбуке, и на тестовом сервере.
 
-Миграции БД удобно запускать отдельной целью. Если Liquibase/Flyway встроены в приложение, делайте «headless» запуск (`--spring.main.web-application-type=none`). Для крупных баз лучше иметь отдельный образ/контейнер «мигратора».
+Стандартный паттерн: `make build` вызывает Gradle/Maven и собирает Docker-образ приложения, `make up` поднимает инфраструктуру и приложение, `make logs` показывает логи только нужных сервисов, `make test-env` — запускает Compose в режиме «как можно ближе к прод». Makefile также удобно использовать для передачи профилей и env-файлов в Compose, чтобы не прописывать их руками в каждой команде.
 
-Экспорт логов полезен при расследовании инцидентов на стенде: `docker compose logs --no-color > logs.txt` — банально, но снизит трение. Профили `dev/test` удобно включать через переменные Make: `make up PROFILE=test`.
+Интеграция с Gradle позволяет связать жизненный цикл сборки и контейнеров: например, задача `bootBuildImage` собирает образ, после чего `docker compose up` стартует окружение. Это особенно полезно в CI: одна джоба билдит артефакт, другая — поднимает Compose и гоняет интеграционные тесты поверх него. На ноутбуке разработчик может делать то же самое, но через один `make`-таргет, не вспоминая, в каком порядке запускать команды.
 
-Согласуйте имена целей с CI. Пайплайн будет банально вызывать `make build-image`/`make push`. Это уменьшает дрейф между локалью и конвейером и помогает держать «истину» в одном месте.
+Миграции БД (Liquibase/Flyway) тоже удобно выносить в отдельный таргет. В простом случае они выполняются автоматически при старте приложения; но если нужно прогнать их отдельно (например, перед поднятием новой версии), Makefile может вызвать `docker compose run --rm app ./migrate.sh` или `java -jar app.jar --spring.profiles.active=migration`. Такой подход чуть ближе к продовой модели, где миграции гоняются отдельной джобой, а не на старте всех pod’ов.
 
-И не забывайте `clean`: снос томов и перезапуск «с нуля» часто самый быстрый путь избавиться от странных состояний. В Makefile это одна строка, которую приятно иметь под рукой.
+Экспорт логов и удобный просмотр — ещё одна причина завести обёртку. `docker compose logs -f app db` легко забыть или промахнуться с именами сервисов, а `make logs` может зашить в себя фильтрацию и нужные флаги (`--no-color`, `--tail=200`). Для «тестового прода» полезно иметь таргет `make dump-logs`, который собирает логи в архив и складывает их в заранее известную папку, чтобы при инцидентах не тратить время на сбор логов по одному сервису.
 
-**Код (Makefile)**
+Отдельные профили `dev`/`test` в Compose можно активировать через `--profile`, а в Makefile привязать к отдельным таргетам: `make up-dev` и `make up-test`. Профили позволяют включать/выключать куски Compose-файла: например, в dev поднимать только базу и приложение, а в test — ещё и mock-сервисы, генераторы нагрузки и т.д. Это лучше, чем плодить много разных compose-файлов, в которых половина конфигурации дублируется.
+
+Ниже простой Makefile, который показывает базовый набор целей: сборка, запуск, остановка, логирование. Он не делает ничего магического, но избавляет команду от запоминания длинных команд и позволяет добавлять новые шаги (например, миграции или проверку статуса) централизованно.
 
 ```makefile
-PROJECT?=demo
-PROFILE?=dev
+APP_IMAGE ?= demo/orders-service
+APP_TAG   ?= latest
 
+.PHONY: build
 build:
-\t./gradlew clean bootJar
+	./gradlew clean bootJar
+	docker build -t $(APP_IMAGE):$(APP_TAG) .
 
-image:
-\tdocker build -t registry.local/$(PROJECT):$(PROFILE) .
-
+.PHONY: up
 up:
-\tdocker compose up -d
+	docker compose up -d
 
+.PHONY: down
 down:
-\tdocker compose down
+	docker compose down
 
+.PHONY: logs
 logs:
-\tdocker compose logs -f --tail=200
+	docker compose logs -f app
 
-reset-db:
-\tdocker compose down -v db && docker compose up -d db
-
-migrate:
-\tdocker compose run --rm app java -jar /app/app.jar --spring.main.web-application-type=none
+.PHONY: restart
+restart: down up
 ```
 
-**Код (Java/Kotlin): запуск миграций как «headless» режима уже показан; дополнительных классов не требуется.**
+В Gradle можно добавить кастомную задачу, которая будет вызывать `docker compose` прямо из build-скрипта. Это особенно удобно в CI, где не хочется писать shell-скрипты. Вот пример для Groovy DSL и Kotlin DSL, который создает задачу `dockerComposeUp`.
 
----
+```groovy
+// build.gradle (Groovy)
+tasks.register('dockerComposeUp') {
+    group = 'docker'
+    description = 'Run docker compose up'
+    doLast {
+        exec {
+            commandLine 'docker', 'compose', 'up', '-d'
+        }
+    }
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+tasks.register("dockerComposeUp") {
+    group = "docker"
+    description = "Run docker compose up"
+    doLast {
+        exec {
+            commandLine("docker", "compose", "up", "-d")
+        }
+    }
+}
+```
+
+С точки зрения кода приложения Makefile и Compose — прозрачны: Spring Boot запускается как обычно, читает конфиг из `application.yml` и env. Но для интеграционных тестов полезно иметь возможность поднимать Compose-окружение перед запуском тестов и гасить его после. В Java можно использовать `@SpringBootTest` вместе с внешним скриптом, который гоняет Compose, а для более продвинутых сценариев — Testcontainers (который по сути делает за вас «мини-Compose» в тестах).
+
+Простой тестовый класс может, например, проверять, что контейнер Postgres доступен и что application корректно стартует в профиле `docker`. Для демонстрации достаточно обычного `@SpringBootTest`, который опирается на уже поднятый docker-compose.
+
+```java
+package com.example;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest(properties = "spring.profiles.active=docker")
+class OrdersApplicationTests {
+
+    @Test
+    void contextLoads() {
+        // если контекст поднялся, значит Compose-окружение и конфиг работают
+    }
+}
+```
+
+```kotlin
+package com.example
+
+import org.junit.jupiter.api.Test
+import org.springframework.boot.test.context.SpringBootTest
+
+@SpringBootTest(properties = ["spring.profiles.active=docker"])
+class OrdersApplicationTests {
+
+    @Test
+    fun contextLoads() {
+        // если контекст поднялся, значит Compose-окружение и конфиг работают
+    }
+}
+```
+
+Главное — не превращать Makefile в «мини-k8s»: чем проще и прозрачнее команды, тем легче их поддерживать и тем меньше вероятность, что в них спрячутся неожиданные side-effect’ы. Compose и Make — это инструмент для удобства разработчиков и быстрых тестовых стендов, но не долгосрочная платформа для сложных продовых сценариев.
 
 # 9. Kubernetes/Helm: деплой и операционка
 
 ## Deployment/Service/Ingress: стратегия обновлений (RollingUpdate), readiness-пробы и минимальный healthy-под
 
-В Kubernetes **Deployment** управляет ReplicaSet и стратегией обновлений. По умолчанию RollingUpdate меняет Pod’ы постепенно, сохраняя доступность. Настройте `maxUnavailable` и `maxSurge`, чтобы балансировать скорость и риск. Для «критичных» сервисов держите `minReadySeconds` — kube не будет считать Pod «готовым», пока он не пробыл Ready столько-то секунд. Это снижает флапы.
+В Kubernetes основная рабочая единица деплоя для Spring Boot-сервиса — это `Deployment`. Он отвечает за количество реплик, стратегию обновления и связь с ReplicaSet’ами. Service поверх Deployment’а даёт стабильную точку входа по имени, а Ingress (или ingress-контроллер) — публикует HTTP(S) наружу. Для Spring-приложения это ключевая тройка: именно через них проходят все rolling-update, health-check’и, балансировка и сетевая безопасность.
 
-**Service** даёт стабильный виртуальный IP/DNS для Pod’ов, а **Ingress** — входной маршрут с TLS, лимитами и правилами. Если приложение отдаёт правильные пробы, трафик будет идти только в здоровые Pod’ы, остальным — 503. Readiness-пробы в проде важнее liveness: первые защищают пользователей, вторые — сам процесс.
+Deployment в типичном случае конфигурируется со стратегией `RollingUpdate`, которая по чуть-чуть меняет старые Pod’ы на новые. Это безопаснее, чем `Recreate`, где все старые Pod’ы убиваются и только потом поднимаются новые. В `RollingUpdate` нужно правильно настроить `maxUnavailable` и `maxSurge`: сколько Pod’ов можно временно потерять и сколько можно создать сверх желаемого количества во время обновления. Для Spring-сервиса с высокой доступностью обычно оставляют хотя бы один healthy-под на проде, чтобы не было полной недоступности.
 
-Согласуйте тайминги: HTTP-таймауты клиента, Ingress, Service, приложение. Простой закон — длиннейший таймаут на самом дальнем слое не должен быть короче внутренних; иначе клиент бросит запрос раньше, чем бэкенд успеет ответить, и начнутся ретраи.
+Ещё один важный параметр Deployment’а — `minReadySeconds`. Он задаёт, сколько времени Pod должен находиться в состоянии «Ready» перед тем, как считаться готовым для обновления ReplicaSet’а. Для приложений с медленным прогревом это критично: можно убедиться, что Pod прожил некоторое время без падений, прежде чем Kubernetes начнёт убивать старые реплики. Если этот параметр пропустить, rolling-update может посчитать Pod готовым сразу после первого успешного readiness-ответа.
 
-Не гонитесь за «минимальным» временем выкладки — куда важнее отсутствие 5xx и короткий spike latency. Для этого включайте `progressDeadlineSeconds`, следите за событиями Deployment и не стесняйтесь прерывать rollout при ошибках readiness.
+Readiness-проба (`readinessProbe`) в контексте Spring Boot — это именно тот механизм, который решает, когда Pod можно пускать в балансировку. Обычно она указывает на `/actuator/health/readiness` или `/actuator/health`, если включены probes. Пока probe возвращает не-200 или не `status: UP`, Pod считается не готовым, и Service не направляет к нему трафик. Это позволяет спокойно накатывать миграции, прогревать кэши и устанавливать коннекты, не ломая продовый трафик.
 
-Для тонкой дорожки отладки у Ingress есть аннотации на keep-alive/таймауты и буферы заголовков — не поленитесь их настроить, если вы отдаёте большие JWT и габаритные заголовки.
+Service в Kubernetes — это абстракция, которая даёт стабильное DNS-имя и виртуальный IP для набора Pod’ов. Для внутренних Spring-сервисов чаще всего используется `ClusterIP`: к нему обращаются другие сервисы по имени `orders-svc`, не думая о конкретных Pod’ах. Для внешней публикации обычно добавляется либо `LoadBalancer` (в облаках), либо `Ingress`, который через контроллер (nginx/traefik/ingress-nginx) создаёт обратный прокси поверх HTTP.
 
-**Код (Helm Deployment/Service/Ingress, фрагменты шаблонов)**
+Ingress описывает правила маршрутизации HTTP-трафика: по каким доменным именам и путям какой Service должен обслуживать запрос. Для Spring Boot главное — правильно настроить `X-Forwarded-*` заголовки и доверенные прокси, чтобы приложение корректно формировало ссылки, знало реальный схем/хост и не ломало редиректы. В простом случае достаточно Ingress с хостом `orders.example.com` и маршрутом `/` на Service `orders-svc`.
+
+Минимальный healthy-под — концепция из практики: при настройке RollingUpdate нужно обеспечить, что на проде никогда не останется ноль готовых Pod’ов. Это достигается комбинацией `maxUnavailable` и общего количества реплик. Если у тебя 3 Pod’а и `maxUnavailable=1`, то даже во время обновления всегда будет минимум 2 готовых Pod’а. Если же поставить `maxUnavailable=50%` и всего 2 реплики, то в какой-то момент можно остаться с одной или нулём, что уже риск для SLA.
+
+Ещё один нюанс — связка readiness-проб и rolling-update. Если новая версия приложения стартует, но readiness постоянно падает (например, не может подключиться к БД), Deployment будет вечно крутить новые Pod’ы, не продвигая rollout до завершённого состояния. Это правильное поведение: прод не должен перейти на версию, которая не может стать готовой. Но при этом важно иметь хорошие логи и метрики health-check’ов, чтобы быстро понять причину зависшего rollout’а.
+
+Ниже пример минимального Deployment/Service/Ingress для Spring Boot-приложения. Здесь видно RollingUpdate со строгими параметрами, readiness-проба на actuator и отдельный Service/Ingress для HTTP-трафика. Такой шаблон легко упаковать в Helm, заменив жёсткие значения на шаблоны.
 
 ```yaml
-# templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: {{ include "demo.fullname" . }} }
+metadata:
+  name: orders-deployment
+  labels:
+    app: orders
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: 3
   strategy:
+    type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0
+      maxUnavailable: 1
       maxSurge: 1
   minReadySeconds: 10
   selector:
-    matchLabels: { app: {{ include "demo.name" . }} }
+    matchLabels:
+      app: orders
   template:
     metadata:
-      labels: { app: {{ include "demo.name" . }} }
+      labels:
+        app: orders
     spec:
       containers:
-        - name: app
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          ports: [ { containerPort: 8080 } ]
+        - name: orders-app
+          image: registry.example.com/orders-service:1.0.0
+          ports:
+            - containerPort: 8080
           readinessProbe:
-            httpGet: { path: /actuator/health/readiness, port: 8080 }
-            initialDelaySeconds: 5
-            timeoutSeconds: 2
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 10
             periodSeconds: 5
+            timeoutSeconds: 2
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /actuator/health/liveness, port: 8080 }
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
             initialDelaySeconds: 30
             periodSeconds: 10
-```
-
-```yaml
-# templates/service.yaml
+            timeoutSeconds: 2
+            failureThreshold: 3
+---
 apiVersion: v1
 kind: Service
-metadata: { name: {{ include "demo.fullname" . }} }
+metadata:
+  name: orders-svc
 spec:
-  type: ClusterIP
-  selector: { app: {{ include "demo.name" . }} }
+  selector:
+    app: orders
   ports:
     - name: http
       port: 80
       targetPort: 8080
-```
-
-```yaml
-# templates/ingress.yaml
+  type: ClusterIP
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "demo.fullname" . }}
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+  name: orders-ingress
 spec:
-  ingressClassName: nginx
-  tls:
-    - hosts: [ {{ .Values.host }} ]
-      secretName: {{ .Values.tlsSecret }}
   rules:
-    - host: {{ .Values.host }}
+    - host: orders.example.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: {{ include "demo.fullname" . }}
-                port: { number: 80 }
+                name: orders-svc
+                port:
+                  number: 80
 ```
 
-**Код (Java): эндпойнты readiness/liveness уже даны; добавим info)**
+На стороне Spring Boot для этого достаточно включить Actuator и probes. В Gradle добавляются зависимости `spring-boot-starter-web` и `spring-boot-starter-actuator`. Конфиг ниже одинаково подходит и для Java, и для Kotlin-кода.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+}
+```
+
+И пример простого контроллера, который позволяет проверить работу сервиса поверх Ingress — обычный `GET /api/info` с версией, полезный при проверке rollout’ов. В Java и Kotlin это одинаковый по смыслу код.
 
 ```java
-package com.example.k8s;
+package com.example.orders;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-class InfoController {
-  @GetMapping("/info-lite")
-  public String info() { return "ok"; }
+public class InfoController {
+
+    @Value("${app.version:unknown}")
+    private String version;
+
+    @GetMapping("/api/info")
+    public String info() {
+        return "orders-service version=" + version;
+    }
 }
 ```
 
-**Код (Kotlin): то же)**
-
 ```kotlin
-package com.example.k8s
+package com.example.orders
 
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
-class InfoController {
-    @GetMapping("/info-lite") fun info() = "ok"
+class InfoController(
+    @Value("\${app.version:unknown}")
+    private val version: String
+) {
+
+    @GetMapping("/api/info")
+    fun info(): String = "orders-service version=$version"
 }
 ```
+
+Такой эндпоинт удобно использовать при smoke-тестах после rollout’а: можно отправить запрос через Ingress и убедиться, что за ним действительно стоит новая версия (по версии из ответа), а не старые Pod’ы, ещё висящие в кластере.
 
 ---
 
 ## ConfigMap/Secret: монтирование, hot-reload конфигов; политика перезапуска после изменения
 
-ConfigMap/Secret — два базовых «кирпича» внешней конфигурации. Их можно передавать как env или монтировать файлами. Файлы удобны для больших YAML и ключей/сертификатов; env — для «ключ-значение» простых параметров. Важно помнить: обновление ConfigMap/Secret **не меняет** содержимое уже запущенных Pod’ов автоматически, если не используется projected-volume с обновлением inode. На практике перезапускайте Pod’ы по изменению (например, через аннотацию-хэш в шаблоне pod’а).
+В Kubernetes конфигурация приложения и секреты выносятся из образа в отдельные объекты — `ConfigMap` и `Secret`. Spring Boot хорошо ложится на эту модель, потому что умеет читать конфигурацию из environment variables и файлов. Главное — чётко разделить, какие параметры считаются конфигом (URL’ы, флаги, логический toggles), а какие — секретами (пароли, токены, ключи). Нельзя складывать всё подряд в ConfigMap только потому, что так проще.
 
-«Горячая перезагрузка» конфигов в Java бывает, но в проде редко оправдана. Надёжнее перекатывать Pod’ы, чем ловить диффы конфигов в рантайме и гадать, что именно уже перечитано. Исключение — отдельные фичи/тогглы, где важна секундна реакция (см. feature-flags).
+Типичный подход: `ConfigMap` содержит YAML/Properties с параметрами Spring, которые могут быть общими для окружения (feature-флаги, URL’ы внутренних сервисов, лимиты, таймауты). `Secret` хранит чувствительные данные в base64 (Kubernetes сам не шифрует, так что криптографической защиты здесь нет, это просто разделение ответственности). В манифесте Deployment эти объекты подключаются либо как env-переменные (`envFrom`), либо как файлы, смонтированные в папку внутри контейнера (`volumeMounts`).
 
-Secrets должны быть ограничены по скоупу и доступу RBAC; не кладите туда мегабайты. Для TLS-ключей используйте тип `kubernetes.io/tls`. Если у вас ротация сертификатов через cert-manager — держите короткий TTL и проверяйте автоматический reload.
+Монтирование конфиг-файлов в Spring Boot удобно тем, что можно использовать `application.yaml` прямо из ConfigMap. Например, ConfigMap содержит YAML с настройками профиля `k8s`, а Deployment монтирует его в `/config/application-k8s.yaml`. Spring Boot автоматически подхватит этот файл, если профиль активен. Это позволяет полностью вынести конфигурацию из образа: образ не меняется, меняется только ConfigMap.
 
-Собственный паттерн: хранить только ссылку/путь на секрет в env, а содержимое — монтировать файлом с правами read-only. Это яснее и безопаснее, чем передавать секрет в env и случайно засветить его в /proc.
+Hot-reload конфигов — отдельная тема. Kubernetes сам по себе обновляет файлы, смонтированные из ConfigMap/Secret, но Spring Boot не будет автоматически перечитывать их и менять бины. Для настоящего hot-reload’а требуется либо Spring Cloud Kubernetes, либо свой механизм наблюдения за файлами и перезагрузки контекста. В проде чаще выбирают более простой путь: изменение ConfigMap/Secret → перезапуск Pod’ов (rolling update) → приложение стартует с новыми настройками.
 
-В Helm принято зашивать «checksum-аннотации» ресурсов конфигураций: при изменении ConfigMap/Secret рестартует Deployment. Это дешёвый и прозрачный способ гарантировать, что Pod всегда соответствует конфигу.
+Политика перезапуска после изменения конфигов обычно реализуется через аннотации в Deployment или Helm: шаблон включает хеш ConfigMap/Secret в `podTemplate` (например, через annotation с checksum). При изменении ConfigMap/Secret checksum-значение меняется, и Kubernetes воспринимает это как изменение шаблона Pod’а, инициируя новый rollout. Это надёжный способ синхронизировать конфиг и Pod’ы: не будет ситуации, когда Pod живёт с устаревшим конфигом после изменения ConfigMap.
 
-**Код (Helm, checksum-аннотации + монтирование Secret)**
+При работе с Secret важно помнить, что они по умолчанию доступны в plain-text в etcd кластера и в описаниях Pod’ов/Events. Поэтому выдача доступов к `kubectl get secret` должна контролироваться RBAC, а сами манифесты с Secret не должны лежать в открытых репозиториях. В Helm обычно секреты описываются через шаблон, но конкретные значения подставляются либо через CI/CD, либо через внешние Secret менеджеры.
+
+Самый простой способ подключить ConfigMap и Secret к Spring-приложению — через env. ConfigMap определяет env-переменные, а Spring читает их как обычные свойства. Вот пример ConfigMap и Secret с параметрами базы данных, и Deployment, который их подключает. Такое решение не обеспечивает hot-reload, но полностью отвечает паттерну 12-factor: конфигурация извне, образ неизменяемый.
 
 ```yaml
-# templates/deployment.yaml (фрагмент)
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  annotations:
-    checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-    checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+  name: orders-config
+data:
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/app
+  SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orders-secrets
+type: Opaque
+data:
+  SPRING_DATASOURCE_USERNAME: YXBw          # base64("app")
+  SPRING_DATASOURCE_PASSWORD: YXBw          # base64("app")
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-deployment
 spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: orders
   template:
+    metadata:
+      labels:
+        app: orders
+      annotations:
+        config-checksum: "PLACEHOLDER" # сюда Helm подставит checksum от ConfigMap/Secret
     spec:
-      volumes:
-        - name: tls
-          secret:
-            secretName: {{ .Values.tlsSecret }}
       containers:
-        - name: app
-          volumeMounts:
-            - name: tls
-              mountPath: /etc/tls
-              readOnly: true
-          env:
-            - name: SSL_PASSWORD
-              valueFrom:
-                secretKeyRef: { name: {{ .Values.tlsSecret }}, key: password }
+        - name: orders-app
+          image: registry.example.com/orders-service:1.0.0
+          envFrom:
+            - configMapRef:
+                name: orders-config
+            - secretRef:
+                name: orders-secrets
 ```
 
-**Код (Java): чтение смонтированного файла)**
+На стороне Spring Boot достаточно использовать `@ConfigurationProperties`, чтобы собрать параметры в один класс. В Java это обычный компонент, который получает значения из env и позволяет сервисам работать с типизированной конфигурацией, не размазывая строки по коду.
 
 ```java
-package com.example.cm;
+package com.example.config;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
 
-@RestController
-class FileCfgController {
-  @GetMapping("/cert-exists")
-  public String certExists() {
-    return Files.exists(Path.of("/etc/tls/tls.crt")) ? "yes" : "no";
-  }
+@Component
+@ConfigurationProperties(prefix = "spring.datasource")
+public class DataSourceProperties {
+
+    private String url;
+    private String username;
+    private String password;
+
+    // getters/setters
+
+    public String getUrl() {
+        return url;
+    }
+
+    public void setUrl(String url) {
+        this.url = url;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
 }
 ```
-
-**Код (Kotlin): то же)**
 
 ```kotlin
-package com.example.cm
+package com.example.config
 
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-import java.nio.file.Files
-import java.nio.file.Path
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.stereotype.Component
 
-@RestController
-class FileCfgController {
-    @GetMapping("/cert-exists") fun certExists() =
-        if (Files.exists(Path.of("/etc/tls/tls.crt"))) "yes" else "no"
+@Component
+@ConfigurationProperties(prefix = "spring.datasource")
+class DataSourceProperties {
+    lateinit var url: String
+    lateinit var username: String
+    lateinit var password: String
 }
 ```
+
+Чтобы Helm автоматически инициировал rollout при изменении ConfigMap/Secret, в шаблон Deployment обычно добавляют аннотацию с checksum. Пример Helm-шаблона показывает, как это делается: мы берём содержимое файлика с ConfigMap, считаем от него `sha256sum` и вставляем в Pod template. Любое изменение значения в ConfigMap/Secret изменит checksum, а значит — приведёт к обновлению Pod’ов.
+
+```yaml
+# templates/deployment.yaml (фрагмент Helm)
+spec:
+  template:
+    metadata:
+      labels:
+        app: {{ include "orders.fullname" . }}
+      annotations:
+        config-checksum: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          envFrom:
+            - configMapRef:
+                name: {{ include "orders.configName" . }}
+            - secretRef:
+                name: {{ include "orders.secretName" . }}
+```
+
+Таким образом, ConfigMap/Secret становятся не статическими «где-то в кластере», а частью декларативного состояния релиза. Любое изменение конфигурации проходит через тот же pipeline, что и изменения кода, логируется и может быть откатано вместе с релизом образа.
 
 ---
 
 ## HPA/автоскейл: метрики CPU/RAM/кастомные; PodDisruptionBudget, restartPolicy, topology spread
 
-Horizontal Pod Autoscaler (HPA) — ваш «авточокер» по метрикам ресурсов. Стандартные источники — CPU/RAM, но через custom-metrics можно скейлить по RPS/очередям/лагу Kafka. Важно правильно выставить `requests`: HPA сопоставляет текущую загрузку с request, а не с «физическим» CPU. Слишком маленький request — и HPA будет думать, что всё 200% загружено, хотя процесс в порядке.
+Горизонтальный автоскейлинг (HPA) — стандартный способ адаптировать количество Pod’ов к текущей нагрузке. Для Spring Boot-сервиса это прямой инструмент управления throughput: при росте RPS или нагрузке по CPU/памяти можно автоматически добавлять реплики, а при падении нагрузки — уменьшать их количество. Без HPA сервис либо постоянно «перегрет» (если реплик мало), либо расходует ресурсы впустую (если реплик слишком много).
 
-**PodDisruptionBudget (PDB)** ограничивает количество одновременно «вышибаемых» Pod’ов при эвакуациях/апдейтах нод. Это страховка от случайной потери кворума сервиса. `topologySpreadConstraints` распределяют Pod’ы по зонам/нодам, чтобы одно падение машины не уроняло весь сервис.
+Базовый HPA использует стандартные метрики CPU и памяти: например, цель может быть «использование CPU 70% от requested». Kubernetes через Metrics Server собирает usage, и если среднее по Deployment’у выше цели — увеличивает количество Pod’ов, если ниже — уменьшает. Для нагрузок, которые действительно CPU-bound, этого часто достаточно. Но для I/O-bound-сервисов CPU может быть низким, а latency уже страдать; для них полезно подключать кастомные метрики (через Prometheus Adapter или OTel Collector).
 
-`restartPolicy` для Pod’ов в Deployment — всегда `Always`. Если у вас батч-задачи — используйте Job/CronJob. Не пытайтесь «воспроизводить» cron в приложении при наличии расписаний на уровне кластера — Kubernetes делает это лучше и надёжнее.
+Поддержка кастомных метрик позволяет HPA ориентироваться, например, на количество запросов в секунду, длину очереди задач или процент ошибок. Для Spring Boot это обычно делается через Micrometer: ты публикуешь метрику `http_server_requests_seconds_count` или свою, а Prometheus Adapter экспортирует её в Kubernetes API как объект CustomMetric. Тогда HPA может масштабировать сервис не по CPU, а по реальному бизнес-показателю.
 
-Для кастомных метрик используйте Prometheus Adapter или внешний источник (KEDA) — особенно удобно для событийных систем (Kafka): скейл по глубине топиков не привязан к CPU. Но обязательно держите «нижние» и «верхние» административные ограничения, чтобы сервис не ушёл в бесконечный рост.
+PodDisruptionBudget (PDB) защищает сервис от слишком агрессивных плановых остановок: он задаёт минимальное количество Pod’ов, которые должны оставаться готовыми во время drain’а нода, обновлений и прочих административных операций. Если PDB говорит, что у сервиса должно быть минимум 2 доступных Pod’а, Kubernetes не даст одновременно убить больше, чем позволяет PDB. Это особенно важно для сервисов с небольшим количеством реплик: без PDB один drain нода может случайно свалить все Pod’ы.
 
-Не злоупотребляйте автоскейлом: плохая конфигурация легко станет «усилителем» проблемы, если ваш сервис не выдерживает резких стартов/остановов (например, при холодном JIT). Прогревайте, держите минимальное число реплик >1 и включайте `startupProbe`.
+RestartPolicy для Pod’ов в Deployment почти всегда `Always` — Kubernetes будет перезапускать контейнер при падении. Важен не столько выбор restartPolicy, сколько причину падений: либо это честный CrashLoop из-за неправильной конфигурации, либо отсутствие ресурсов (OOM, throttling), либо проблемы с зависимостями. В сочетании с HPA это создаёт картину: если автоскейлер постоянно добавляет Pod’ы, а они умирают, значит, проблема не в количестве реплик, а в качестве конфигурации.
 
-**Код (HPA и PDB, YAML)**
+TopologySpreadConstraints — способ равномерно размазывать Pod’ы по нодам, зонам или другим топологиям. Для Spring Boot-сервиса это снижает риск того, что один нод, на котором вдруг начались проблемы, обрушит весь сервис. Если задать constraint «максимальная разница количества Pod’ов между нодами 1», Kubernetes будет стараться распределять Pod’ы равномерно. Вместе с HPA это даёт устойчивость: при масштабировании новые Pod’ы разъезжаются по нодам и зонам.
+
+Ниже пример HPA, который масштабирует Deployment по CPU и памяти. Здесь цель — 70% использования CPU и 80% использования памяти; минимальное количество Pod’ов 2, максимальное — 10. Для начала этого достаточно; позже можно добавить поддержку кастомных метрик, если есть Prometheus Adapter.
 
 ```yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
-metadata: { name: demo }
+metadata:
+  name: orders-hpa
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: demo
+    name: orders-deployment
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -3096,173 +4811,404 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata: { name: demo-pdb }
-spec:
-  minAvailable: 1
-  selector:
-    matchLabels: { app: demo }
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
 ```
 
-**Код (Java/Kotlin): не требуется специальных классов; автоскейл прозрачен для приложения.**
+С точки зрения Spring Boot для HPA достаточно, чтобы сервис корректно вёл себя при изменении количества Pod’ов: не сильно зависел от sticky-сессий, умел переживать потерю реплик, не привязывал state к конкретному Pod’у. Но если подключать кастомные метрики, придётся добавить Micrometer и настроить Prometheus. В Gradle зависимость стандартна — `spring-boot-starter-actuator` плюс экспорт в Prometheus.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
+}
+```
+
+В коде можно добавить кастомную метрику — например, счётчик бизнес-операций, который позже можно использовать как базу для кастомного HPA. В Java и Kotlin это делается через `MeterRegistry`. Ниже пример сервиса, который инкрементирует счётчик при создании заказа; эту метрику потом можно агрегировать и экспортировать в HPA.
+
+```java
+package com.example.metrics;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.stereotype.Service;
+
+@Service
+public class OrderMetricsService {
+
+    private final Counter createdOrdersCounter;
+
+    public OrderMetricsService(MeterRegistry meterRegistry) {
+        this.createdOrdersCounter = meterRegistry.counter("orders_created_total");
+    }
+
+    public void onOrderCreated() {
+        createdOrdersCounter.increment();
+    }
+}
+```
+
+```kotlin
+package com.example.metrics
+
+import io.micrometer.core.instrument.MeterRegistry
+import org.springframework.stereotype.Service
+
+@Service
+class OrderMetricsService(
+    meterRegistry: MeterRegistry
+) {
+
+    private val createdOrdersCounter = meterRegistry.counter("orders_created_total")
+
+    fun onOrderCreated() {
+        createdOrdersCounter.increment()
+    }
+}
+```
+
+PDB задаётся отдельным объектом. Пример ниже говорит, что у `orders-deployment` всегда должно быть минимум 2 доступных Pod’а. Если в кластере останется только один healthy Pod (например, из-за drain’а), Kubernetes отложит дальнейшие эвакуации, пока сервис не восстановит нужное количество реплик.
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orders-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: orders
+```
+
+TopologySpreadConstraints добавляются в spec Pod’а. Пример показывает, как распределить Pod’ы по нодам, у которых есть метка `topology.kubernetes.io/zone`, так, чтобы разница по количеству Pod’ов между зонами не превышала 1. Это особенно важно для зональной отказоустойчивости в облаках.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-deployment
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: orders
+  template:
+    metadata:
+      labels:
+        app: orders
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: orders
+      containers:
+        - name: app
+          image: registry.example.com/orders-service:1.0.0
+          ports:
+            - containerPort: 8080
+```
+
+В итоге HPA, PDB и topology spread работают вместе: HPA масштабирует количество Pod’ов в зависимости от нагрузки, PDB защищает от слишком агрессивных остановок, а topologySpreadConstraints распределяют Pod’ы по кластерам так, чтобы сбой отдельной зоны не уронил весь сервис. Spring Boot в этой картине — лишь одна часть: главное, чтобы он корректно реагировал на появление и исчезновение Pod’ов и публиковал метрики, пригодные для автоскейлинга.
 
 ---
 
 ## Обновления без простоя: blue-green/canary; миграции БД как отдельные джобы; хранение артефактов Helm
 
-Blue-green — это два Deployment (blue и green) и переключение Service/Ingress между ними. Canary — выпускаем новую версию на часть трафика и наблюдаем. Без специализированных контроллеров (Argo Rollouts) на Nginx Ingress можно делить трафик по весам через аннотации/доп. Ingress. Для большинства команд «ручной» blue-green уже сильно снижает риск, особенно когда в релизе есть миграции и хочется кнопки «откатить service назад».
+Обновление Spring Boot-сервиса в Kubernetes — это не просто «заменить образ и нажать apply». На проде нужно гарантировать отсутствие простоя (или минимальное окно), управляемое поведение при ошибках и возможность быстрого отката. Здесь вступают в игру стратегии blue-green и canary, отдельные джобы для миграций БД и практика хранения Helm-чартов и values как артефактов релиза.
 
-Миграции БД выносите в Job. Это позволяет катить схему отдельно, проверять её, и только потом переводить трафик на новую версию приложения. В Helm удобно иметь оба артефакта: chart приложения и chart миграций (или один chart с включаемой Job). Храните релизы Helm (ChartMuseum/OCI-реестр) — это ускоряет откаты и делает поставку воспроизводимой.
+Blue-green подразумевает, что в кластере одновременно живут две версии сервиса: «синий» (текущий прод) и «зелёный» (новый релиз). Трафик в какой-то момент целиком переключается с синего на зелёный (обычно на уровне Ingress или сервис-меша). Если что-то идёт не так, переключение можно быстро вернуть назад. Для Spring-приложения это означает два Deployment’а с разными labels и Service/Ingress, которые перекидывают selector с одного на другой.
 
-Сервисные зависимости — тоже кандидаты на canary. Например, новый Kafka consumer с изменённой семантикой можно запустить в «тени» и сравнить результаты (shadow traffic). Это дороже по инфраструктуре, но драматически снижает риск.
+Canary — более аккуратная стратегия: новый релиз постепенно получает долю трафика (например, 5%, 20%, 50%, 100%), пока команда следит за метриками и логами. Для этого используют либо ingress-контроллер с поддержкой weight’ов, либо специализированные инструменты (Argo Rollouts, Flagger). Для Spring-сервиса при такой схеме особенно важны метрики и трейсинг: нужно точно знать, что при увеличении доли canary всё ещё укладывается в SLO, нет всплесков ошибок и latency.
 
-Не забывайте про обратную совместимость схемы. Паттерн «expand/contract»: сначала добавили колонку/индекс, приложение стало писать и туда, затем во втором релизе — начали читать, и только потом удаляете старое. Такой подход делает откаты безболезненными.
+Миграции БД как отдельные джобы — ключевой элемент zero-downtime обновлений. Если migration запускается на старте каждого Pod’а, rolling-update может зависнуть или привести к конкурирующим миграциям. Лучше запускать миграции отдельно, как `Job` или `Helm hook`, до или после основного rollout’а, в зависимости от типа изменения схемы. В простых сценариях миграция идёт вперёд-совместимыми шагами: сначала добавляются новые поля, потом новое приложение начинает ими пользоваться.
 
-Для Helm артефактов придерживайтесь иммутабельных тегов. Версия чарта ≠ версия приложения, но храните линк: values должны содержать образ `repo:tag`. GitOps-подходы (ArgoCD/Flux) любят такую прозрачность.
+Хранение артефактов Helm (chart’ы, values, сгенерированные manifests) — это способ воспроизводимо откатываться и разбираться в инцидентах. Если после релиза что-то пошло не так, важно иметь возможность понять, какие именно манифесты накатывались, с какими параметрами. Для этого Helm-чарты и values хранятся в отдельном репозитории (Helm-репо или OCI registry), а pipeline релиза записывает, какие версии chart’а и образа были задеплоены.
 
-**Код (Helm Job для миграций)**
+Ниже пример Helm Job для миграций Flyway/Liquibase. Он запускается как отдельный объект, с тем же образом, что и приложение, но с другим профилем (`migration`). Команда `java -jar app.jar --spring.profiles.active=migration` должна выполнить миграции и завершить процесс. Job можно пометить как hook Helm (`pre-upgrade`) или запускать руками из pipeline перед rollout’ом приложения.
 
 ```yaml
-# templates/job-migrate.yaml
 apiVersion: batch/v1
 kind: Job
-metadata: { name: {{ include "demo.fullname" . }}-migrate }
+metadata:
+  name: {{ include "orders.fullname" . }}-db-migration
+  labels:
+    app: {{ include "orders.name" . }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   template:
     spec:
-      restartPolicy: Never
+      restartPolicy: OnFailure
       containers:
         - name: migrator
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          args: ["java","-jar","/app/app.jar","--spring.main.web-application-type=none"]
+          args: ["--spring.profiles.active=migration"]
           envFrom:
-            - secretRef: { name: {{ .Values.dbSecret }} }
+            - configMapRef:
+                name: {{ include "orders.configName" . }}
+            - secretRef:
+                name: {{ include "orders.secretName" . }}
 ```
 
-**Код (Java): «feature-gate» для canary маршрута)**
+На стороне Spring Boot нужен профиль `migration`, в котором приложение не поднимает веб-слой, а только запускает миграции. В Java это можно реализовать через отдельный `@SpringBootApplication` или логикой в `main`. Простой вариант — проверять активный профиль и, если это `migration`, не стартовать веб-сервер. Ниже пример кода, иллюстрирующий идею.
 
 ```java
-package com.example.canary;
+package com.example;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.boot.Banner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.WebApplicationType;
+import org.springframework.core.env.AbstractEnvironment;
 
-@RestController
-@RequestMapping("/v2")
-class CanaryController {
-  private final boolean enabled;
-  CanaryController(@Value("${feature.canary:false}") boolean enabled) { this.enabled = enabled; }
+public class MigrationApplication {
 
-  @GetMapping("/calc")
-  public String calc() { return enabled ? "new" : "disabled"; }
+    public static void main(String[] args) {
+        System.setProperty(AbstractEnvironment.ACTIVE_PROFILES_PROPERTY_NAME, "migration");
+
+        SpringApplication app = new SpringApplication(OrdersApplication.class);
+        app.setBannerMode(Banner.Mode.OFF);
+        app.setWebApplicationType(WebApplicationType.NONE);
+        app.run(args);
+    }
 }
 ```
-
-**Код (Kotlin): то же)**
 
 ```kotlin
-package com.example.canary
+package com.example
 
-import org.springframework.beans.factory.annotation.Value
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RestController
+import org.springframework.boot.Banner
+import org.springframework.boot.WebApplicationType
+import org.springframework.boot.builder.SpringApplicationBuilder
+import org.springframework.core.env.AbstractEnvironment
 
-@RestController
-@RequestMapping("/v2")
-class CanaryController(@Value("\${feature.canary:false}") private val enabled: Boolean) {
-    @GetMapping("/calc") fun calc() = if (enabled) "new" else "disabled"
+fun main(args: Array<String>) {
+    System.setProperty(AbstractEnvironment.ACTIVE_PROFILES_PROPERTY_NAME, "migration")
+
+    SpringApplicationBuilder(OrdersApplication::class.java)
+        .bannerMode(Banner.Mode.OFF)
+        .web(WebApplicationType.NONE)
+        .run(*args)
 }
 ```
 
----
+В Gradle для такого разделения достаточно иметь один модуль и два entry-point’а (две main-функции). `OrdersApplication` остаётся обычным веб-приложением, а `MigrationApplication` используется в Job. Собирается один jar, который умеет работать в двух режимах в зависимости от того, какой main указан в командной строке Docker/Job.
+
+```groovy
+// build.gradle (Groovy)
+bootJar {
+    mainClass = 'com.example.OrdersApplication'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+tasks.bootJar {
+    mainClass.set("com.example.OrdersApplication")
+}
+```
+
+Для blue-green через Helm можно завести два релиза одного chart’а: `orders-blue` и `orders-green`. Каждый деплоит свой Deployment и Service (с разными именами), а общий Ingress переключает backend с одного на другой, меняя selector или `serviceName`. Canary часто реализуют через ingress-контроллер, который умеет route’ить трафик по весам. На уровне Helm это выглядит как values с weights и отдельными сервисами для старой и новой версии.
+
+Наконец, хранение Helm-чартов и values как артефактов позволяет в любой момент поднять «такой же релиз» на staging’е для отладки инцидента. В репозитории должны лежать chart’y с версионированием (semver), а в CI/CD — привязка версии chart’а и версии образа. Тогда запись «chart 1.3.2 + image 1.7.5» однозначно описывает состояние кластера, и rollback превращается в обычный `helm rollback` до нужного revision.
+
+В сумме всё это даёт управляемый деплой без простоя: миграции БД выполняются отдельно, приложение обновляется через rolling-update, blue-green или canary, а все артефакты релиза хранятся в системе контроля. Spring Boot внутри этого всего — просто контейнер, который корректно стартует, мигрирует схему и публикует health/metrics; всё остальное — работа Kubernetes и Helm.
 
 # 10. CI/CD, безопасность образов и продвижение релизов
 
 ## Pipeline: build → test → image → scan → sign → push → deploy; карантин/стадии promotion
 
-Зрелый конвейер не заканчивается сборкой образа. После unit-/интеграционных тестов создаём OCI-образ, сканируем его на уязвимости, подписываем (supply chain), пушим в реестр и только потом — деплой. Хорошая практика — «карантин» (staging): образ в реестре помечается как «не прод» (по тегу/репозиторию), проходит автоматические тесты стенда, и лишь затем продвигается (promotion) в «prod» репозиторий или получает иммутабельный prod-тег.
+Типичный pipeline для Spring Boot-сервиса в Docker/Kubernetes — это не одна кнопка «задеплой», а чёткая последовательность этапов: сборка кода, юнит-тесты, сборка образа, сканирование и подпись, публикация в registry, деплой на промежуточное окружение, автоматические проверки и только потом промоут в прод. Важно относиться к этому как к производственной линии: на каждом этапе мы либо улучшаем уверенность в релизе, либо отбраковываем дефект, не давая ему уйти дальше.
 
-Подписи (Cosign/Sigstore) и политика допуска в кластере (Kyverno/OPA) гарантируют, что в прод попадут только проверенные образы. Это снижает риск подмены артефактов и ошибки человека при ручном пуше. Важная деталь — управление ключами: используйте keyless или защищённые key-vault’ы, не храните ключи в CI как «секреты окружения» без аппаратной защиты.
+На первом шаге pipeline забирает код из Git по конкретному commit SHA, запускает Gradle (`clean test`) и юнит-/компонентные тесты. Этот шаг должен быть быстрым и максимально изолированным: никакого Docker, никаких внешних зависимостей — только код и тесты. Если мы на этом этапе падаем, это дешёвая ошибка, которую разработчик может исправить до того, как будет потрачен ресурс на сборку образов и прогон интеграционных тестов.
 
-Deployment должен быть идемпотентным шагом: вы описываете целевое состояние, а не выполняете «скрипт изменений». GitOps усиливает это правило: изменения в Git приводят к изменению кластера, а не наоборот. Это прозрачно и воспроизводимо.
+Дальше идёт этап сборки образа. Для Spring Boot у вас три типичных варианта: классический Dockerfile, Spring Boot Buildpacks (`bootBuildImage`) и Jib. Конкретный выбор зависит от инфраструктуры: если runner имеет доступ к Docker daemon — можно использовать Dockerfile или Buildpacks; если доступа нет — Jib собирает образ и пушит его прямо из Gradle. Главное — добиться детерминированности: один и тот же commit всегда даёт один и тот же образ, а слои кешируются так, чтобы пересборка занимала минуты, а не десятки минут.
 
-«Promotion» удобно делать изменением только тега изображения в values Helm — без перекомпиляции чарта. Логику «кто и когда может продвигать» фиксируйте политикой: автомат на stage, человек (или автомат с gate тестами) — на prod.
+После сборки обязательно идёт сканирование образа на уязвимости: Trivy, Grype, Snyk, что угодно — но этот шаг должен быть в pipeline, а не «по настроению». Здесь важно договориться о политике: какие severity считаем блокирующими, как часто обновляем базу уязвимостей, где храним отчёты. На этом же этапе хорошо запускать проверку лицензионных ограничений по зависимостям, чтобы на прод не просочились «случайные GPL».
 
-Не забывайте про артефакты тестов/метрик конвейера: отчёты о качестве (coverage, mutation), результаты нагрузочного smoke и SLO-проверки — это не «доп. опция», а часть «зелёного света» для релиза.
+Подпись образа — следующая линия обороны. Инструменты типа Cosign позволяют подписывать образы ключом организации и проверять подпись в кластерных admission-контроллерах. Это защита от подмены образа по пути в registry и элемент supply-chain-безопасности: мы чётко знаем, что образ действительно собран нашим pipeline, а не «кто-то что-то запушил руками».
 
-**Код (GitHub Actions, упрощённый пример)**
+После этого образ пушится в registry под неизменяемым тегом, обычно совпадающим с commit SHA и, возможно, с версией (`1.4.0+abc1234`). Важно не использовать «плавающие» теги вида `latest` для продовых деплоев: ими удобно пользоваться локально, но в проде это гарантированные сюрпризы при откатах и расследованиях инцидентов — непонятно, какой именно образ стоял в кластере в момент проблемы.
+
+Шаг деплоя в окружение — это применение манифестов или Helm-чарта. Часто pipeline сначала деплоит в «кандидатное» окружение (dev, qa, staging), запускает там smoke- и интеграционные тесты, и только при успехе разрешает промоут образа в прод. Хорошая практика — не пересобирать образ для каждого окружения, а переиспользовать один и тот же, меняя только конфигурацию через values/config.
+
+Карантинные окружения и preview-deploy’и — полезный уровень сервиса для разработчиков. Под каждую feature-ветку можно поднимать временный namespace с копией сервиса и зависимостей (или их stub’ами), чтобы бизнес мог покликать UI и API до merge. Для Spring Boot это просто ещё один деплой того же образа, но с другим набором конфигов и маршрутизацией в ingress’е.
+
+Стадии promotion позволяют продвигать один и тот же образ по цепочке окружений: dev → test → stage → prod. Принцип здесь очень простой: «сделали один артефакт — прогоняем его через цепочку». Как только вы начинаете пересобирать образ по пути, вы теряете гарантию, что на прод уедет именно то, что прошло тесты. Промоут реализуется через retag в registry и переуказание тегов в values Helm-чарта.
+
+Pipeline должен включать автоматические ворота (gates): если smoke-тесты после деплоя в staging провалились, в прод не едем; если метрики SLO за указанное окно после деплоя в prod выходят за пределы — pipeline либо автоматически откатывает, либо помечает релиз как «красный» и ожидает ручного вмешательства. Это не решается куском кода в приложении, но приложение должно давать метрики и health-эндпоинты, достаточные для таких словарей.
+
+Чтобы всё это работало, нужен код, который pipeline может прозрачно билдить и тестировать. Ниже тривиальный пример REST-контроллера, который удобно дергать в smoke-тестах после деплоя — он возвращает версию приложения и окружение; pipeline после деплоя может вызвать `/actuator/health` и `/api/version`, чтобы убедиться, что новая версия действительно стартовала.
+
+```java
+package com.example.cicd;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class VersionController {
+
+    @Value("${app.version:unknown}")
+    private String version;
+
+    @Value("${spring.profiles.active:default}")
+    private String profile;
+
+    @GetMapping("/api/version")
+    public String version() {
+        return "version=" + version + ", profile=" + profile;
+    }
+}
+```
+
+```kotlin
+package com.example.cicd
+
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class VersionController(
+    @Value("\${app.version:unknown}")
+    private val version: String,
+    @Value("\${spring.profiles.active:default}")
+    private val profile: String
+) {
+
+    @GetMapping("/api/version")
+    fun version(): String = "version=$version, profile=$profile"
+}
+```
+
+Gradle-скрипт для такого сервиса обычный: web + actuator, чтобы было чего проверять в health. В pipeline сначала идёт `gradlew test`, затем `gradlew bootJar` или `bootBuildImage`.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+}
+```
+
+В качестве иллюстрации pipeline можно показать упрощённый GitHub Actions workflow: он собирает и тестирует проект, билдит Docker-образ и пушит его в registry. На практике сюда добавятся шаги для сканирования и подписи, но общая структура будет похожей.
 
 ```yaml
-name: ci
-on: [ push ]
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+
 jobs:
-  build:
+  build-test-image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: { java-version: '17', distribution: 'temurin' }
-      - name: Test
-        run: ./gradlew clean test
-      - name: Build image
-        run: docker build -t registry.local/demo:${{ github.sha }} .
-      - name: Scan
-        run: trivy image --exit-code 1 --severity CRITICAL,HIGH registry.local/demo:${{ github.sha }}
-      - name: Sign
-        run: cosign sign --key ${{ secrets.COSIGN_KEY }} registry.local/demo:${{ github.sha }}
-      - name: Push
-        run: docker push registry.local/demo:${{ github.sha }}
-```
 
-**Код (Java/Kotlin): приложению безразлично, где оно собрано; специальных классов не требуется.**
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build and test
+        run: ./gradlew clean test bootJar
+
+      - name: Build Docker image
+        run: docker build -t registry.example.com/orders-service:${{ github.sha }} .
+
+      - name: Push Docker image
+        run: docker push registry.example.com/orders-service:${{ github.sha }}
+```
 
 ---
 
 ## SBOM/подписи/сканирование уязвимостей; политика базовых образов и патч-окно
 
-SBOM (Software Bill of Materials) — перечень зависимостей вашего артефакта. Его генерируют плагины (CycloneDX/Syft) и публикуют вместе с образом. Это упрощает аудит CVE и автоматическую корреляцию: когда выходит новая уязвимость, платформа мгновенно понимает, какие сервисы затронуты. В supply chain это «паспорт» вашего ПО.
+SBOM (Software Bill Of Materials) — это список «ингредиентов» вашего приложения: какие библиотеки, их версии, откуда взяты. Для Spring Boot это особенно важно: зависимостей много, цепочки транзитивные, и без SBOM’а вы не сможете быстро ответить на вопрос «а мы уязвимы к такой-то CVE?». SBOM позволяет автоматически сопоставлять публикуемые уязвимости с конкретными релизами и принимать решения о патчах не в ручном режиме.
 
-Сканирование образа (Trivy/Grype) — не только «галочка». Введите политики «запретить CRITICAL/HIGH» и патч-окна: например, критичные — незамедлительно, high — до следующего релиза, medium — в плановую итерацию. Актуальность базовых образов — отдельная политика: еженедельный/ежемесячный пересбор образов поверх свежих баз, даже без изменений кода.
+Подписи образов и SBOM’ов — логическое продолжение supply-chain-безопасности. Если вы генерите SBOM в формате CycloneDX или SPDX и публикуете его рядом с образом (например, как отдельный артефакт в registry), этот файл тоже должен быть подписан. Тогда сканер или policy-engine могут быть уверены, что SBOM соответствует конкретному образу, а не подменён по пути. Это особенно актуально для регламентированных индустрий, где требования к прозрачности цепочки поставки формализованы.
 
-Подписи образов (Cosign) возвращают доверие: без подписи — доступ в кластер закрыт. Ключевой момент — валидация подписи Admission-контроллером и хранение публичных ключей в конфигурации кластера. Подписывайте и SBOM, и подпись привязывайте к digest образа, а не к тегу.
+Сканирование уязвимостей должно происходить как минимум на двух уровнях: по зависимостям (JAR’ы) и по образу (OS-пакеты, системные библиотеки). Инструменты вроде Trivy/Grype умеют комбинировать оба источника: читают SBOM и слои Docker-образа. Важно выстроить политику: не каждый Medium — блокер, но Critical и часть High должны стопорить релиз, пока не будет патча или хотя бы временного workaround’а.
 
-Документируйте исключения. Иногда нужно временно пропустить HIGH, чтобы закрыть критический бизнес-инцидент. Это должно быть явным, с тикетом/сроком. Так вы избежите «вечных исключений».
+Политика базовых образов — ещё один слой. Нельзя просто брать «что-нибудь из Docker Hub» и годами не обновлять. Обычно в организации есть «золотой» список базовых образов: например, только `eclipse-temurin:17-jre` или кастомный hardening-образ, который регулярно обновляется security-командой. Приложения обязаны наследоваться только от этих образов, а не тащить свои случайные Alpine/Ubuntu. Это позволяет централизованно закрывать уязвимости на уровне ОС.
 
-Сканируйте не только образы, но и Helm-чарты/манифесты (policies, misconfigurations) — тот же Trivy умеет проверять IaC на опасные default’ы.
+Патч-окно — это договорённость, за сколько времени вы обязуетесь поставить security-патч после того, как он появился. Например, критические уязвимости — 48 часов, high — неделя. Для Spring Boot это означает: либо обновить версию Boot и зависимостей, либо хотя бы обновить базовый образ и пересобрать приложение. SBOM и сканеры помогают увидеть, какие именно сервисы и какие релизы попали под новую CVE, чтобы не гонять слепые «массовые» обновления.
 
-**Код (Gradle: CycloneDX SBOM)**
+Практически SBOM для Gradle-проекта можно генерировать плагином CycloneDX или аналогичными инструментами. Но даже «бедный» вариант — `spring-boot:build-info`, который пишет версии зависимостей и приложения, — уже помогает в отладке. Build info можно повесить на `/actuator/info`, и тогда по одному запросу видно, на каких версиях библиотек живёт продовый Pod.
+
+Внутри Spring Boot приложения можно использовать build-метаданные, чтобы показывать версию и commit id в логах и метриках. Это упрощает сопоставление SBOM/скан-отчётов и конкретных инцидентов: по logline легко понять, какой именно build там участвовал. Да и при анализе уязвимости можно быстро найти, какие Pod’ы крутятся на заведомо уязвимом build’е.
+
+Ниже простой пример: конфигурация Gradle, которая включает генерацию build-метаданных, и контроллер, отдающий эти данные наружу. Это не полноценный SBOM, но хороший первый шаг. В реальном проекте поверх этого добавляется отдельная задача генерации CycloneDX-файла и загрузка его в артефакт-репозиторий.
 
 ```groovy
-plugins { id 'org.cyclonedx.bom' version '1.9.0' }
-cyclonedxBom { includeBomSerialNumber = true }
+// build.gradle (Groovy) — включаем build-info
+springBoot {
+    buildInfo()
+}
 ```
 
 ```kotlin
-plugins { id("org.cyclonedx.bom") version "1.9.0" }
-cyclonedxBom { includeBomSerialNumber.set(true) }
+// build.gradle.kts (Kotlin)
+springBoot {
+    buildInfo()
+}
 ```
 
-**Код (Java): печать версии и sha из BuildProperties — для трассируемости)**
+В коде Spring Boot можно инжектить `BuildProperties` и отдавать его через REST-эндпоинт. Этот же объект удобно логировать при старте, чтобы в логах было видно версию и время сборки. Ниже Java-вариант такого контроллера.
 
 ```java
 package com.example.sbom;
 
 import org.springframework.boot.info.BuildProperties;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-class VersionController {
-  private final BuildProperties build;
-  VersionController(BuildProperties build) { this.build = build; }
-  @GetMapping("/version")
-  public String v() { return build.getVersion() + " " + build.get("git.commit.id.abbrev"); }
+public class BuildInfoController {
+
+    private final BuildProperties buildProperties;
+
+    public BuildInfoController(BuildProperties buildProperties) {
+        this.buildProperties = buildProperties;
+    }
+
+    @GetMapping("/api/build-info")
+    public BuildProperties buildInfo() {
+        return buildProperties;
+    }
 }
 ```
-
-**Код (Kotlin): то же)**
 
 ```kotlin
 package com.example.sbom
@@ -3272,108 +5218,350 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
-class VersionController(private val build: BuildProperties) {
-    @GetMapping("/version") fun v() = "${build.version} ${build["git.commit.id.abbrev"]}"
+class BuildInfoController(
+    private val buildProperties: BuildProperties
+) {
+
+    @GetMapping("/api/build-info")
+    fun buildInfo(): BuildProperties = buildProperties
 }
+```
+
+На уровне Dockerfile политике базовых образов соответствует простое правило: FROM только из утверждённого списка. Если организация определила, что все Java-сервисы должны наследоваться от `eclipse-temurin:17-jre`, а для native-сервисов — от другого базового образа, — любые отклонения должны ловиться линтерами в CI и блокироваться.
+
+```dockerfile
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+COPY build/libs/app.jar app.jar
+
+ENTRYPOINT ["java","-jar","app.jar"]
+```
+
+Наконец, пример простого job-шага в GitHub Actions, который запускает сканер Trivy для только что собранного образа. В реальном pipeline сюда ещё добавят upload отчёта и политику fail on severity, но даже такой шаг уже интегрирует сканирование в CI.
+
+```yaml
+- name: Scan image with Trivy
+  uses: aquasecurity/trivy-action@v0.20.0
+  with:
+    image-ref: registry.example.com/orders-service:${{ github.sha }}
+    format: 'table'
+    vuln-type: 'os,library'
+    severity: 'CRITICAL,HIGH'
 ```
 
 ---
 
 ## Контроль версий и откаты: иммутабельные теги, хранение прошлых чартов/манифестов, быстрый rollback
 
-Иммутабельные теги и хранение артефактов — основа быстрых откатов. Никогда не перезаписывайте теги вида `1.2.3`. Держите рядом «человеческие» метки (`1.2`, `1`) и «технические» (`git-sha`). В реестре храните достаточно историю, чтобы вернуться назад без пересборки.
+Контроль версий в мире контейнеров — это не только про номера `1.2.3`, а про связку: git-commit → образ → Helm-чарт → манифесты в кластере. В идеале вы всегда должны отвечать на вопрос «какой commit сейчас крутится в этом Pod’е и с какими настройками» за считанные минуты. Это означает, что теги образов иммутабельны, чарт и values версионируются, а состояние кластера может быть восстановлено из Git.
 
-Helm сам по себе хранит ревизии релиза в кластере; `helm rollback` — мгновенный возврат к прошлому состоянию. Но хранить чарт и values отдельно всё равно полезно: репозиторий артефактов (OCI/ChartMuseum) даст возможность пересобрать/перекатить тот же релиз в новый кластер.
+Иммутабельные теги — базовый принцип: если вы один раз запушили образ `orders-service:1.4.0+abc1234`, больше никогда не пересобираете и не переписываете его. Если надо пересобрать — создаёте новый тег. Это позволяет ссылаться на релиз как на конкретный артефакт, использовать его в Helm-values и rollback’ах. `latest` и «перетираемые» `prod`-теги годятся только для dev-теста, но не для воспроизводимого продакшна.
 
-При откатах учитывайте совместимость схемы БД (см. expand/contract). Если приложение уже начало писать в новую колонку, а вы вернулись назад — старый код может падать. Поэтому миграции должны быть двунаправленные по возможности, а откаты — проверены на стенде.
+Хранение прошлых Helm-чартов и values — ещё один столп. Чарт описывает структуру ресурсов (Deployment, Service, HPA, PDB), а values — конкретные параметры для окружений (реплик, лимиты, URL’ы). Если вы сохраняете чарт и values как артефакты релиза (в Helm-репо и Git), rollback превращается в `helm rollback` или повторный `helm upgrade` с предыдущей комбинацией chart+values. Если же values меняются «руками через kubectl edit», вы теряете возможность нормально откатываться.
 
-Сценарий «быстрый откат» должен быть частью runbook. Это не «на глаз» в консоли SRE, а записанная команда, понятные критерии, когда и кто её запускает, и как возвращаться обратно. «Промежуточный» откат (только Service указывает на старую ReplicaSet) бывает быстрее, чем полный rollback Helm — в зависимости от инструмента.
+Быстрый rollback — это заранее отработанный сценарий, а не «ну давайте попробуем применить старый yaml из какого-то старого коммита». Чаще всего это либо `helm rollback` до предыдущего revision’а, либо повторный деплой предыдущего chart+image. Для Spring Boot-приложения rollback должен быть симметричен rollout’у, включая миграции схемы, feature-flags и конфигурацию; поэтому всё это тоже должно быть версионировано и храниться вместе с релизом.
 
-Наконец, следите за конфигурациями внешних прокси/ограничителей — откат приложения не всегда откатывает периметр. Храните и его конфиги версионированными, с тем же подходом «иммутабельности».
+Схемы БД — отдельный кусок головной боли. Правильный подход: миграции делаются вперёд-совместимыми (additive), пока не уверены, что старая версия приложения больше не используется. Тогда rollback до предыдущей версии не ломает схему. Когда появляется необратимая миграция (drop column, rename), rollback уже становится непростой задачей; в таких случаях нужно или иметь down-скрипты, или действительно пририсовывать «нет лёгкого rollback’а» в risk-профиль релиза.
 
-**Код (Helm, values с иммутабельными тегами)**
+Чтобы связать код приложения с контекстом Kubernetes, полезно прокидывать git-commit и версию в env и в логи. Тогда в логах Pod’а будет строка «Starting orders-service version 1.4.0 commit abc1234», а в /actuator/info — те же данные. Это помогает correlating при инцидентах: увидели ошибку — сразу понимаем, какой релиз и какой commit нужно разбирать.
+
+Ниже пример, как через Gradle добавить git-commit в build-info: простой скрипт, который читает `git rev-parse --short HEAD` и кладёт его в свойства. В реальном проекте это можно оформить аккуратнее, но сам принцип — «commit id попадает в build-info» — остаётся.
+
+```groovy
+// build.gradle (Groovy)
+import java.time.Instant
+
+springBoot {
+    buildInfo {
+        properties {
+            time = Instant.now()
+            additional = [
+                'git.commit' : System.getenv('GIT_COMMIT') ?: 'unknown'
+            ]
+        }
+    }
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+import java.time.Instant
+
+springBoot {
+    buildInfo {
+        properties {
+            time = Instant.now()
+            additional.set(
+                mapOf(
+                    "git.commit" to (System.getenv("GIT_COMMIT") ?: "unknown")
+                )
+            )
+        }
+    }
+}
+```
+
+На стороне Spring Boot в Java можно сделать простой контроллер, который отдаёт и версию, и commit id. Это тот же паттерн, что и с SBOM, но здесь мы концентрируемся на удобстве rollback/отладки.
+
+```java
+package com.example.versioning;
+
+import org.springframework.boot.info.BuildProperties;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+@RestController
+public class ReleaseInfoController {
+
+    private final BuildProperties buildProperties;
+
+    public ReleaseInfoController(BuildProperties buildProperties) {
+        this.buildProperties = buildProperties;
+    }
+
+    @GetMapping("/api/release")
+    public Map<String, Object> release() {
+        return Map.of(
+                "name", buildProperties.getName(),
+                "version", buildProperties.getVersion(),
+                "time", buildProperties.getTime(),
+                "gitCommit", buildProperties.get("git.commit")
+        );
+    }
+}
+```
+
+```kotlin
+package com.example.versioning
+
+import org.springframework.boot.info.BuildProperties
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class ReleaseInfoController(
+    private val buildProperties: BuildProperties
+) {
+
+    @GetMapping("/api/release")
+    fun release(): Map<String, Any?> =
+        mapOf(
+            "name" to buildProperties.name,
+            "version" to buildProperties.version,
+            "time" to buildProperties.time,
+            "gitCommit" to buildProperties.get("git.commit")
+        )
+}
+```
+
+Helm автоматически хранит историю релизов в кластере; rollback до предыдущего revision’а — одна команда. Важно, чтобы chart и values были в Git, а не только в кластере, иначе вы не сможете восстановить исходники того, что было задеплоено. Минимальный values-файл может выглядеть так: в нём явно привязан тег образа, а при каждом релизе pipeline подставляет новый.
 
 ```yaml
 image:
-  repository: registry.example.com/demo
-  tag: "1.4.2-gitabcdef0"
+  repository: registry.example.com/orders-service
+  tag: "1.4.0+abc1234"
+
+replicaCount: 3
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
 ```
 
-**Код (Java/Kotlin): уже показанные версии/health пригодятся для проверки после rollback; доп.кода не требуется.**
+На уровне Docker-registry стоит включить защиту от перезаписи тегов или хотя бы ввести организационное правило «никогда не пушим в тот же тег». Многие registry позволяют запрещать `docker push` поверх существующего тега, и это сильно уменьшает случайные ошибки. Вместе с этим полезно хранить как минимум последние N версий chart+values, чтобы rollback был возможен даже через несколько недель.
+
+В результате контроль версий и откаты перестают быть «магией SRE», а становятся частью обычного процесса разработки: commit → образ → chart+values → релиз в кластере → запись о релизе и его параметрах. Откат — просто реплей одного из предыдущих шагов с соответствующими артефактами.
 
 ---
 
 ## Release-наблюдаемость: pre/post-deploy проверки SLO, dark-launch, feature-flags, circuit-breakers на периметре
 
-В зрелом CI/CD релиз — это не только «положили yaml». Обязательны pre-checks (staging/tests) и post-deploy проверки: метрики ошибок, латентность, saturation. SLO-гейты могут блокировать продвижение: если 5xx > X% в течение N минут после релиза — автоматический rollback. Это дисциплинирует код и снижает MTTR.
+Release-наблюдаемость — это про то, чтобы видеть не только «деплой прошёл», но и «после деплоя сервис всё ещё укладывается в SLO и ведёт себя ожидаемо». Здесь сходится всё, что вы ранее настроили: метрики, трейсинг, логи, фича-флаги и circuit breaker’ы. Без этих инструментов даже аккуратный pipeline превращается в лотерею: что-то задеплоили, вроде не падает, а дальше тишина, пока кто-то не пожалуется.
 
-Dark-launch — включение новой логики без маршрутизации внешнего трафика: вы можете активировать код на небольшой доле внутренних запросов, записывать метрики/логи и сравнивать с «старой» веткой. Feature-flags дают гибкость: конфигурируемое включение/отключение без пересборки. Храните флаги централизованно (например, Unleash/FF4J), с аудитом и TTL.
+Pre-deploy проверки SLO обычно делаются на отдельном окружении — staging, preprod. Сюда pipeline деплоит ту же версию, что едет в прод, прогоняет нагрузочные/смоук-тесты и смотрит на метрики: latency, error rate, saturations. Важно не только «всё зелёное», но и «ничего не ухудшилось относительно предыдущей версии». Для Spring Boot сервисов это чаще всего метрики HTTP, пулов потоков/БД, GC и бизнес-метрик.
 
-Circuit-breakers на периметре (API-шлюз/Ingress) и на уровне клиента (Resilience4j) защищают от каскадных отказов. При деградации зависимостей вы не «заливаете» их ретраями и даёте системе время восстановиться. Включайте бэкофы c джиттером и лимиты попыток.
+Post-deploy проверки SLO — это уже про прод. После выкатки новая версия либо получает небольшую долю трафика (canary), либо сразу весь трафик. В обоих случаях pipeline или отдельный мониторинг-слой должен в течение заданного окна времени следить за SLO: если p95 latency вырос, error rate поднялся или появились новые типы ошибок, релиз считается «под вопросом», и либо запускается автоматический rollback, либо генерируется page для on-call.
 
-После релиза сделайте целенаправленный smoke на ключевые пользовательские сценарии. Это не нагрузочный тест, а «дыхание системы». Часто он находит элементарные ошибки конфигурации раньше пользователей.
+Dark-launch — подход, когда новая функциональность выкатывается в прод, но либо не видна пользователю, либо получает только часть запросов. Для Spring Boot это чаще всего реализуется через feature-flags и условную логику в коде. Например, endpoint уже умеет обрабатывать новый тип запросов, но включается только для % пользователей или только при определённом заголовке. Это позволяет измерять влияние фичи на производительность и корректность до того, как её увидят все.
 
-Все решения по откату/включению флагов должны оставлять «след» в логах/метриках: кто включил/выключил, в какое время, какой сегмент трафика попал под эксперимент. Это превращает наблюдаемость в реальный инструмент контроля релизов.
+Feature-flags удобнее всего реализовывать как конфигурацию, а не `if (Boolean.getBoolean("..."))` по всему коду. Можно вынести фичи в `@ConfigurationProperties`, обновлять значения через ConfigMap/Secret и централизованно логировать включение/отключение. Важно, чтобы feature-flag’и были управляемые: умели выключать фичу при проблемах без отката всего релиза, и чтобы код корректно работал и в «новом» и в «старом» сценариях.
 
-**Код (Java: Resilience4j, простой CB + retry)**
+Circuit breaker’ы на периметре (API-gateway, ingress контроллер, mesh) — последняя линия защиты от «плохого релиза», который начинает спамить зависимость или плохо реагировать на её деградацию. Даже если в коде Spring Boot вы всё сделали правильно, circuit breaker на уровне Envoy/NGINX/Resilience4j в gateway может предотвратить каскадные отказы. Важно, чтобы настройки breaker’ов были согласованы с таймаутами и retry-политиками в приложении.
+
+Ниже пример простого feature-flag’а в Spring Boot: конфигурационный класс с одним флагом и контроллер, меняющий поведение в зависимости от его значения. В реальной жизни у вас будет сервис флагов и UI, но для иллюстрации достаточно такой конструкции.
 
 ```java
-package com.example.rel;
+package com.example.flags;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+@Component
+@ConfigurationProperties(prefix = "features")
+public class FeatureFlags {
+
+    private boolean newCheckoutEnabled;
+
+    public boolean isNewCheckoutEnabled() {
+        return newCheckoutEnabled;
+    }
+
+    public void setNewCheckoutEnabled(boolean newCheckoutEnabled) {
+        this.newCheckoutEnabled = newCheckoutEnabled;
+    }
+}
+```
+
+```java
+package com.example.flags;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class CheckoutController {
+
+    private final FeatureFlags featureFlags;
+
+    public CheckoutController(FeatureFlags featureFlags) {
+        this.featureFlags = featureFlags;
+    }
+
+    @GetMapping("/api/checkout")
+    public String checkout() {
+        if (featureFlags.isNewCheckoutEnabled()) {
+            return "new checkout flow";
+        } else {
+            return "legacy checkout flow";
+        }
+    }
+}
+```
+
+```kotlin
+package com.example.flags
+
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.stereotype.Component
+
+@Component
+@ConfigurationProperties(prefix = "features")
+class FeatureFlags {
+    var newCheckoutEnabled: Boolean = false
+}
+```
+
+```kotlin
+package com.example.flags
+
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+class CheckoutController(
+    private val featureFlags: FeatureFlags
+) {
+
+    @GetMapping("/api/checkout")
+    fun checkout(): String =
+        if (featureFlags.newCheckoutEnabled) {
+            "new checkout flow"
+        } else {
+            "legacy checkout flow"
+        }
+}
+```
+
+В `application.yml` можно завести значения по умолчанию и переопределять их по окружениям. Для dark-launch, например, в прод ставим `false`, а для canary-подов через отдельный values-файл Helm — `true`. Это даёт возможность включать фичу в маленьком сегменте без изменения образа.
+
+```yaml
+features:
+  new-checkout-enabled: false
+```
+
+Gradle-зависимости — те же web+actuator. Для наблюдаемости за релизом в actuator нужны HTTP-метрики, health и, возможно, custom бизнес-метрики: дальше вы уже настраиваете Grafana/Prometheus/OTel. Ничего особенного в сборке под release-наблюдаемость добавлять не нужно — важно правильно использовать то, что уже есть.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+}
+```
+
+Circuit breaker на уровне кода (Resilience4j) может быть ещё одной страховкой. Например, для вызова внешнего платёжного сервиса мы ставим аннотацию `@CircuitBreaker` и настраиваем политику. Это не заменяет breaker на периметре, но даёт более точный контроль в приложении. Ниже — простой пример в Java и Kotlin.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'io.github.resilience4j:resilience4j-spring-boot3'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("io.github.resilience4j:resilience4j-spring-boot3")
+}
+```
+
+```java
+package com.example.cb;
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
-import io.github.resilience4j.retry.annotation.Retry;
 import org.springframework.stereotype.Service;
 
 @Service
-public class DownstreamService {
-  @CircuitBreaker(name = "ds", fallbackMethod = "fallback")
-  @Retry(name = "ds")
-  public String call() {
-    if (Math.random() < 0.7) throw new RuntimeException("boom");
-    return "ok";
-  }
-  public String fallback(Throwable t) { return "fallback"; }
+public class PaymentClient {
+
+    @CircuitBreaker(name = "payment", fallbackMethod = "fallback")
+    public String charge() {
+        // вызов внешнего сервиса
+        throw new IllegalStateException("temporary failure");
+    }
+
+    public String fallback(Throwable ex) {
+        return "payment temporarily unavailable";
+    }
 }
 ```
 
-**Код (Kotlin): то же)**
-
 ```kotlin
-package com.example.rel
+package com.example.cb
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker
-import io.github.resilience4j.retry.annotation.Retry
 import org.springframework.stereotype.Service
 
 @Service
-class DownstreamService {
-    @CircuitBreaker(name = "ds", fallbackMethod = "fallback")
-    @Retry(name = "ds")
-    fun call(): String {
-        if (Math.random() < 0.7) throw RuntimeException("boom")
-        return "ok"
+class PaymentClient {
+
+    @CircuitBreaker(name = "payment", fallbackMethod = "fallback")
+    fun charge(): String {
+        // вызов внешнего сервиса
+        throw IllegalStateException("temporary failure")
     }
-    fun fallback(t: Throwable) = "fallback"
+
+    fun fallback(ex: Throwable): String =
+        "payment temporarily unavailable"
 }
 ```
 
-`application.yml` (Resilience4j конфиг + actuator для наблюдаемости):
+В release-наблюдаемость также входят фича-флаги и dark-launch-метрики: сколько запросов прошло по новой ветке кода, какова их латентность и error-rate. Если новая ветка начинает вести себя хуже, её можно отключить флагом, не трогая остальной релиз. А circuit breaker’ы на периметре и в коде помогут не позволить одному «плохому» релизу сломать всю систему.
 
-```yaml
-resilience4j:
-  circuitbreaker:
-    instances:
-      ds:
-        slidingWindowSize: 20
-        minimumNumberOfCalls: 10
-        failureRateThreshold: 50
-        waitDurationInOpenState: 10s
-  retry:
-    instances:
-      ds:
-        max-attempts: 3
-        wait-duration: 200ms
+В итоге release-наблюдаемость — это не отдельный инструмент, а композиция: CI/CD pipeline, метрики/трейсинг/логи, feature-flags и политики отката. Spring Boot здесь даёт удобные крючки (Actuator, Micrometer, конфигурацию), а инфраструктура вокруг — возможность использовать эти сигналы для автоматических решений.
 
-management.endpoints.web.exposure.include: health,info,prometheus,metrics
-```
 

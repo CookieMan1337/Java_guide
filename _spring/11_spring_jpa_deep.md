@@ -4,65 +4,82 @@ title: "Spring Data JPA: Углубленно в JDBC"
 permalink: /spring/jpa_deep
 ---
 
+<!-- TOC -->
+* [1. Производительность загрузки и N+1](#1-производительность-загрузки-и-n1)
+  * [Причины N+1, диагностика по SQL-логам и статистике Hibernate](#причины-n1-диагностика-по-sql-логам-и-статистике-hibernate)
+  * [Инструменты: JOIN FETCH, @EntityGraph, @BatchSize, hibernate.default_batch_fetch_size, SUBSELECT](#инструменты-join-fetch-entitygraph-batchsize-hibernatedefault_batch_fetch_size-subselect)
+  * [Стратегии: «тонкие» DTO-проекции для списков, точечные графы для карточек, разделение чтения/деталей](#стратегии-тонкие-dto-проекции-для-списков-точечные-графы-для-карточек-разделение-чтениядеталей)
+* [2. Проекции и сложные запросы](#2-проекции-и-сложные-запросы)
+  * [Проекции: интерфейсные/DTO-конструкторы в Spring Data, закрытые vs открытые (SpEL) и их стоимость](#проекции-интерфейсныеdto-конструкторы-в-spring-data-закрытые-vs-открытые-spel-и-их-стоимость)
+  * [Нативные SQL: маппинг на DTO/интерфейсы, SqlResultSetMapping (где оправдано)](#нативные-sql-маппинг-на-dtoинтерфейсы-sqlresultsetmapping-где-оправдано)
+  * [Частичные обновления: @Modifying JPQL/SQL, возвращаемые счётчики, осторожно с кешами и L1-контекстом](#частичные-обновления-modifying-jpqlsql-возвращаемые-счётчики-осторожно-с-кешами-и-l1-контекстом)
+* [3. Вставки/обновления батчами и генерация идентификаторов](#3-вставкиобновления-батчами-и-генерация-идентификаторов)
+  * [Влияние стратегий @GeneratedValue на батчи (SEQUENCE vs IDENTITY; оптимизаторы pooled/pooled-lo)](#влияние-стратегий-generatedvalue-на-батчи-sequence-vs-identity-оптимизаторы-pooledpooled-lo)
+  * [Тюнинг батчей: hibernate.jdbc.batch_size, order_inserts/updates, драйверные оптимизации (для PG — reWriteBatchedInserts)](#тюнинг-батчей-hibernatejdbcbatch_size-order_insertsupdates-драйверные-оптимизации-для-pg--rewritebatchedinserts)
+  * [Массовые операции: bulk update/delete через JPQL — обход 1-го уровня, необходимость ручной синхронизации](#массовые-операции-bulk-updatedelete-через-jpql--обход-1-го-уровня-необходимость-ручной-синхронизации)
+* [4. Транзакции, изоляция и блокировки](#4-транзакции-изоляция-и-блокировки)
+  * [Границы и изоляция: поведение `readOnly=true` как хинт, влияние `FlushMode` (COMMIT/MANUAL)](#границы-и-изоляция-поведение-readonlytrue-как-хинт-влияние-flushmode-commitmanual)
+  * [Оптимистическая блокировка `@Version`: обработка конфликтов, повтор операций](#оптимистическая-блокировка-version-обработка-конфликтов-повтор-операций)
+  * [Пессимистические блокировки: `LockModeType.PESSIMISTIC_READ/WRITE`, таймауты/эскалации, риск дедлоков](#пессимистические-блокировки-lockmodetypepessimistic_readwrite-таймаутыэскалации-риск-дедлоков)
+  * [Консистентность чтения: repeatable-read vs snapshot семантика СУБД, где важны «снимки»](#консистентность-чтения-repeatable-read-vs-snapshot-семантика-субд-где-важны-снимки)
+* [5. Управление Persistence Context](#5-управление-persistence-context)
+  * [Когда уместно `clear()/detach()`, «длинные» сессии и утечки памяти](#когда-уместно-cleardetach-длинные-сессии-и-утечки-памяти)
+  * [Read-only оптимизации: `Query.setReadOnly(true)`, «immutable»-сущности, `StatelessSession` (узкие случаи)](#read-only-оптимизации-querysetreadonlytrue-immutable-сущности-statelesssession-узкие-случаи)
+  * [Кэш 1-го уровня как защита от двойных SELECT, но источник «устаревших» данных — критерии и баланс](#кэш-1-го-уровня-как-защита-от-двойных-select-но-источник-устаревших-данных--критерии-и-баланс)
+* [6. Сложные маппинги и модель](#6-сложные-маппинги-и-модель)
+  * [Наследование: SINGLE_TABLE vs JOINED vs TABLE_PER_CLASS — компромиссы производительности/нормализации](#наследование-single_table-vs-joined-vs-table_per_class--компромиссы-производительностинормализации)
+  * [Связи: избегаем «грузных» `@ManyToMany` — предпочтительна явная сущность связи (join-entity)](#связи-избегаем-грузных-manytomany--предпочтительна-явная-сущность-связи-join-entity)
+  * [Встроенные значения: `@Embeddable` для value-объектов; `@MappedSuperclass` для общих полей, не для связей](#встроенные-значения-embeddable-для-value-объектов-mappedsuperclass-для-общих-полей-не-для-связей)
+  * [События/слушатели: `@PrePersist/@PreUpdate` и entity-listener’ы — минимум логики, без I/O](#событияслушатели-prepersistpreupdate-и-entity-listenerы--минимум-логики-без-io)
+* [7. Кеширование 2-го уровня и кеш запросов](#7-кеширование-2-го-уровня-и-кеш-запросов)
+  * [Когда имеет смысл L2: справочники/редко меняемые сущности; регионы, режимы (read-only/non-strict/transactional)](#когда-имеет-смысл-l2-справочникиредко-меняемые-сущности-регионы-режимы-read-onlynon-stricttransactional)
+  * [Кеш запросов: риск «несогласованности», ключи инвалидации, осторожно с частыми изменениями](#кеш-запросов-риск-несогласованности-ключи-инвалидации-осторожно-с-частыми-изменениями)
+  * [Распределённость: репликация/инвалидация между инстансами, влияние на память и GC](#распределённость-репликацияинвалидация-между-инстансами-влияние-на-память-и-gc)
+* [8. Чтение больших объёмов и стриминг](#8-чтение-больших-объёмов-и-стриминг)
+  * [Потоки из репозиториев (`Stream<T>`), требования к `@Transactional` и закрытию](#потоки-из-репозиториев-streamt-требования-к-transactional-и-закрытию)
+  * [Скролл/курсор: forward-only, `fetchSize`/`setFetchSize`, минимизация памяти](#скроллкурсор-forward-only-fetchsizesetfetchsize-минимизация-памяти)
+  * [Read-only транзакции + хинты драйвера; выгрузка в файлы/каналы без материализации всего списка](#read-only-транзакции--хинты-драйвера-выгрузка-в-файлыканалы-без-материализации-всего-списка)
+* [9. DB-специфика и нестандартные типы](#9-db-специфика-и-нестандартные-типы)
+  * [JSON/JSONB, массивы, диапазоны, `hstore`: `@Converter` vs Hibernate Types; индексы (например, GIN для JSONB)](#jsonjsonb-массивы-диапазоны-hstore-converter-vs-hibernate-types-индексы-например-gin-для-jsonb)
+  * [Денежные/точные типы: `BigDecimal` + scale/rounding; контроль сериализации в JSON](#денежныеточные-типы-bigdecimal--scalerounding-контроль-сериализации-в-json)
+  * [Частичные/функциональные индексы, `UNIQUE` под soft-delete, «виртуальные» столбцы/представления (`@Immutable`, `@Subselect`)](#частичныефункциональные-индексы-unique-под-soft-delete-виртуальные-столбцыпредставления-immutable-subselect)
+* [10. Аудит и «мягкое удаление»](#10-аудит-и-мягкое-удаление)
+  * [Auditing: `@CreatedDate/@LastModifiedDate`, `AuditingEntityListener`, пользователи/тенанты](#auditing-createddatelastmodifieddate-auditingentitylistener-пользователитенанты)
+  * [Soft-delete: флаг + глобальные фильтры (`@Where/@SQLDelete` или фильтры Hibernate), последствия для уникальных ключей/джойнов](#soft-delete-флаг--глобальные-фильтры-wheresqldelete-или-фильтры-hibernate-последствия-для-уникальных-ключейджойнов)
+  * [История изменений: версионирование записей vs отдельные audit-таблицы; компромисс сложность/польза](#история-изменений-версионирование-записей-vs-отдельные-audit-таблицы-компромисс-сложностьпольза)
+* [11. Спецификации, Criteria и QueryDSL](#11-спецификации-criteria-и-querydsl)
+  * [`Specification<T>`: динамические фильтры, композиция условий, пагинация+сортировка](#specificationt-динамические-фильтры-композиция-условий-пагинациясортировка)
+  * [Criteria API: типобезопасность vs шум кода — где помогает](#criteria-api-типобезопасность-vs-шум-кода--где-помогает)
+  * [QueryDSL: предикаты, join-ы, подзапросы, «тяжёлые» фильтры — когда лучше, чем строковый JPQL](#querydsl-предикаты-join-ы-подзапросы-тяжёлые-фильтры--когда-лучше-чем-строковый-jpql)
+* [12. JDBC и jOOQ: когда уходить ниже](#12-jdbc-и-jooq-когда-уходить-ниже)
+  * [Где JPA неэффективна: отчёты, агрегаты/окна, сложные CTE, апсерты/`ON CONFLICT`, bulk-операции](#где-jpa-неэффективна-отчёты-агрегатыокна-сложные-cte-апсертыon-conflict-bulk-операции)
+  * [`JdbcTemplate/NamedParameterJdbcTemplate`: `RowMapper`, батчи `batchUpdate`, `SimpleJdbcInsert`, таймауты и `fetchSize`](#jdbctemplatenamedparameterjdbctemplate-rowmapper-батчи-batchupdate-simplejdbcinsert-таймауты-и-fetchsize)
+  * [Потоковая обработка: курсоры/стримы, контроль памяти, работа с LOB](#потоковая-обработка-курсорыстримы-контроль-памяти-работа-с-lob)
+  * [jOOQ как «типобезопасный SQL»: генерация DSL из схемы, тонкая оптимизация под конкретную СУБД; совместное использование с JPA в одном сервисе](#jooq-как-типобезопасный-sql-генерация-dsl-из-схемы-тонкая-оптимизация-под-конкретную-субд-совместное-использование-с-jpa-в-одном-сервисе)
+* [13. Репозитории: расширение и кастомизация](#13-репозитории-расширение-и-кастомизация)
+  * [Свой базовый интерфейс репозитория: общие методы, хук на `EntityManager`](#свой-базовый-интерфейс-репозитория-общие-методы-хук-на-entitymanager)
+  * [Кастомные имплементации для отдельных репозиториев (surgical-SQL, спец-кеши)](#кастомные-имплементации-для-отдельных-репозиториев-surgical-sql-спец-кеши)
+  * [«Граница ответственности» репозитория: тонкие методы vs «толстые» сервисы — баланс читаемости и производительности](#граница-ответственности-репозитория-тонкие-методы-vs-толстые-сервисы--баланс-читаемости-и-производительности)
+* [14. Тестирование продвинутого persistence](#14-тестирование-продвинутого-persistence)
+  * [Testcontainers с реальной СУБД, прогон миграций перед тестами, сидирование данных](#testcontainers-с-реальной-субд-прогон-миграций-перед-тестами-сидирование-данных)
+  * [Проверки на N+1/пагинацию/графы загрузки; сбор статистики Hibernate в тестах](#проверки-на-n1пагинациюграфы-загрузки-сбор-статистики-hibernate-в-тестах)
+  * [Инварианты БД: уникальные/`check`/FK — негативные тесты на нарушения](#инварианты-бд-уникальныеcheckfk--негативные-тесты-на-нарушения)
+  * [Контроль таймаутов/блокировок: сценарии дедлоков, пессимистические lock-тесты, «грязные» чтения](#контроль-таймаутовблокировок-сценарии-дедлоков-пессимистические-lock-тесты-грязные-чтения)
+<!-- TOC -->
+
 # 1. Производительность загрузки и N+1
 
-*Зависимости и базовые настройки для всех подпунктов ниже*
-
-**Gradle (Groovy DSL)**
-
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-```
+Эта подтема — про то, почему JPA/Hibernate могут внезапно «стрелять себе в ногу» по производительности, откуда берётся N+1, как его увидеть глазами и числами, и какие есть базовые приёмы, чтобы не утонуть в лавине SQL-запросов. Всё это напрямую упирается в JDBC: каждый отдельный SELECT — это отдельный round-trip к базе, отдельные allocation’ы в драйвере, отдельные чтения из сокета.
 
 ---
 
 ## Причины N+1, диагностика по SQL-логам и статистике Hibernate
 
-Проблема N+1 возникает, когда вы загружаете N родительских сущностей одним запросом, но для каждой из них ORM отправляет ещё по одному запросу, чтобы подтянуть связанную сторону. Чаще всего это происходит из-за ленивых ассоциаций (`LAZY`) и неосознанного доступа к ним в цикле. На небольших данных это незаметно, но под нагрузкой превращается в шквал коротких запросов, убивающих пулы соединений и кэши.
+Первое, что нужно усвоить про N+1: это не «магия ORM», а следствие ленивой загрузки и того, как вы ходите по графу объектов в коде. Классический сценарий — вы загружаете список сущностей `Order`, а затем в цикле обращаетесь к их ассоциациям `orderItems`. Hibernate по умолчанию делает один запрос на список заказов (это «1»), а затем по одному отдельному запросу на каждую коллекцию (это «N»). На уровне JDBC это выглядит как десятки или сотни SELECT’ов подряд, каждый из которых мог бы быть частью одного более крупного запроса.
 
-Корневая причина — **порядок доступа** к данным несогласован с планом выборки. Вы сначала получаете список, а затем, проходясь по нему, обращаетесь к `order.getCustomer().getName()` или `order.getLines().size()`. Для ORM это сигнал: «нужно догрузить ассоциацию прямо сейчас», и она делает отдельный `SELECT` на каждую итерацию. Так, всего за один «невинный» `for` можно получить сотни запросов.
+Причина такого поведения чаще всего кроется в комбинации `FetchType.LAZY` и факта, что вы проходите по ассоциации уже после того, как основной список был загружен. Ленивая загрузка сама по себе не зло, напротив — это важный инструмент. Проблема начинается тогда, когда вы многократно запускаете ленивую загрузку в одном и том же паттерне: например, пробегаетесь по коллекции сущностей в контроллере, который сериализует их в JSON, и Jackson, дергая геттеры, триггерит N дополнительных запросов.
 
-Разработчик может не заметить проблему, потому что всё «магически» работает: коллекции подгружаются прозрачно, бизнес-логика корректна, а в профиле локальной базы данные малы. Но на продакшене, где у вас десятки тысяч строк, подобное поведение резко меняет профиль нагрузки. Поэтому диагностика N+1 — обязательная часть ревью и нагрузочного профилирования.
-
-Первое, что стоит включить — **SQL-лог** Hibernate. Это позволит увидеть реальную последовательность запросов, их параметры и частоту. Лучше выводить и время выполнения, и bind-параметры, иначе вы не отличите одинаковые шаблоны запросов друг от друга. На дев-профиле это дешёво и невероятно полезно.
-
-Второй инструмент — **статистика Hibernate** (`hibernate.generate_statistics=true`). Она считает количество запросов, попаданий в кэш первого уровня, ленивых инициализаций, загрузок коллекций. С её помощью можно зафиксировать, что на конкретный HTTP-эндпоинт уходит, например, 1 запрос на список и 50 запросов на `customer` — явный симптом N+1 для связи «многие-к-одному».
-
-Третий подход — простые эвристики в коде тестов: замерять количество запросов через перехватчик или логгер и падать, если лимит превышен. В e2e-тестах такого стража легко реализовать, подписавшись на `org.hibernate.SQL` и подсчитав строки. Это дисциплинирует и защищает от регресса.
-
-Важно понимать, что причина N+1 не в `LAZY` самом по себе. Ленивость — нормальный выбор по умолчанию, чтобы не тащить «полгорода». Проблема — в **неосознанном** доступе к ассоциациям вне подходящего запроса. Решение — согласовать **выборку** и **потребление**: либо заранее подтянуть нужные связи, либо работать на плоских DTO без ассоциаций.
-
-Диагностика должна идти рука об руку с пониманием **границ транзакции**. Когда `open-in-view=false`, доступ к ленивой связи вне транзакции приведёт к `LazyInitializationException`. Это «случайная защита» от N+1: вы вынуждены либо подгружать связи там, где нужно, либо конвертировать в DTO. Но с `open-in-view=true` проблема маскируется — и поэтому этот флаг не стоит использовать на публичных API.
-
-Симптомы N+1 легко увидеть по графикам БД: много коротких запросов, низкая средняя латентность, но большой `qps` и рост CPU на парсинге. Если добавить сетевую задержку (между приложением и БД), издержки умножаются. Поэтому даже «быстрые» запросы в количестве N+1 опасны — они бьют по коннекторам и сетям.
-
-Наконец, держите в голове, что N+1 — поведенческая проблема, а не только про ассоциации. Похожим образом можно «настрелять» в БД вызовами справочных репозиториев внутри цикла. Решение то же: сгруппировать запросы, использовать `IN (:ids)` или `JOIN` и собрать всё нужное за 1–2 хода.
-
-**application.yml — включаем SQL-лог и статистику**
+Диагностировать N+1 без логов почти нереально: на уровне Java-кода всё выглядит красиво, сущности работают как обычные объекты, а под капотом в JDBC крутится карусель. Поэтому первый шаг — включить логирование SQL. В Spring Boot достаточно добавить логгер для `org.hibernate.SQL` и, по желанию, `org.hibernate.type.descriptor.sql.BasicBinder`, чтобы видеть параметры. В `application.yml` это задаётся настройками уровня логов.
 
 ```yaml
 spring:
@@ -70,581 +87,722 @@ spring:
     properties:
       hibernate:
         format_sql: true
-        generate_statistics: true
+        use_sql_comments: true
 logging:
   level:
     org.hibernate.SQL: debug
-    org.hibernate.orm.jdbc.bind: trace   # параметры запросов
+    org.hibernate.type.descriptor.sql.BasicBinder: trace
 ```
 
-**Java — демонстрация N+1 и подсчёт запросов через Statistics**
+Теперь, если у нас есть сущности `Customer` и `Order`, мы легко увидим N+1. Например, вот простое маппирование, которое в вакууме выглядит вполне невинно, но при наивном использовании приведёт к проблеме.
 
 ```java
-package com.example.nplus1;
+package com.example.jpa.nplusone;
 
 import jakarta.persistence.*;
-import org.hibernate.SessionFactory;
-import org.hibernate.stat.Statistics;
-import org.springframework.stereotype.Repository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.List;
 
 @Entity
 @Table(name = "customers")
-class Customer {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String name;
-    protected Customer() {}
-    Customer(String name){ this.name = name; }
+public class Customer {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String name;
+
+    @OneToMany(mappedBy = "customer", fetch = FetchType.LAZY)
+    private List<Order> orders;
+
+    // getters/setters
 }
 
 @Entity
 @Table(name = "orders")
-class Order {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false)
-    Customer customer;
-    @Column(nullable = false) Long totalCents;
-    protected Order() {}
-    Order(Customer c, long total){ this.customer = c; this.totalCents = total; }
-}
+public class Order {
 
-@Repository
-interface OrderRepository extends JpaRepository<Order, Long> { }
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String description;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    private Customer customer;
+
+    // getters/setters
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import jakarta.persistence.*
+
+@Entity
+@Table(name = "customers")
+class Customer(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var name: String = "",
+
+    @OneToMany(mappedBy = "customer", fetch = FetchType.LAZY)
+    var orders: List<Order> = emptyList()
+)
+
+@Entity
+@Table(name = "orders")
+class Order(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var description: String = "",
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    var customer: Customer? = null
+)
+```
+
+Представьте сервис, который загружает всех клиентов и для каждого печатает количество заказов. В коде это кажется «одной операцией», но из-за ленивых коллекций Hibernate будет поднимать коллекции по одной.
+
+```java
+package com.example.jpa.nplusone;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Service
-class OrderReportService {
-    private final OrderRepository repo;
-    private final SessionFactory sessionFactory;
-    OrderReportService(OrderRepository repo, EntityManagerFactory emf) {
-        this.repo = repo;
-        this.sessionFactory = emf.unwrap(SessionFactory.class);
+public class CustomerService {
+
+    private final CustomerRepository repository;
+
+    public CustomerService(CustomerRepository repository) {
+        this.repository = repository;
     }
 
     @Transactional(readOnly = true)
-    public long naiveSumByCustomerNamePrefix(String prefix) {
-        Statistics st = sessionFactory.getStatistics();
-        st.clear(); // обнуляем счётчики на время вызова
-        List<Order> orders = repo.findAll();            // 1 запрос
-        long sum = 0;
-        for (Order o : orders) {
-            // для каждого заказа — отдельный SELECT customer -> N запросов
-            if (o.customer.name.startsWith(prefix)) {
-                sum += o.totalCents;
-            }
-        }
-        long executed = st.getPrepareStatementCount();
-        System.out.println("Executed SQL statements: " + executed);
-        return sum;
+    public void printCustomerOrdersCount() {
+        List<Customer> customers = repository.findAll();
+        customers.forEach(customer -> {
+            int count = customer.getOrders().size();
+            System.out.println(customer.getName() + " has " + count + " orders");
+        });
     }
 }
 ```
 
-**Kotlin — та же демонстрация**
-
 ```kotlin
-package com.example.nplus1
+package com.example.jpa.nplusone
 
-import jakarta.persistence.*
-import org.hibernate.SessionFactory
-import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.stereotype.Repository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
-@Entity
-@Table(name = "customers")
-class Customer(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var name: String = ""
-)
-
-@Entity
-@Table(name = "orders")
-class Order(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false)
-    var customer: Customer? = null,
-    @Column(nullable = false) var totalCents: Long = 0
-)
-
-@Repository
-interface OrderRepository : JpaRepository<Order, Long>
-
 @Service
-class OrderReportService(
-    private val repo: OrderRepository,
-    emf: EntityManagerFactory
+class CustomerService(
+    private val repository: CustomerRepository
 ) {
-    private val sessionFactory: SessionFactory = emf.unwrap(SessionFactory::class.java)
 
     @Transactional(readOnly = true)
-    fun naiveSumByCustomerNamePrefix(prefix: String): Long {
-        val st = sessionFactory.statistics
-        st.clear()
-        val orders = repo.findAll()
-        var sum = 0L
-        for (o in orders) {
-            if (o.customer!!.name.startsWith(prefix)) {
-                sum += o.totalCents
-            }
+    fun printCustomerOrdersCount() {
+        val customers = repository.findAll()
+        customers.forEach { customer ->
+            val count = customer.orders.size
+            println("${customer.name} has $count orders")
         }
-        println("Executed SQL statements: ${st.prepareStatementCount}")
-        return sum
     }
 }
 ```
 
----
+При включенных логах вы увидите сначала один SELECT по таблице `customers`, а затем серию SELECT’ов по `orders`, по одному на каждый `customer`. Чем больше клиентов, тем сильнее лавина запросов. Диагностировать это можно глазами, но как только запросов становится много, лучше включить статистику Hibernate, чтобы получать агрегированные показатели.
 
-## Инструменты: `JOIN FETCH` (ограничения: пагинация с коллекциями, «несколько мешков»), `@EntityGraph`/`@NamedEntityGraph`, `@BatchSize` и `hibernate.default_batch_fetch_size`, `SUBSELECT`
-
-Первый и самый прямой инструмент против N+1 — **`JOIN FETCH`**. Он говорит провайдеру JPA подтянуть указанную ассоциацию в том же запросе. Для связей «многие-к-одному» (`@ManyToOne`) это почти всегда безопасно: одна строка расширяется полями другой таблицы без умножения результата. Для коллекций (`@OneToMany`) вступают ограничения: строки множатся, пагинация ломается, нужно `distinct`, и есть риск «несколько мешков».
-
-Под «несколькими мешками» (multiple bag fetch) Hibernate понимает ситуацию, когда вы пытаетесь фетчить **несколько** коллекций-`List` у одной сущности за раз. Фреймворк выбрасывает исключение, потому что не умеет корректно расплющивать и собирать такой декартов продукт. Решения: фетчить по одной коллекции за раз, использовать `Set` вместо `List` (иногда помогает), либо строить два отдельных запроса.
-
-Пагинация и `JOIN FETCH` коллекций — давно известная боль. SQL-лимит применяется **к умноженному набору**, и вы получаете меньше уникальных «родителей» на странице. Типовой паттерн: сначала выбрать `id` родителей с пагинацией, затем за один запрос загрузить сущности `WHERE id IN (:ids)` и уже к ним догрузить нужные коллекции (ещё одним запросом или батч-фетчем). Это немного сложнее, но стабильно.
-
-Второй инструмент — **`@EntityGraph`** и `@NamedEntityGraph`. Это способ декларативно указать «граф» атрибутов для подгрузки: какие `@ManyToOne` и `@OneToMany` подтянуть по пути. В отличие от `JOIN FETCH`, граф — часть метаданных, и вы можете применять его к стандартным методам репозитория (`findById`, `findAll`) без явного JPQL. Он уважает LAZY/EAGER и может работать как с `LOAD`, так и с `FETCH` семантикой.
-
-Третий — **батч-фетчинг**: `@BatchSize` на ассоциации/сущности и/или глобально `hibernate.default_batch_fetch_size`. Когда вы проходите по списку заказов и обращаетесь к `order.customer`, Hibernate соберёт «пачку» идентификаторов и сделает **один** запрос `select * from customer where id in (...)` вместо N отдельных. Это прекрасно сглаживает N+1 для множества «многие-к-одному» и не ломает пагинацию.
-
-Четвёртый — **`SUBSELECT`** (Hibernate-специфичный `@Fetch(FetchMode.SUBSELECT)` для коллекций). Он говорит: «когда я впервые обращусь к коллекции в этом наборе родительских сущностей, подгрузи все соответствующие элементы одной общей подвыборкой». Это хорошо работает, когда вы отображаете страницу, на которой нужны **все** дочерние элементы для всех родителей. Но будьте осторожны с очень большими выборками — субзапрос может стать тяжёлым.
-
-Комбинируйте инструменты: например, для списков используйте батч-фетч для `@ManyToOne` и не фетчьте коллекции вовсе, а показывайте агрегаты (счётчики) через проекции. Для карточек — точечный `JOIN FETCH` или `@EntityGraph` ровно нужных связей. Для «богатых» экранов с несколькими коллекциями — два отдельных запроса вместо одного гигантского.
-
-Ещё один практический нюанс — **`distinct`** в JPQL с `join fetch`. Он устраняет дубликаты «родителей» после расширения строк, но делает это на уровне ORM, а не SQL (часто). На больших объёмах это лишняя аллокация; лучше соблюдать умеренность в `fetch` и, если нужно, переходить на подход «ids + IN».
-
-Также обращайте внимание на индексы. Любой `JOIN FETCH` — это реальный JOIN в базе. Если у вас нет индекса по внешнему ключу, запросы будут тормозить, и никакая магия ORM не спасёт. Проверьте планы выполнения и добавьте индексы по FK и сортируемым полям, особенно если делаете сортировку по полям из присоединённой таблицы.
-
-И помните: `@EntityGraph` — не серебряная пуля. Он не всегда приводит к `join fetch`; часто это набор **дополнительных селектов**, но сгруппированных батчем. Это нормально: цель — минимизировать общее количество раунд-трипов и держать граф контролируемым, а не «затащить всё одной SQL-портянкой».
-
-**Java — примеры JOIN FETCH, EntityGraph, BatchSize, SUBSELECT**
-
-```java
-package com.example.fetch;
-
-import jakarta.persistence.*;
-import org.hibernate.annotations.Fetch;
-import org.hibernate.annotations.FetchMode;
-import org.hibernate.annotations.BatchSize;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
-
-import java.util.List;
-import java.util.Optional;
-
-@Entity
-@Table(name = "customers")
-class Customer {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String name;
-    protected Customer() {}
-    Customer(String name){ this.name = name; }
-}
-
-@Entity
-@Table(name = "orders")
-@NamedEntityGraph(
-    name = "order.withCustomer",
-    attributeNodes = @NamedAttributeNode("customer")
-)
-class Order {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false)
-    @BatchSize(size = 50) // батч-догрузка customer по IN
-    Customer customer;
-
-    @OneToMany(mappedBy = "order", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
-    @Fetch(FetchMode.SUBSELECT) // подтянуть все lines для набора заказов одним субзапросом
-    List<OrderLine> lines;
-
-    protected Order() {}
-}
-
-@Entity
-@Table(name = "order_lines")
-class OrderLine {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "order_id", nullable = false)
-    Order order;
-
-    @Column(nullable = false) String sku;
-    @Column(nullable = false) int qty;
-
-    protected OrderLine() {}
-    OrderLine(Order order, String sku, int qty){ this.order = order; this.sku = sku; this.qty = qty; }
-}
-
-@Repository
-interface OrderRepository extends JpaRepository<Order, Long> {
-
-    // Безопасный FETCH для ManyToOne
-    @Query("""
-       select o from Order o
-       join fetch o.customer
-       where o.id = :id
-    """)
-    Optional<Order> findWithCustomer(@Param("id") Long id);
-
-    // c EntityGraph: можно применять к findAll/findById
-    @EntityGraph(value = "order.withCustomer", type = EntityGraph.EntityGraphType.FETCH)
-    @Query("select o from Order o where o.id = :id")
-    Optional<Order> byIdWithGraph(@Param("id") Long id);
-}
-```
-
-**Kotlin — те же приёмы**
-
-```kotlin
-package com.example.fetch
-
-import jakarta.persistence.*
-import org.hibernate.annotations.BatchSize
-import org.hibernate.annotations.Fetch
-import org.hibernate.annotations.FetchMode
-import org.springframework.data.jpa.repository.EntityGraph
-import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.data.jpa.repository.Query
-import org.springframework.data.repository.query.Param
-import java.util.*
-
-@Entity
-@Table(name = "customers")
-class Customer(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var name: String = ""
-)
-
-@Entity
-@Table(name = "orders")
-@NamedEntityGraph(
-    name = "order.withCustomer",
-    attributeNodes = [NamedAttributeNode("customer")]
-)
-class Order(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false)
-    @BatchSize(size = 50)
-    var customer: Customer? = null,
-
-    @OneToMany(mappedBy = "order", fetch = FetchType.LAZY, cascade = [CascadeType.ALL], orphanRemoval = true)
-    @Fetch(FetchMode.SUBSELECT)
-    var lines: MutableList<OrderLine> = mutableListOf()
-)
-
-@Entity
-@Table(name = "order_lines")
-class OrderLine(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "order_id", nullable = false)
-    var order: Order? = null,
-    @Column(nullable = false) var sku: String = "",
-    @Column(nullable = false) var qty: Int = 0
-)
-
-interface OrderRepository : JpaRepository<Order, Long> {
-
-    @Query(
-        """
-        select o from Order o
-        join fetch o.customer
-        where o.id = :id
-        """
-    )
-    fun findWithCustomer(@Param("id") id: Long): Optional<Order>
-
-    @EntityGraph(value = "order.withCustomer", type = EntityGraph.EntityGraphType.FETCH)
-    @Query("select o from Order o where o.id = :id")
-    fun byIdWithGraph(@Param("id") id: Long): Optional<Order>
-}
-```
-
-**application.yml — глобальный батч-фетч**
+Hibernate умеет считать количество запросов, хиты/промахи кэша и пр. Достаточно включить `hibernate.generate_statistics=true` в конфигурации. В Spring Boot это делается всё там же, в `application.yml`, а потом можно инжектить `SessionFactory` и вытаскивать из него `Statistics`.
 
 ```yaml
 spring:
   jpa:
     properties:
       hibernate:
-        default_batch_fetch_size: 50
+        generate_statistics: true
 ```
+
+```java
+package com.example.jpa.nplusone;
+
+import jakarta.persistence.EntityManagerFactory;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
+import org.springframework.stereotype.Component;
+
+@Component
+public class HibernateStatsLogger {
+
+    private final SessionFactory sessionFactory;
+
+    public HibernateStatsLogger(EntityManagerFactory entityManagerFactory) {
+        this.sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+    }
+
+    public void logStats() {
+        Statistics stats = sessionFactory.getStatistics();
+        System.out.println("Queries executed: " + stats.getQueryExecutionCount());
+    }
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import jakarta.persistence.EntityManagerFactory
+import org.hibernate.SessionFactory
+import org.springframework.stereotype.Component
+
+@Component
+class HibernateStatsLogger(
+    entityManagerFactory: EntityManagerFactory
+) {
+
+    private val sessionFactory: SessionFactory =
+        entityManagerFactory.unwrap(SessionFactory::class.java)
+
+    fun logStats() {
+        val stats = sessionFactory.statistics
+        println("Queries executed: ${stats.queryExecutionCount}")
+    }
+}
+```
+
+Если вы вызываете сервисный метод, который, казалось бы, просто возвращает список DTO, но статистика показывает сотни запросов — это почти наверняка N+1, вызванный ленивыми ассоциациями. Важно смотреть не только на количество запросов, но и на их структуру: одинаковые SELECT’ы с разными значениям параметров — явный признак N+1.
+
+Отдельный интерес — N+1 на стороне `ManyToOne`: когда у вас список заказов, и каждый тянет своего клиента. Здесь тоже легко получить один SELECT по таблице заказов и N отдельных запросов по клиентам, если вы где-то в коде обращаетесь к `order.getCustomer().getName()`. Диагностируется это так же, логами и статистикой, а лечится похожими приёмами, но важно осознавать, что N+1 может жить и в «обратную сторону» связи.
+
+Ещё один источник проблем — ленивые коллекции в связке с сериализацией JSON. Если вы отдаёте наружу сущности как есть, без DTO, Jackson, дергая геттеры, не видит разницы между обычным списком и лениво загружаемой коллекцией. В ответ на один HTTP-запрос ваш сервис может сделать десятки SQL, которые вы не видите в коде контроллера. Поэтому включённые SQL-логи и статистика Hibernate — обязательный инструмент разработки, а не опция «на случай проблем».
+
+---
+
+## Инструменты: JOIN FETCH, @EntityGraph, @BatchSize, hibernate.default_batch_fetch_size, SUBSELECT
+
+После того как вы увидели N+1, возникает вопрос «что с этим делать». Первый и самый известный инструмент — `JOIN FETCH` в JPQL. В отличие от обычного `JOIN`, который просто присоединяет таблицу, `JOIN FETCH` говорит Hibernate: «загрузи ассоциацию в рамках этого запроса и положи её в граф сущностей». На уровне SQL это просто join, но на уровне ORM — заполнение ассоциации, чтобы позже не было дополнительных SELECT’ов.
+
+Простейший пример — репозиторий, который возвращает клиентов сразу с заказами. В Spring Data JPA это делается через `@Query` и `LEFT JOIN FETCH`. Такой метод вытаскивает весь граф одним запросом, а ленивые коллекции уже не триггерят N+1 при обходе.
+
+```java
+package com.example.jpa.nplusone;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
+
+public interface CustomerRepository extends JpaRepository<Customer, Long> {
+
+    @Query("select c from Customer c left join fetch c.orders")
+    List<Customer> findAllWithOrders();
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
+
+interface CustomerRepository : JpaRepository<Customer, Long> {
+
+    @Query("select c from Customer c left join fetch c.orders")
+    fun findAllWithOrders(): List<Customer>
+}
+```
+
+Однако у `JOIN FETCH` есть жёсткие ограничения. Во-первых, такой запрос нельзя нормально сочетать с пагинацией по коллекциям: результирующий SQL дублирует строки по числу элементов коллекции, и `LIMIT/OFFSET` начинает резать не по сущностям, а по строкам. Spring Data прямо запрещает делать `Page<Customer>` с `join fetch` коллекции. Для единичных сущностей (`findById`) это отлично, для списков — нужен более аккуратный подход.
+
+Во-вторых, есть проблема «нескольких мешков» (multiple bag fetch exception): Hibernate не позволяет в одном запросе `JOIN FETCH`ить несколько коллекций типа `List` или `bag`. Всё из-за того же дублирования строк: ORM перестаёт понимать, как восстановить уникальные коллекции. Частично это лечится заменой `List` на `Set` и явными `@OrderColumn`, частично — отказом от нескольких коллекций в одном запросе и использованием батч-стратегий.
+
+`@EntityGraph` и `@NamedEntityGraph` дают более декларативный способ описать «что именно подгружать». Вместо того, чтобы писать `JOIN FETCH` руками в каждом запросе, вы объявляете граф на уровне сущности, а затем используете его в репозитории. Это удобно, когда нужно несколько разных представлений одной и той же сущности: например, «только заказы» или «заказы с товарами и платежами».
+
+```java
+package com.example.jpa.nplusone;
+
+import jakarta.persistence.*;
+import java.util.List;
+
+@Entity
+@Table(name = "customers")
+@NamedEntityGraph(
+        name = "Customer.withOrders",
+        attributeNodes = @NamedAttributeNode("orders")
+)
+public class Customer {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String name;
+
+    @OneToMany(mappedBy = "customer", fetch = FetchType.LAZY)
+    private List<Order> orders;
+
+    // getters/setters
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import jakarta.persistence.*
+
+@Entity
+@Table(name = "customers")
+@NamedEntityGraph(
+    name = "Customer.withOrders",
+    attributeNodes = [NamedAttributeNode("orders")]
+)
+class Customer(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var name: String = "",
+
+    @OneToMany(mappedBy = "customer", fetch = FetchType.LAZY)
+    var orders: List<Order> = emptyList()
+)
+```
+
+В репозитории это используется просто: добавляете `@EntityGraph` на метод. Spring Data сам построит запрос с правильным fetch-планом. Это удобно для «карточек», где вы загружаете одну сущность и хотите сразу получить «хвост» ассоциаций, не думая о JPQL.
+
+```java
+package com.example.jpa.nplusone;
+
+import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.Optional;
+
+public interface CustomerRepository extends JpaRepository<Customer, Long> {
+
+    @EntityGraph(value = "Customer.withOrders", type = EntityGraph.EntityGraphType.LOAD)
+    Optional<Customer> findWithOrdersById(Long id);
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import org.springframework.data.jpa.repository.EntityGraph
+import org.springframework.data.jpa.repository.JpaRepository
+import java.util.Optional
+
+interface CustomerRepository : JpaRepository<Customer, Long> {
+
+    @EntityGraph(value = "Customer.withOrders", type = EntityGraph.EntityGraphType.LOAD)
+    fun findWithOrdersById(id: Long): Optional<Customer>
+}
+```
+
+`@BatchSize` и глобальный `hibernate.default_batch_fetch_size` — другой подход. Они не убирают ленивую загрузку, но уменьшают количество запросов при N+1. Вместо N отдельных SELECT’ов Hibernate делает запросы пачками: когда вы обращаетесь к коллекции у первого клиента, он заодно подгружает коллекции ещё у нескольких клиентов. В итоге N+1 превращается в M+1, где M намного меньше N.
+
+```java
+package com.example.jpa.nplusone;
+
+import jakarta.persistence.*;
+import org.hibernate.annotations.BatchSize;
+
+import java.util.List;
+
+@Entity
+@Table(name = "customers")
+public class Customer {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String name;
+
+    @BatchSize(size = 20)
+    @OneToMany(mappedBy = "customer", fetch = FetchType.LAZY)
+    private List<Order> orders;
+
+    // getters/setters
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import jakarta.persistence.*
+import org.hibernate.annotations.BatchSize
+
+@Entity
+@Table(name = "customers")
+class Customer(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var name: String = "",
+
+    @BatchSize(size = 20)
+    @OneToMany(mappedBy = "customer", fetch = FetchType.LAZY)
+    var orders: List<Order> = emptyList()
+)
+```
+
+Глобальная настройка `hibernate.default_batch_fetch_size` работает похожим образом для всех ленивых ассоциаций. Вы просто говорите Hibernate: «если нужно подгрузить ленивые ссылки, делай это пачками по N штук». Эта настройка особенно полезна для `ManyToOne`, когда вы загружаете много заказов и хотите одним запросом подтянуть клиентов.
+
+```yaml
+spring:
+  jpa:
+    properties:
+      hibernate:
+        default_batch_fetch_size: 20
+```
+
+`FetchMode.SUBSELECT` (через `@Fetch(FetchMode.SUBSELECT)`) — ещё один инструмент от Hibernate. Он говорит: «подгрузи коллекции для всех уже загруженных родителей одним большим подзапросом». Алгоритм такой: сначала ORM выполняет SELECT по родителям (например, `select * from customers where ...`), а затем один дополнительный запрос вида `select * from orders where customer_id in (ids...)`. Это особенно эффективно, когда вы разово загружаете большую страницу сущностей и хотите одним махом подтянуть их коллекции.
+
+```java
+package com.example.jpa.nplusone;
+
+import jakarta.persistence.*;
+import org.hibernate.annotations.Fetch;
+import org.hibernate.annotations.FetchMode;
+
+import java.util.List;
+
+@Entity
+@Table(name = "customers")
+public class Customer {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String name;
+
+    @Fetch(FetchMode.SUBSELECT)
+    @OneToMany(mappedBy = "customer", fetch = FetchType.LAZY)
+    private List<Order> orders;
+
+    // getters/setters
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import jakarta.persistence.*
+import org.hibernate.annotations.Fetch
+import org.hibernate.annotations.FetchMode
+
+@Entity
+@Table(name = "customers")
+class Customer(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var name: String = "",
+
+    @Fetch(FetchMode.SUBSELECT)
+    @OneToMany(mappedBy = "customer", fetch = FetchType.LAZY)
+    var orders: List<Order> = emptyList()
+)
+```
+
+У каждого инструмента есть зона применимости. `JOIN FETCH` и `@EntityGraph` хороши для единичных сущностей и «карточек», где нужно получить всё и сразу. `@BatchSize` и `default_batch_fetch_size` — для списков, где вы не хотите тянуть всё, но и N+1 терпеть не готовы. `SUBSELECT` — компромисс для большой страницы, когда вы готовы на один тяжёлый запрос вместо множества мелких. На практике вы обычно комбинируете подходы: для «карточек» — графы и `join fetch`, для списков — батчи и тонкие выборки.
 
 ---
 
 ## Стратегии: «тонкие» DTO-проекции для списков, точечные графы для карточек, разделение чтения/деталей
 
-Первая стратегия — **тонкие DTO для списков**. Идея проста: списочный экран (лента) не должен тянуть графы сущностей. Он показывает несколько полей: идентификатор, заголовок, имя клиента, суммарную стоимость. Всё это можно получить одним JPQL c конструкторной проекцией или интерфейсной проекцией — быстро, дёшево и без участия контекста персистентности.
+Один из ключевых архитектурных выводов из темы N+1: нельзя обрабатывать все сценарии чтения через один и тот же репозиторий и один и тот же набор сущностей. Потребности списка и «карточки» принципиально разные. Для списка вам достаточно лёгкого DTO с несколькими полями, а для карточки — полного графа сущности с ассоциациями. Попытка использовать один и тот же метод `findAll()` для обоих сценариев почти гарантированно приведёт к либо избыточной загрузке, либо к N+1.
 
-Вторая — **точечные графы/`JOIN FETCH` для карточек**. Экран детали «заказа» действительно требует подтянуть строки заказа и, возможно, платежи и доставки. Но и здесь нужно избегать «монолитного» запроса: чаще корректнее сделать 1 запрос на заказ + клиента и 1 запрос на строки (или `SUBSELECT`). Это уменьшит декартовы умножения и упростит пагинацию вложенных коллекций.
-
-Третья — **разделение чтения и модификаций**. В `QueryService` возвращайте DTO, в `CommandService` — работайте с сущностями и транзакциями на запись. Это упрощает контроль за ленивыми ассоциациями, устраняет риск `LazyInitializationException` в веб-слое и улучшает производительность: DTO не попадают в контекст персистентности.
-
-Четвёртая — **агрегации в списках**. Вместо того чтобы подтягивать коллекции ради счётчиков, используйте агрегаты (`count`, `sum`) в JPQL/SQL и кладите их в поля DTO. Так вы избежите N+1 и получите точные значения без лишнего трафика. Для сложных агрегатов (например, подсчёт по статусу) используйте CTE/подзапросы или нативный SQL с аккуратным маппингом.
-
-Пятая — **стабильная пагинация**. В списочных запросах на DTO обязательно задавайте `order by` по индексируемым полям и вторичный «тай-брейкер» по `id`. Это не только предотвращает «пляску» элементов, но и помогает батч-фетчу: набор родительских id получается детерминированным, и `IN (:ids)` попадает в кэш планов.
-
-Шестая — **entity graph как контракт**. Если вы всё-таки возвращаете сущности (например, во внутренних сервисах), закрепите набор подгружаемых атрибутов `@NamedEntityGraph` и используйте его в репозиториях. Это документирует ожидания и предотвращает случайные N+1 из-за новых обращений к ассоциациям в коде.
-
-Седьмая — **порог «всё в один запрос»**. Если у карточки несколько коллекций (строки, платежи, трекинги), `JOIN FETCH` на всё сразу приведёт к multiple-bag-fetch и/или взрывному умножению. Дешевле выполнить 2–3 отдельных запроса, чем один «монстр». Измеряйте: профилирование часто показывает, что «несколько простых запросов» быстрее и устойчивее.
-
-Восьмая — **кэширование границ**. Для неизменяемых справочников (статусы, типы, страны) используйте L2-кэш или локальный кэш сервиса. Тогда DTO для списков можно собирать без джоинов по справочникам, подставляя значения из кэша по кодам. Это снижает нагрузку на БД и упрощает запросы.
-
-Девятая — **миграция «тяжёлых» экранов**. Если какой-то список неизбежно требует десятка связей и вычислений, рассмотрите подготовленные представления/материализованные таблицы и чтение через JDBC/jOOQ. Это честная «инфра-оптимизация», и её лучше сделать сознательно, чем мучить ORM.
-
-Десятая — **проверяйте N+1 в тестах**. На каждый публичный эндпоинт со списком заведите тест, который проверяет количество SQL-запросов (через перехватчик/логгер). Это не про микро-оптимизации, а про «охрану периметра» от случайного доступа к ассоциациям в цикле.
-
-**Java — DTO для списка + детальная загрузка с графом**
+Для списков разумно использовать «тонкие» DTO-проекции. В Spring Data JPA это легко делается через интерфейсные или конструкторные проекции. Например, если на списке клиентов вам нужны только id, имя и количество заказов, нет смысла тянуть весь список `Order` как сущности. Можно сделать проекцию, которая агрегирует эти данные на стороне базы. Это уменьшает размер результата, нагрузку на JPA-мэппинг и снижает риск N+1.
 
 ```java
-package com.example.strategy;
+package com.example.jpa.nplusone;
 
-import jakarta.persistence.*;
-import org.springframework.data.domain.*;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+public interface CustomerSummary {
 
-import java.time.Instant;
-import java.util.Optional;
+    Long getId();
 
-@Entity
-@Table(name = "orders")
-@NamedEntityGraph(
-    name = "order.detail",
-    attributeNodes = {
-        @NamedAttributeNode("customer"),
-        @NamedAttributeNode(value = "lines")
-    }
-)
-class Order {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false)
-    Customer customer;
-    @OneToMany(mappedBy = "order", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
-    java.util.List<OrderLine> lines = new java.util.ArrayList<>();
-    @Column(nullable = false) Instant createdAt = Instant.now();
-    @Column(nullable = false) Long totalCents = 0L;
-    protected Order() {}
-}
+    String getName();
 
-@Entity
-@Table(name = "customers")
-class Customer {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String name;
-    protected Customer() {}
-    Customer(String name){ this.name = name; }
-}
-
-@Entity
-@Table(name = "order_lines")
-class OrderLine {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "order_id", nullable = false)
-    Order order;
-    @Column(nullable = false) String sku;
-    @Column(nullable = false) int qty;
-    protected OrderLine() {}
-}
-
-record OrderListDto(Long id, String customerName, Long totalCents, Instant createdAt) { }
-
-@Repository
-interface OrderRepository extends JpaRepository<Order, Long> {
-
-    // Списочный запрос — только нужные поля
-    @Query("""
-       select new com.example.strategy.OrderListDto(
-           o.id, o.customer.name, o.totalCents, o.createdAt
-       )
-       from Order o
-       where (:q is null or lower(o.customer.name) like lower(concat('%', :q, '%')))
-       order by o.createdAt desc, o.id desc
-    """)
-    Page<OrderListDto> list(@Param("q") String q, Pageable pageable);
-
-    // Деталь — граф (customer + lines)
-    @EntityGraph(value = "order.detail", type = EntityGraph.EntityGraphType.FETCH)
-    @Query("select o from Order o where o.id = :id")
-    Optional<Order> detail(@Param("id") Long id);
-}
-
-@Service
-class OrderQueryService {
-    private final OrderRepository repo;
-    OrderQueryService(OrderRepository repo){ this.repo = repo; }
-
-    @Transactional(readOnly = true)
-    public Page<OrderListDto> findPage(String q, int page, int size) {
-        Pageable p = PageRequest.of(page, size, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
-        return repo.list(q, p);
-    }
-
-    @Transactional(readOnly = true)
-    public Order detail(Long id) {
-        return repo.detail(id).orElseThrow();
-    }
+    long getOrdersCount();
 }
 ```
 
-**Kotlin — те же стратегии**
+```java
+package com.example.jpa.nplusone;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
+
+public interface CustomerSummaryRepository extends JpaRepository<Customer, Long> {
+
+    @Query("""
+        select c.id as id,
+               c.name as name,
+               count(o) as ordersCount
+        from Customer c
+        left join c.orders o
+        group by c.id, c.name
+        """)
+    List<CustomerSummary> findAllSummaries();
+}
+```
 
 ```kotlin
-package com.example.strategy
+package com.example.jpa.nplusone
 
-import jakarta.persistence.*
-import org.springframework.data.domain.*
-import org.springframework.data.jpa.repository.*
-import org.springframework.data.repository.query.Param
-import org.springframework.stereotype.Repository
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import java.time.Instant
-import java.util.*
+interface CustomerSummary {
+    fun getId(): Long
+    fun getName(): String
+    fun getOrdersCount(): Long
+}
+```
 
-@Entity
-@Table(name = "orders")
-@NamedEntityGraph(
-    name = "order.detail",
-    attributeNodes = [
-        NamedAttributeNode("customer"),
-        NamedAttributeNode("lines")
-    ]
-)
-class Order(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false)
-    var customer: Customer? = null,
-    @OneToMany(mappedBy = "order", fetch = FetchType.LAZY, cascade = [CascadeType.ALL], orphanRemoval = true)
-    var lines: MutableList<OrderLine> = mutableListOf(),
-    @Column(nullable = false) var createdAt: Instant = Instant.now(),
-    @Column(nullable = false) var totalCents: Long = 0
-)
+```kotlin
+package com.example.jpa.nplusone
 
-@Entity
-@Table(name = "customers")
-class Customer(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var name: String = ""
-)
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
 
-@Entity
-@Table(name = "order_lines")
-class OrderLine(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "order_id", nullable = false)
-    var order: Order? = null,
-    @Column(nullable = false) var sku: String = "",
-    @Column(nullable = false) var qty: Int = 0
-)
-
-data class OrderListDto(
-    val id: Long,
-    val customerName: String,
-    val totalCents: Long,
-    val createdAt: Instant
-)
-
-@Repository
-interface OrderRepository : JpaRepository<Order, Long> {
+interface CustomerSummaryRepository : JpaRepository<Customer, Long> {
 
     @Query(
         """
-        select new com.example.strategy.OrderListDto(
-            o.id, o.customer.name, o.totalCents, o.createdAt
-        )
-        from Order o
-        where (:q is null or lower(o.customer.name) like lower(concat('%', :q, '%')))
-        order by o.createdAt desc, o.id desc
+        select c.id as id,
+               c.name as name,
+               count(o) as ordersCount
+        from Customer c
+        left join c.orders o
+        group by c.id, c.name
         """
     )
-    fun list(@Param("q") q: String?, pageable: Pageable): Page<OrderListDto>
-
-    @EntityGraph(value = "order.detail", type = EntityGraph.EntityGraphType.FETCH)
-    @Query("select o from Order o where o.id = :id")
-    fun detail(@Param("id") id: Long): Optional<Order>
-}
-
-@Service
-class OrderQueryService(private val repo: OrderRepository) {
-
-    @Transactional(readOnly = true)
-    fun findPage(q: String?, page: Int, size: Int): Page<OrderListDto> {
-        val sort = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"))
-        return repo.list(q, PageRequest.of(page, size, sort))
-    }
-
-    @Transactional(readOnly = true)
-    fun detail(id: Long): Order = repo.detail(id).orElseThrow()
+    fun findAllSummaries(): List<CustomerSummary>
 }
 ```
 
+Такой репозиторий возвращает уже агрегированные данные, и никакого N+1 здесь быть не может: у вас один запрос с join’ом и group by, и результат маппится напрямую в интерфейс. Для контроллера это просто список лёгких DTO, которые не тащат за собой граф сущностей и не триггерят дополнительные запросы при сериализации.
+
+Для карточки — отдельный путь. Здесь как раз уместны `@EntityGraph` или `JOIN FETCH`, потому что вы хотите получить одного клиента со всеми его заказами (а иногда и с вложенными сущностями вроде платежей). Это делается отдельным методом в репозитории, который не используется в списковых сценариях, чтобы случайно не выстрелить себе в ногу.
+
+```java
+package com.example.jpa.nplusone;
+
+import java.util.Optional;
+
+import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface CustomerCardRepository extends JpaRepository<Customer, Long> {
+
+    @EntityGraph(attributePaths = {"orders"})
+    Optional<Customer> findDetailedById(Long id);
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import org.springframework.data.jpa.repository.EntityGraph
+import org.springframework.data.jpa.repository.JpaRepository
+import java.util.Optional
+
+interface CustomerCardRepository : JpaRepository<Customer, Long> {
+
+    @EntityGraph(attributePaths = ["orders"])
+    fun findDetailedById(id: Long): Optional<Customer>
+}
+```
+
+Дальнейший шаг — разделить сервисный слой по типам запросов. Один сервис отвечает за списки и использует только DTO-проекции, другой — за карточки и использует графы загрузки. Это не полный CQRS, но уже полезное разделение. Такой подход не только улучшает производительность, но и делает код понятнее: по названию метода (`getCustomerSummaries`, `getCustomerCard`) понятно, что он делает и какой объём данных тащит.
+
+```java
+package com.example.jpa.nplusone;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+@Service
+public class CustomerReadService {
+
+    private final CustomerSummaryRepository summaryRepository;
+    private final CustomerCardRepository cardRepository;
+
+    public CustomerReadService(
+            CustomerSummaryRepository summaryRepository,
+            CustomerCardRepository cardRepository
+    ) {
+        this.summaryRepository = summaryRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerSummary> listCustomers() {
+        return summaryRepository.findAllSummaries();
+    }
+
+    @Transactional(readOnly = true)
+    public Customer getCard(Long id) {
+        return cardRepository.findDetailedById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Customer not found"));
+    }
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+@Service
+class CustomerReadService(
+    private val summaryRepository: CustomerSummaryRepository,
+    private val cardRepository: CustomerCardRepository
+) {
+
+    @Transactional(readOnly = true)
+    fun listCustomers(): List<CustomerSummary> =
+        summaryRepository.findAllSummaries()
+
+    @Transactional(readOnly = true)
+    fun getCard(id: Long): Customer =
+        cardRepository.findDetailedById(id)
+            .orElseThrow { IllegalArgumentException("Customer not found") }
+}
+```
+
+Важно также не скармливать наружу сущности напрямую. Если JSON-контроллер возвращает `Customer`, при сериализации Jackson может залезть во все ассоциации, включая ленивые. Это не только N+1, но и утечки внутренней модели. Лучше делать явные DTO и маппинг из сущности в DTO, а для списков — вообще обходиться проекциями, минуя сущности целиком.
+
+```java
+package com.example.jpa.nplusone;
+
+public record CustomerCardDto(Long id, String name, int ordersCount) {
+
+    public static CustomerCardDto from(Customer customer) {
+        return new CustomerCardDto(
+                customer.getId(),
+                customer.getName(),
+                customer.getOrders().size()
+        );
+    }
+}
+```
+
+```java
+package com.example.jpa.nplusone;
+
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/customers")
+public class CustomerController {
+
+    private final CustomerReadService service;
+
+    public CustomerController(CustomerReadService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<CustomerSummary> list() {
+        return service.listCustomers();
+    }
+
+    @GetMapping("/{id}")
+    public CustomerCardDto card(@PathVariable Long id) {
+        return CustomerCardDto.from(service.getCard(id));
+    }
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+data class CustomerCardDto(
+    val id: Long,
+    val name: String,
+    val ordersCount: Int
+) {
+    companion object {
+        fun from(customer: Customer): CustomerCardDto =
+            CustomerCardDto(
+                id = customer.id!!,
+                name = customer.name,
+                ordersCount = customer.orders.size
+            )
+    }
+}
+```
+
+```kotlin
+package com.example.jpa.nplusone
+
+import org.springframework.web.bind.annotation.*
+
+@RestController
+@RequestMapping("/api/customers")
+class CustomerController(
+    private val service: CustomerReadService
+) {
+
+    @GetMapping
+    fun list(): List<CustomerSummary> =
+        service.listCustomers()
+
+    @GetMapping("/{id}")
+    fun card(@PathVariable id: Long): CustomerCardDto =
+        CustomerCardDto.from(service.getCard(id))
+}
+```
+
+Разделение чтения и деталей имеет ещё один приятный эффект: вы легче контролируете индексы и нагрузку на базу. Для списков вы знаете, какие поля участвуют в фильтрации и сортировке, и можете под них строить индексы; для карточек — можете позволить себе более тяжёлые join’ы, потому что запросов будет меньше. Вместо того чтобы пытаться «оптимизировать всё сразу», вы оптимизируете конкретные сценарии.
+
+Наконец, важно помнить, что все эти стратегии — не взаимоисключающие. Для простого сервиса иногда достаточно одного `JOIN FETCH` и парочки `@EntityGraph`. Но как только приложение растёт, без осознанного разделения на тонкие DTO для списков и детализированные графы для карточек вы почти неизбежно получаете смесь из избыточных загрузок, N+1 и сложных для отладки зависимостей. Чем раньше вы проведёте границу «что где читаем и зачем», тем проще будет масштабировать и код, и базу.
+
 # 2. Проекции и сложные запросы
 
-*Зависимости и базовые настройки для всей подтемы (как в прошлой главе, но повторю для самодостаточности примеров).*
+Перед тем как уходить в детали, важно зафиксировать идею: классический JPA-стек (Spring Data + Hibernate + JDBC-драйвер) прекрасно подходит для CRUD и простых выборок по сущностям, но как только речь заходит о тяжёлых отчётах, агрегатах, сложных фильтрах и оптимизации трафика между приложением и базой — вы почти неизбежно приходите к проекциям и более «ручному» SQL. В этой подтеме мы разберём, как в Spring Data JPA делать тонкие проекции (интерфейсные и DTO), когда и как использовать нативный SQL, и как аккуратно реализовывать частичные обновления, чтобы не ломать кеши и контекст персистентности.
 
-**Gradle (Groovy DSL)**
+Для всех примеров дальше будем считать, что у нас стандартный стек: Spring Boot 3.x, Spring Data JPA, Hibernate и Postgres. Зависимости в Gradle выглядят так и будут использоваться во всех примерах в этой подтеме.
 
 ```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
+// build.gradle (Groovy)
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    runtimeOnly 'org.postgresql:postgresql'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
 ```
 
-**Gradle (Kotlin DSL)**
-
 ```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
+// build.gradle.kts (Kotlin)
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 ```
@@ -653,812 +811,379 @@ dependencies {
 
 ## Проекции: интерфейсные/DTO-конструкторы в Spring Data, закрытые vs открытые (SpEL) и их стоимость
 
-Проекции — это способ читать **только нужные поля**, не загружая целые сущности и их графы. Они уменьшают I/O, память и давление на Persistence Context (который вообще можно обойти), поэтому критичны для списков и публичных API. В Spring Data есть два основных вида: **интерфейсные проекции** (закрытые) и **конструкторные DTO** (через `select new ...`). Оба типа «тоньше» сущностей и дисциплинируют вас не тянуть ленивые ассоциации.
+Проекция в контексте Spring Data — это способ сказать: «мне не нужна целиком сущность, дай только часть полей и оформь её в удобный для меня тип». В отличие от возврата полной сущности `Customer`, где JPA тащит всё, что описано в маппинге, проекция позволяет сузить форму результата до ровно тех столбцов, которые нужны UI или соседнему сервису. Это сразу даёт выигрыш по трём направлениям: меньше данных по сети, меньше работы на стороне JDBC-драйвера и меньше нагрузки на ORM (нет трекинга изменений для DTO).
 
-Закрытые интерфейсные проекции — это интерфейсы с геттерами, имена которых соответствуют алиасам/свойствам в запросе. Spring создает прокси, который маппит значения по имени. Прелесть в том, что такие проекции легковесны: не нужен конструктор, нет лишних аллокаций, их можно использовать и с derived-запросами, и с `@Query` (JPQL/SQL, если аккуратно проставить алиасы). Они хорошо подходят для 90% списочных экранов.
+На практике проекции особенно важны для списков. Если у вас страница «список клиентов» и «карточка клиента», то для списка достаточно 2–3 полей и пары агрегатов, а вот для карточки нужен полноценный граф. Попытка везде возвращать сущности почти всегда приводит либо к лишнему трафику и N+1, либо к сложным графам `join fetch`. Проекции позволяют честно разделить «view для списка» и «view для карточки» и оптимизировать каждый сценарий отдельно.
 
-Конструкторные DTO-проекции — это «жёсткий» вариант: вы объявляете класс/record с конструктором, а в JPQL пишете `select new pkg.Dto(a.id, a.title) from ...`. Такой подход прозрачен и типобезопасен: компилятор проверит наличие конструктора, IDE — переименования полей. Минус — это строго JPQL (для native нужны другие техники) и чуть больше бойлерплейта в коде.
+Spring Data поддерживает два основных вида проекций: интерфейсные и DTO-конструкторные. Интерфейсные проекции — это интерфейс с геттерами, имена которых совпадают с алиасами колонок в запросе или с полями сущности. Spring Data создаёт runtime-прокси, который маппит значения из результата SQL в методы интерфейса. Это дешево по разработке, достаточно гибко и хорошо работает даже для нативных запросов, если правильно проставлены алиасы.
 
-Есть ещё **открытые проекции** с `@Value` и SpEL внутри геттеров интерфейса. Они позволяют вычислять поля на лету, обращаться к другим бинам и «склеивать» строки (`@Value("#{target.firstName + ' ' + target.lastName}")`). Это мощно, но **дорого**: SpEL-компиляция/рефлексия на каждом объекте. На больших списках это ощутимо бьёт по CPU и GC, поэтому используйте открытые проекции экономно и только там, где вычисление действительно нужно на стороне приложения.
-
-Ключевая деталь — соответствие имен. Для интерфейсных проекций геттер `getCustomerName()` будет ожидать либо свойство `customerName` у сущности, либо алиас `as customerName` в запросе. Для вложенных путей можно объявлять вложенные интерфейсы (`CustomerView { String getName(); }`) и возвращать их в основном интерфейсе — Spring умеет раскладывать «через точку».
-
-Проекции не являются managed-сущностями. Это плюс (не попадают в Persistence Context, не грузят L1-кэш), но и ограничение: вы не можете на них опираться для dirty checking или использовать `entityManager.refresh`. Они **read-only**. Пытайтесь держать границу: **QueryService → проекции (DTO)**, **CommandService → сущности**.
-
-Пагинация с проекциями работает идеально: `Page<Dto>`/`Slice<Dto>` возвращается ровно с теми полями, что вам нужны. Но не забывайте про `countQuery` в `@Query`, если ваш JPQL сложный — иначе Spring попытается сгенерировать `count` сам и часто ошибётся, особенно с `distinct` и `join fetch`.
-
-Проекции отлично комбинируются с агрегациями. В списке заказов вместо загрузки `lines` достаточно отдать `OrderListDto(id, customerName, totalCents, linesCount)`, где `linesCount` — это `count(l)` в JPQL. Такой подход «убивает» N+1 и даёт пользователю ровно то, что ему надо на списке. Подробности — в карточке, отдельным запросом.
-
-В Kotlin интерфейсные проекции работают так же, но чаще приятнее писать **data class** и конструкторную проекцию — получается явный контракт и дружелюбная к сериализации структура. Следите за nullability: если поле может быть `null` в базе/выборке, объявляйте его как nullable тип в DTO, иначе вы получите NPE уже в маппере.
-
-Ещё одна тонкость — сортировка по вычисляемым полям. Открытые проекции с `@Value` не участвуют в `order by` на уровне БД. Если вам нужна сортировка по «полному имени», формируйте её в SQL/JPQL (`order by c.firstName, c.lastName`) и маппьте результат в поле `fullName` в DTO. Иначе сортировка будет на приложении и может «прыгать» между страницами.
-
-И, наконец, думайте о стабильности контрактов. DTO — это интерфейс вашего чтения между слоями. Меняя имена/типы полей, вы ломаёте клиенты. Зафиксируйте `equals/hashCode/toString` (в Java — record, в Kotlin — data class) и прикройте критичные запросы интеграционными тестами.
-
-**Java — интерфейсная (закрытая) и открытая проекции + DTO-конструктор**
+Пример: возьмём сущность `Customer` с полями `id`, `firstName`, `lastName` и `status`. Для списков нам нужен только id и «полное имя». Интерфейсная проекция в Java выглядит так: геттеры определяют форму данных, а Spring сам подложит реализацию.
 
 ```java
-package com.example.projection;
+package com.example.jpa.projection;
 
-import jakarta.persistence.*;
-import org.springframework.data.domain.*;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
+public interface CustomerNameView {
 
-import java.time.Instant;
-
-@Entity
-@Table(name = "orders")
-class Order {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false)
-    Customer customer;
-
-    @Column(nullable = false) Long totalCents;
-    @Column(nullable = false) Instant createdAt = Instant.now();
-    protected Order() {}
-}
-
-@Entity
-@Table(name = "customers")
-class Customer {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false, length = 120) String firstName;
-    @Column(nullable = false, length = 120) String lastName;
-    protected Customer() {}
-    Customer(String f, String l){ this.firstName=f; this.lastName=l; }
-}
-
-// Закрытая интерфейсная проекция: имена = алиасы/пути
-public interface OrderSummary {
     Long getId();
-    String getCustomerFirstName();
-    String getCustomerLastName();
-    Long getTotalCents();
-    Instant getCreatedAt();
-}
 
-// Открытая (дороже): SpEL/конкатенация
-public interface OrderSummaryOpen {
-    Long getId();
-    Long getTotalCents();
-    @org.springframework.beans.factory.annotation.Value("#{target.customer.firstName + ' ' + target.customer.lastName}")
-    String getCustomerFullName();
-}
+    String getFirstName();
 
-// Конструкторная DTO-проекция через JPQL
-public record OrderSummaryDto(Long id, String customerFullName, Long totalCents, Instant createdAt) {}
-
-@Repository
-interface OrderRepository extends JpaRepository<Order, Long> {
-
-    // Интерфейсная (закрытая) — важно выставить алиасы
-    @Query("""
-        select o.id as id,
-               c.firstName as customerFirstName,
-               c.lastName  as customerLastName,
-               o.totalCents as totalCents,
-               o.createdAt  as createdAt
-        from Order o
-        join o.customer c
-        where (:q is null or lower(c.lastName) like lower(concat('%', :q, '%')))
-        order by o.createdAt desc, o.id desc
-    """)
-    Page<OrderSummary> pageClosed(@Param("q") String lastNameLike, Pageable pageable);
-
-    // Открытая — на больших списках может быть дорогой
-    @Query("select o from Order o join fetch o.customer c where c.lastName like concat('%', :q, '%')")
-    Page<OrderSummaryOpen> pageOpen(@Param("q") String q, Pageable p);
-
-    // Конструкторная DTO — типобезопасна и шустра
-    @Query("""
-        select new com.example.projection.OrderSummaryDto(
-            o.id,
-            concat(c.firstName, ' ', c.lastName),
-            o.totalCents,
-            o.createdAt
-        )
-        from Order o join o.customer c
-        where (:q is null or lower(c.lastName) like lower(concat('%', :q, '%')))
-        order by o.createdAt desc, o.id desc
-    """)
-    Page<OrderSummaryDto> pageDto(@Param("q") String q, Pageable p);
+    String getLastName();
 }
 ```
-
-**Kotlin — те же идеи (интерфейс + data class)**
 
 ```kotlin
-package com.example.projection
+package com.example.jpa.projection
 
-import jakarta.persistence.*
-import org.springframework.data.domain.Page
-import org.springframework.data.domain.Pageable
-import org.springframework.data.jpa.repository.Query
-import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.data.repository.query.Param
-import org.springframework.beans.factory.annotation.Value
-import java.time.Instant
-
-@Entity
-@Table(name = "orders")
-class Order(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false)
-    var customer: Customer? = null,
-    @Column(nullable = false) var totalCents: Long = 0,
-    @Column(nullable = false) var createdAt: Instant = Instant.now()
-)
-
-@Entity
-@Table(name = "customers")
-class Customer(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var firstName: String = "",
-    @Column(nullable = false) var lastName: String = ""
-)
-
-interface OrderSummary {
+interface CustomerNameView {
     fun getId(): Long
-    fun getCustomerFirstName(): String
-    fun getCustomerLastName(): String
-    fun getTotalCents(): Long
-    fun getCreatedAt(): Instant
-}
-
-interface OrderSummaryOpen {
-    fun getId(): Long
-    fun getTotalCents(): Long
-    @Value("#{target.customer.firstName + ' ' + target.customer.lastName}")
-    fun getCustomerFullName(): String
-}
-
-data class OrderSummaryDto(
-    val id: Long,
-    val customerFullName: String,
-    val totalCents: Long,
-    val createdAt: Instant
-)
-
-interface OrderRepository : JpaRepository<Order, Long> {
-
-    @Query(
-        """
-        select o.id as id,
-               c.firstName as customerFirstName,
-               c.lastName  as customerLastName,
-               o.totalCents as totalCents,
-               o.createdAt  as createdAt
-        from Order o
-        join o.customer c
-        where (:q is null or lower(c.lastName) like lower(concat('%', :q, '%')))
-        order by o.createdAt desc, o.id desc
-        """
-    )
-    fun pageClosed(@Param("q") lastNameLike: String?, p: Pageable): Page<OrderSummary>
-
-    @Query("select o from Order o join fetch o.customer c where c.lastName like concat('%', :q, '%')")
-    fun pageOpen(@Param("q") q: String, p: Pageable): Page<OrderSummaryOpen>
-
-    @Query(
-        """
-        select new com.example.projection.OrderSummaryDto(
-            o.id,
-            concat(c.firstName, ' ', c.lastName),
-            o.totalCents,
-            o.createdAt
-        )
-        from Order o join o.customer c
-        where (:q is null or lower(c.lastName) like lower(concat('%', :q, '%')))
-        order by o.createdAt desc, o.id desc
-        """
-    )
-    fun pageDto(@Param("q") q: String?, p: Pageable): Page<OrderSummaryDto>
+    fun getFirstName(): String
+    fun getLastName(): String
 }
 ```
+
+Репозиторий может возвращать такую проекцию вместо сущности. В простейшем случае, если колонки совпадают с именами свойств, можно обойтись без явного JPQL — Spring Data сам построит запрос. Но чаще всё же лучше писать `@Query` явно, особенно если требуется сортировка или фильтры.
+
+```java
+package com.example.jpa.projection;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
+
+public interface CustomerRepository extends JpaRepository<Customer, Long> {
+
+    @Query("""
+           select c.id as id,
+                  c.firstName as firstName,
+                  c.lastName as lastName
+           from Customer c
+           where c.status = :status
+           """)
+    List<CustomerNameView> findByStatus(String status);
+}
+```
+
+```kotlin
+package com.example.jpa.projection
+
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
+
+interface CustomerRepository : JpaRepository<Customer, Long> {
+
+    @Query(
+        """
+        select c.id as id,
+               c.firstName as firstName,
+               c.lastName as lastName
+        from Customer c
+        where c.status = :status
+        """
+    )
+    fun findByStatus(status: String): List<CustomerNameView>
+}
+```
+
+DTO-конструкторные проекции делают то же самое, но вместо интерфейса используют конкретный класс (record/data class) и конструктор. В JPQL это выглядит как `select new com.example.CustomerDto(...)`, а JPA принимает на себя задачу вызвать нужный конструктор и передать туда значения. Плюс такого подхода — типобезопасность: если вы переименовали поле или поменяли сигнатуру конструктора, код перестанет компилироваться, а не молча начнёт возвращать нули.
+
+```java
+package com.example.jpa.projection;
+
+public record CustomerNameDto(Long id, String fullName) {
+}
+```
+
+```java
+package com.example.jpa.projection;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
+
+public interface CustomerDtoRepository extends JpaRepository<Customer, Long> {
+
+    @Query("""
+           select new com.example.jpa.projection.CustomerNameDto(
+               c.id,
+               concat(c.firstName, ' ', c.lastName)
+           )
+           from Customer c
+           where c.status = :status
+           """)
+    List<CustomerNameDto> findDtosByStatus(String status);
+}
+```
+
+```kotlin
+package com.example.jpa.projection
+
+data class CustomerNameDto(
+    val id: Long,
+    val fullName: String
+)
+```
+
+```kotlin
+package com.example.jpa.projection
+
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
+
+interface CustomerDtoRepository : JpaRepository<Customer, Long> {
+
+    @Query(
+        """
+        select new com.example.jpa.projection.CustomerNameDto(
+            c.id,
+            concat(c.firstName, ' ', c.lastName)
+        )
+        from Customer c
+        where c.status = :status
+        """
+    )
+    fun findDtosByStatus(status: String): List<CustomerNameDto>
+}
+```
+
+Переходим к понятию «закрытые» и «открытые» проекции в Spring Data. Закрытые проекции — это когда все поля берутся напрямую из результата запроса. Это как раз наши интерфейсные и DTO-проекции выше: значения приходят напрямую из SQL, без дополнительной логики в SpEL. Открытые проекции позволяют добавлять вычисляемые свойства через SpEL-выражения в интерфейсе: Spring может подставить, например, `@Value("#{target.firstName + ' ' + target.lastName}")`. Это очень гибко, но дороже.
+
+```java
+package com.example.jpa.projection;
+
+import org.springframework.beans.factory.annotation.Value;
+
+public interface CustomerOpenView {
+
+    Long getId();
+
+    @Value("#{target.firstName + ' ' + target.lastName}")
+    String getFullName();
+}
+```
+
+```kotlin
+package com.example.jpa.projection
+
+import org.springframework.beans.factory.annotation.Value
+
+interface CustomerOpenView {
+    fun getId(): Long
+
+    @get:Value("#{target.firstName + ' ' + target.lastName}")
+    val fullName: String
+}
+```
+
+Стоимость открытых проекций в том, что SpEL выражение вычисляется для каждой строки, и часто для него используется уже загруженная сущность-«target», а не результат «плоского» запроса. Если выражение обращается к ленивым ассоциациям, вы легко получите N+1: каждое чтение computed-поля триггерит дополнительный SELECT. Поэтому открытые проекции годятся для небольших выборок, но категорически не подходят для больших списков и тяжёлых отчётов.
+
+Практическое правило такое: для списков используйте закрытые интерфейсные или DTO-проекции, в которые складывайте только реально нужные поля и агрегаты; для карточек, где результат один, допускается чуть больше свободы, но всё равно лучше отдавать DTO, а не сущность. Открытые проекции через SpEL — это скорее инструмент для быстрого прототипирования или для простых кейсов, но не фундамент производительности.
+
+Наконец, важно понимать, что проекции — это часть контракта между слоем данных и внешним миром. Если вы возвращаете из контроллера DTO или интерфейсную проекцию, JSON будет ровно таким, как вы ожидаете: пробрасывание сущностей не утянет за собой лишние поля и ассоциации. Это хорошо влияет не только на производительность, но и на безопасность: вы не отдаёте наружу поля, о которых UI даже не знает.
 
 ---
 
-## Нативные SQL: маппинг на DTO/интерфейсы, `SqlResultSetMapping` (где оправдано)
+## Нативные SQL: маппинг на DTO/интерфейсы, SqlResultSetMapping (где оправдано)
 
-Нативные SQL-запросы уместны там, где **возможностей JPQL недостаточно**: оконные функции, CTE, `jsonb`/массивы в Postgres, `ON CONFLICT`/апсерты, специфичные плановые хинты. В таких случаях мы осознанно жертвуем переносимостью в пользу мощности БД, но хотим сохранить удобство маппинга результатов в понятные DTO/интерфейсы.
+Иногда JPQL и Criteria-API банально не хватает. Как только появляются window-функции, CTE, специфичные для Postgres операторы по JSONB или сложные `ON CONFLICT`, вы неизбежно смотрите в сторону нативного SQL. Это нормально: Hibernate не заменяет вам SQL, а дополняет. Главное — осознанно решать, где нативный запрос оправдан, а где вам просто лень писать JPQL.
 
-Простейший путь — интерфейсные проекции поверх `@Query(nativeQuery = true)`. Здесь важно корректно проставить **алиасы колонок**, чтобы они совпали с именами геттеров. Так Spring сможет собрать интерфейсную проекцию напрямую из результата `ResultSet` без промежуточных сущностей. Этот подход хорошо работает с пагинацией (`Page<T>`), если вы дополнительно зададите `countQuery`.
-
-Если нужна конструкторная DTO-проекция с native SQL, у Spring Data «из коробки» нет `select new ...` для native. Тогда есть два пути: маппить в интерфейс (как выше) **либо** использовать стандарт JPA — `@SqlResultSetMapping` с `@ConstructorResult` и `@NamedNativeQuery`. Это чуть более многословно, зато надёжно и типобезопасно — JPA сам вызовет нужный конструктор DTO для каждой строки.
-
-`@SqlResultSetMapping` особенно уместен, когда вы возвращаете «богатую» структуру: агрегаты, вычисляемые поля, поля из JSON. Вы явно описываете соответствие колонок конструктору и получаете стабильную схему. Добавьте сюда `@NamedNativeQuery` с параметрами — и репозиторий сможет ссылаться на запрос по имени, не дублируя текст.
-
-С JSONB (Postgres) удобнее сразу приводить типы в SQL: `data->>'phone' as phone`, `coalesce((data->>'age')::int,0) as age`. Тогда DTO получает уже «правильные» Java-типы, без ручного парсинга. Индексы GIN/GiST по JSONB работают через операторную семантику (`@>`, `?`, `#>>`) — это важная часть производительности сложных запросов.
-
-Помните о пагинации. В `@Query(nativeQuery = true)` для `Page<T>` почти всегда нужен отдельный `countQuery` — простой и без `order by`/CTE, если возможно. Не пытайтесь «оборачивать» CTE в `select count(*) from (...)` без необходимости — иногда проще завести второй запрос без тяжёлых join’ов, который эквивалентен условиям фильтрации.
-
-Ещё один нюанс — **управление контекстом**. Результаты native-запроса, смапленные на DTO/интерфейсы, не попадают в Persistence Context, и это хорошо. Но если вы маппите native на сущности, помните, что значения могут «переехать» в L1-кэш, и последующие обращения к тем же id вернут **внутренние managed-экземпляры**. Это легко порождает рассинхрон при смешивании native-апдейтов и чтений. Для отчётных чтений держитесь DTO/интерфейсов.
-
-Тестируйте native через Testcontainers той же версии БД, что и прод. Многие особенности (например, `jsonb_path_query` или `generated as identity`) по-разному работают в версиях 13/14/15/16. Локальный H2 «в Postgres-режиме» здесь не спасёт: он не поддерживает ни jsonb, ни операторные индексы.
-
-Не перегибайте с native: начните с JPQL/проекций/EntityGraph, измерьте, и только потом переходите к SQL, если выгода очевидна. Чем меньше у вас «нестандартного» SQL в коде сервиса, тем проще сопровождать, обновлять и обучать команду.
-
-И наконец, документируйте контракт native-запросов рядом с DTO (комментарии + тесты с параметрами и «золотыми» значениями). Это избавит от регрессов при изменениях схемы/индексов и поможет коллегам быстро понять, зачем и где используется конкретный запрос.
-
-**Java — native → интерфейсная проекция + `@SqlResultSetMapping` конструктор**
+Spring Data умеет маппить результат нативного SQL в интерфейсные проекции. Секрет здесь простой: названия колонок в SELECT должны совпадать с геттерами интерфейса (либо через алиасы). Для простых отчётов этого достаточно: вы пишете `@Query(value = "...", nativeQuery = true)` и возвращаете список проекций.
 
 ```java
-package com.example.nativeproj;
+package com.example.jpa.nativeq;
 
-import jakarta.persistence.*;
-import org.springframework.data.domain.*;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
+public interface CustomerRow {
 
-import java.time.Instant;
-
-public interface CustomerReportRow {
     Long getId();
-    String getFullName();
-    Integer getAge();
-    String getPhone();
-    Instant getCreatedAt();
-}
 
-@Entity
-@Table(name = "customers")
-@NamedNativeQuery(
-    name = "Customer.nativeReportDto",
-    query = """
-        with base as (
-            select c.id,
-                   (c.first_name || ' ' || c.last_name) as full_name,
-                   (c.data->>'age')::int as age,
-                   (c.data->>'phone') as phone,
-                   c.created_at
-            from customers c
-            where (:q is null or c.last_name ilike concat('%', :q, '%'))
-        )
-        select * from base
-        order by created_at desc, id desc
-    """,
-    resultSetMapping = "CustomerReportDtoMapping"
-)
-@SqlResultSetMapping(
-    name = "CustomerReportDtoMapping",
-    classes = @ConstructorResult(
-        targetClass = com.example.nativeproj.CustomerReportDto.class,
-        columns = {
-            @ColumnResult(name = "id", type = Long.class),
-            @ColumnResult(name = "full_name", type = String.class),
-            @ColumnResult(name = "age", type = Integer.class),
-            @ColumnResult(name = "phone", type = String.class),
-            @ColumnResult(name = "created_at", type = java.time.Instant.class)
-        }
-    )
-)
-class Customer {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(name = "first_name", nullable = false) String firstName;
-    @Column(name = "last_name", nullable = false) String lastName;
-    @Column(columnDefinition = "jsonb") String data; // для примера
-    @Column(name = "created_at", nullable = false) Instant createdAt = Instant.now();
-    protected Customer() {}
-}
+    String getFirstName();
 
-public record CustomerReportDto(Long id, String fullName, Integer age, String phone, Instant createdAt) { }
+    String getLastName();
 
-@Repository
-interface CustomerRepository extends JpaRepository<Customer, Long> {
-
-    // 1) Native + интерфейсная проекция (обратите внимание на алиасы)
-    @Query(
-        value = """
-            select c.id as id,
-                   (c.first_name || ' ' || c.last_name) as fullName,
-                   (c.data->>'age')::int as age,
-                   (c.data->>'phone') as phone,
-                   c.created_at as createdAt
-            from customers c
-            where (:q is null or c.last_name ilike concat('%', :q, '%'))
-            order by c.created_at desc, c.id desc
-        """,
-        countQuery = """
-            select count(*) from customers c
-            where (:q is null or c.last_name ilike concat('%', :q, '%'))
-        """,
-        nativeQuery = true
-    )
-    Page<CustomerReportRow> pageNativeIface(@Param("q") String q, Pageable p);
-
-    // 2) NamedNativeQuery + SqlResultSetMapping → конструктор DTO
-    @Query(name = "Customer.nativeReportDto", nativeQuery = true)
-    Page<CustomerReportDto> pageNativeDto(@Param("q") String q, Pageable p);
+    String getStatus();
 }
 ```
 
-**Kotlin — аналогичный пример (интерфейс + data class через @SqlResultSetMapping)**
+```java
+package com.example.jpa.nativeq;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
+
+public interface NativeCustomerRepository extends JpaRepository<Customer, Long> {
+
+    @Query(
+        value = """
+                select id,
+                       first_name as firstName,
+                       last_name  as lastName,
+                       status
+                from customers
+                where status = :status
+                order by id
+                """,
+        nativeQuery = true
+    )
+    List<CustomerRow> findNativeByStatus(String status);
+}
+```
 
 ```kotlin
-package com.example.nativeproj
+package com.example.jpa.nativeq
 
-import jakarta.persistence.*
-import org.springframework.data.domain.Page
-import org.springframework.data.domain.Pageable
-import org.springframework.data.jpa.repository.Query
-import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.data.repository.query.Param
-import java.time.Instant
-
-interface CustomerReportRow {
+interface CustomerRow {
     fun getId(): Long
-    fun getFullName(): String
-    fun getAge(): Int?
-    fun getPhone(): String?
-    fun getCreatedAt(): Instant
+    fun getFirstName(): String
+    fun getLastName(): String
+    fun getStatus(): String
 }
+```
+
+```kotlin
+package com.example.jpa.nativeq
+
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
+
+interface NativeCustomerRepository : JpaRepository<Customer, Long> {
+
+    @Query(
+        value = """
+            select id,
+                   first_name as firstName,
+                   last_name  as lastName,
+                   status
+            from customers
+            where status = :status
+            order by id
+            """,
+        nativeQuery = true
+    )
+    fun findNativeByStatus(status: String): List<CustomerRow>
+}
+```
+
+В этом примере Spring Data берёт ResultSet, смотрит на имена колонок (`id`, `firstName`, `lastName`, `status`) и маппит их на методы интерфейса. Такой подход отлично работает для плоских DTO и отчётов. Преимущество — вы используете все возможности SQL, а всё равно получаете удобный типизированный результат.
+
+Когда же нужен `SqlResultSetMapping`? В двух случаях: когда вы хотите маппинг на обычный класс (конструктор), а не интерфейс, и когда вам нужно использовать NamedNativeQuery с более тонким контролем над маппингом. `@SqlResultSetMapping` позволяет описать, какие колонки в результате соответствуют каким параметрам конструктора или полям класса, и затем использовать это описание в `createNamedQuery`.
+
+```java
+package com.example.jpa.nativeq;
+
+public record CustomerRevenueDto(Long customerId, String name, double totalRevenue) {
+}
+```
+
+```java
+package com.example.jpa.nativeq;
+
+import jakarta.persistence.*;
 
 @Entity
 @Table(name = "customers")
 @NamedNativeQuery(
-    name = "Customer.nativeReportDto",
-    query = """
-        with base as (
-            select c.id,
-                   (c.first_name || ' ' || c.last_name) as full_name,
-                   (c.data->>'age')::int as age,
-                   (c.data->>'phone') as phone,
-                   c.created_at
-            from customers c
-            where (:q is null or c.last_name ilike concat('%', :q, '%'))
-        )
-        select * from base
-        order by created_at desc, id desc
-    """,
-    resultSetMapping = "CustomerReportDtoMapping"
+        name = "Customer.revenueReport",
+        query = """
+                select c.id          as customer_id,
+                       c.first_name  as name,
+                       coalesce(sum(o.total_amount), 0) as total_revenue
+                from customers c
+                left join orders o on o.customer_id = c.id
+                group by c.id, c.first_name
+                """,
+        resultSetMapping = "CustomerRevenueMapping"
 )
 @SqlResultSetMapping(
-    name = "CustomerReportDtoMapping",
+        name = "CustomerRevenueMapping",
+        classes = @ConstructorResult(
+                targetClass = CustomerRevenueDto.class,
+                columns = {
+                        @ColumnResult(name = "customer_id", type = Long.class),
+                        @ColumnResult(name = "name", type = String.class),
+                        @ColumnResult(name = "total_revenue", type = Double.class)
+                }
+        )
+)
+public class Customer {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String firstName;
+
+    private String lastName;
+
+    private String status;
+
+    // getters/setters
+}
+```
+
+```kotlin
+package com.example.jpa.nativeq
+
+data class CustomerRevenueDto(
+    val customerId: Long,
+    val name: String,
+    val totalRevenue: Double
+)
+```
+
+```kotlin
+package com.example.jpa.nativeq
+
+import jakarta.persistence.*
+
+@Entity
+@Table(name = "customers")
+@NamedNativeQuery(
+    name = "Customer.revenueReport",
+    query = """
+        select c.id          as customer_id,
+               c.first_name  as name,
+               coalesce(sum(o.total_amount), 0) as total_revenue
+        from customers c
+        left join orders o on o.customer_id = c.id
+        group by c.id, c.first_name
+        """,
+    resultSetMapping = "CustomerRevenueMapping"
+)
+@SqlResultSetMapping(
+    name = "CustomerRevenueMapping",
     classes = [
         ConstructorResult(
-            targetClass = CustomerReportDto::class,
+            targetClass = CustomerRevenueDto::class,
             columns = [
-                ColumnResult(name = "id", type = java.lang.Long::class),
-                ColumnResult(name = "full_name", type = java.lang.String::class),
-                ColumnResult(name = "age", type = java.lang.Integer::class),
-                ColumnResult(name = "phone", type = java.lang.String::class),
-                ColumnResult(name = "created_at", type = java.time.Instant::class)
+                ColumnResult(name = "customer_id", type = Long::class),
+                ColumnResult(name = "name", type = String::class),
+                ColumnResult(name = "total_revenue", type = Double::class)
             ]
         )
     ]
 )
 class Customer(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(name = "first_name", nullable = false)
+
     var firstName: String = "",
-    @Column(name = "last_name", nullable = false)
+
     var lastName: String = "",
-    @Column(columnDefinition = "jsonb")
-    var data: String? = null,
-    @Column(name = "created_at", nullable = false)
-    var createdAt: Instant = Instant.now()
+
+    var status: String = ""
 )
-
-data class CustomerReportDto(
-    val id: Long,
-    val fullName: String,
-    val age: Int?,
-    val phone: String?,
-    val createdAt: Instant
-)
-
-interface CustomerRepository : JpaRepository<Customer, Long> {
-
-    @Query(
-        value = """
-            select c.id as id,
-                   (c.first_name || ' ' || c.last_name) as fullName,
-                   (c.data->>'age')::int as age,
-                   (c.data->>'phone') as phone,
-                   c.created_at as createdAt
-            from customers c
-            where (:q is null or c.last_name ilike concat('%', :q, '%'))
-            order by c.created_at desc, c.id desc
-        """,
-        countQuery = """
-            select count(*) from customers c
-            where (:q is null or c.last_name ilike concat('%', :q, '%'))
-        """,
-        nativeQuery = true
-    )
-    fun pageNativeIface(@Param("q") q: String?, p: Pageable): Page<CustomerReportRow>
-
-    @Query(name = "Customer.nativeReportDto", nativeQuery = true)
-    fun pageNativeDto(@Param("q") q: String?, p: Pageable): Page<CustomerReportDto>
-}
 ```
 
----
-
-## Частичные обновления: `@Modifying` JPQL/SQL, возвращаемые счётчики, осторожно с кешами и L1-контекстом
-
-Частичные обновления — это DML-запросы `update ... where ...`/`delete ...` на уровне БД, которые минуют загрузку сущностей и dirty checking. Они полезны для массовых/типовых операций: смена статуса по условию, инкремент счётчика, «закрыть все просроченные». В Spring Data JPA такие методы объявляются через `@Modifying` на `@Query` и возвращают **количество затронутых строк**.
-
-Важно понимать семантику: bulk-операции **обходят** Persistence Context. Hibernate не знает, что строки изменились, и managed-экземпляры остаются со старыми полями. Поэтому типичная практика — `@Modifying(clearAutomatically = true, flushAutomatically = true)`. Первая опция очищает L1-кэш после DML, вторая — гарантирует, что ваши незакомиченные изменения будут «сброшены» до выполнения bulk, чтобы не перезаписать их старым состоянием.
-
-Ещё одна критическая деталь — оптимистическая блокировка. JPQL bulk update **не учитывает `@Version`** автоматически и не инкрементирует версию. Если вам важна корректность с версиями, добавьте её в `where` и увеличьте вручную: `set version = version + 1 where id = :id and version = :expected`. В противном случае вы можете перезаписать изменения параллельных транзакций.
-
-Возвращаемые счётчики — отличный инструмент для контроля бизнес-инвариантов. Например, вы ожидаете, что сменится статус ровно у одной строки — проверяйте, что метод вернул 1; если 0, значит, запись не найдена или версия не совпала — возвращайте 404/409. Это превращает bulk-обновление в атомарную команду с понятным исходом.
-
-С native SQL вы получаете больше свободы: `updated_at = now()`, `coalesce`/`case` и т. п. В Postgres есть «сахар» `returning`, но Spring Data `@Modifying` по умолчанию вернёт только число затронутых строк. Если вам нужны сами id/значения «после», либо используйте `JdbcTemplate`/jOOQ, либо маппьте результат `returning` отдельным методом с `nativeQuery=true` и типом `List<Long>`/DTO (без `@Modifying`, так как это уже «select» с точки зрения драйвера).
-
-Работа с L2-кэшем при bulk-операциях требует явной инвалидации регионов. Если у вас включён кэш 2-го уровня для сущности `Order`, после `update Order o set ...` его данные устареют. Либо делайте `entityManager.getEntityManagerFactory().getCache().evict(Order.class)`, либо используйте поставщика кэша с встроенной инвалидацией по событиям (дороже). В противном случае вы прочитаете «старое» из кэша.
-
-Не забывайте про таймауты: bulk-операции могут трогать много строк. Задавайте `@Transactional(timeout = ...)` или хинты для запроса (в Hibernate — `org.hibernate.jpa.HibernateHints.HINT_TIMEOUT`) и мониторьте планы выполнения. Часто выгоднее резать операцию на порции (например, по id-диапазонам) и выполнять в цикле, чем держать долгую транзакцию.
-
-Bulk-операции не вызывают entity listeners (`@PreUpdate/@PostUpdate`), не срабатывают каскады JPA. Если у вас важны побочные эффекты (журналы, аудиты, доменные правила), либо реализуйте их в самой SQL-команде/триггерах БД, либо делайте изменения через управляемые сущности (дороже, но корректнее).
-
-Ещё один паттерн — «апсерты» и «инкременты в базе». Вместо «прочитай-суммируй-запиши», делайте `update ... set counter = counter + :delta where id = :id`. Это атомарно и дружит с конкуренцией. Возвращаемый счётчик строк подскажет, была ли запись. Для upsert в Postgres используйте `insert ... on conflict (key) do update set ...`, но это уже зона native/JDBC/jOOQ.
-
-И наконец, профилируйте. Часто «пять точечных update» по индексу быстрее, чем «один гигантский update» без подходящего индекса. Добавьте where-индексы, измерьте на боевых объёмах (с Testcontainers и репрезентативным набором данных), а потом решайте, оставаться ли на JPA bulk или спускаться на JDBC.
-
-**Java — `@Modifying` JPQL и native, работа со счётчиком и L1-кэшем**
+Вызывать такой запрос удобнее всего из сервиса через `EntityManager`. Spring Data здесь не особо помогает, потому что ему важнее сущности и JPQL. Но сервисный слой вполне может использовать `createNamedQuery` и получить список DTO.
 
 ```java
-package com.example.bulk;
-
-import jakarta.persistence.*;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.Instant;
-
-@Entity
-@Table(name = "tickets")
-class Ticket {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-
-    @Column(nullable = false) String status; // NEW, IN_PROGRESS, CLOSED
-    @Column(nullable = false) Instant updatedAt = Instant.now();
-
-    @Version
-    Long version;
-
-    protected Ticket() {}
-}
-
-@Repository
-interface TicketRepository extends JpaRepository<Ticket, Long> {
-
-    // JPQL bulk: учитываем версию вручную, чистим L1-кэш
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("""
-        update Ticket t
-           set t.status = :status,
-               t.updatedAt = :now,
-               t.version = t.version + 1
-         where t.id = :id
-           and (t.version is null or t.version = :expectedVersion)
-    """)
-    int updateStatus(@Param("id") Long id,
-                     @Param("expectedVersion") Long expectedVersion,
-                     @Param("status") String status,
-                     @Param("now") Instant now);
-
-    // Native bulk с возможностью использовать диалектные фичи
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query(value = """
-        update tickets
-           set status = :status,
-               updated_at = now()
-         where status = :fromStatus
-    """, nativeQuery = true)
-    int massClose(@Param("fromStatus") String fromStatus,
-                  @Param("status") String toStatus);
-}
-
-@Service
-class TicketService {
-    private final TicketRepository repo;
-    private final EntityManagerFactory emf;
-
-    TicketService(TicketRepository repo, EntityManagerFactory emf) {
-        this.repo = repo; this.emf = emf;
-    }
-
-    @Transactional
-    public void close(Long id, Long expectedVersion) {
-        int changed = repo.updateStatus(id, expectedVersion, "CLOSED", Instant.now());
-        if (changed == 0) {
-            throw new IllegalStateException("Optimistic conflict or not found: id=" + id);
-        }
-        // При L2-кэше стоит ещё и его почистить:
-        emf.getCache().evict(Ticket.class, id);
-    }
-
-    @Transactional
-    public int closeAllInProgress() {
-        int n = repo.massClose("IN_PROGRESS", "CLOSED");
-        // Можно инвалидировать весь регион L2:
-        emf.getCache().evict(Ticket.class);
-        return n;
-    }
-}
-```
-
-**Kotlin — `@Modifying`, счётчики и инвалидация кэша**
-
-```kotlin
-package com.example.bulk
-
-import jakarta.persistence.*
-import org.springframework.data.jpa.repository.*
-import org.springframework.data.repository.query.Param
-import org.springframework.stereotype.Repository
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import java.time.Instant
-
-@Entity
-@Table(name = "tickets")
-class Ticket(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var status: String = "NEW",
-    @Column(nullable = false) var updatedAt: Instant = Instant.now(),
-    @Version var version: Long? = null
-)
-
-@Repository
-interface TicketRepository : JpaRepository<Ticket, Long> {
-
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query(
-        """
-        update Ticket t
-           set t.status = :status,
-               t.updatedAt = :now,
-               t.version = t.version + 1
-         where t.id = :id
-           and (t.version is null or t.version = :expectedVersion)
-        """
-    )
-    fun updateStatus(
-        @Param("id") id: Long,
-        @Param("expectedVersion") expectedVersion: Long?,
-        @Param("status") status: String,
-        @Param("now") now: Instant
-    ): Int
-
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query(
-        value = """
-        update tickets
-           set status = :toStatus,
-               updated_at = now()
-         where status = :fromStatus
-        """,
-        nativeQuery = true
-    )
-    fun massClose(
-        @Param("fromStatus") fromStatus: String,
-        @Param("toStatus") toStatus: String
-    ): Int
-}
-
-@Service
-class TicketService(
-    private val repo: TicketRepository,
-    private val emf: EntityManagerFactory
-) {
-
-    @Transactional
-    fun close(id: Long, expectedVersion: Long?) {
-        val changed = repo.updateStatus(id, expectedVersion, "CLOSED", Instant.now())
-        if (changed == 0) error("Optimistic conflict or not found: id=$id")
-        emf.cache.evict(Ticket::class.java, id)
-    }
-
-    @Transactional
-    fun closeAllInProgress(): Int {
-        val n = repo.massClose("IN_PROGRESS", "CLOSED")
-        emf.cache.evict(Ticket::class.java)
-        return n
-    }
-}
-```
-
-# 3. Вставки/обновления батчами и генерация идентификаторов
-
-*Зависимости и базовые настройки для всей подтемы*
-
-**Gradle (Groovy DSL)**
-
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-```
-
-**application.yml (важные параметры для батчей)**
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/app?reWriteBatchedInserts=true
-    username: app
-    password: app
-  jpa:
-    open-in-view: false
-    hibernate:
-      ddl-auto: validate
-    properties:
-      hibernate:
-        jdbc.batch_size: 50
-        order_inserts: true
-        order_updates: true
-        batch_versioned_data: true     # разрешить батчить UPDATE версионируемых сущностей
-        generate_statistics: true
-```
-
----
-
-## Влияние стратегий `@GeneratedValue` на батчи (SEQUENCE vs IDENTITY; оптимизаторы `pooled/pooled-lo`)
-
-Первое, о чём нужно договориться команде: **батч-вставка в Hibernate полноценно работает только с SEQUENCE**, а не с IDENTITY. Причина в том, что при `IDENTITY` (AUTO_INCREMENT/SERIAL/IDENTITY) провайдер **должен немедленно выполнить INSERT**, чтобы получить сгенерированный ключ (`getGeneratedKeys`/`RETURNING`) и привязать его к объекту. Это вынуждает выполнять каждую вставку отдельно, и батч распадается. В реальной жизни вы увидите один INSERT на каждую сущность, пусть даже драйвер и умеет переписывать батч — Hibernate не даст его собрать.
-
-При стратегии `SEQUENCE` выдача идентификаторов **разделена** от самой вставки. Провайдер может заранее «выдернуть» диапазон значений из последовательности и потом свободно накапливать INSERT-ы в батчи, отправляя их пачками 50/100 и т. п. В результате round-trip’ов меньше, перегрузка пула снижается, а пропускная способность растёт в разы. Поэтому если у вас есть требования к массовым вставкам — выбирайте `SEQUENCE`.
-
-Дальше вступают в игру **оптимизаторы** последовательностей. `pooled` и `pooled-lo` позволяют брать **блок** значений из последовательности, чтобы реже ходить в БД за `nextval`. Схематично: приложение получает «корзину» из N id и раздаёт их локально. Это важная оптимизация под высокую нагрузку, особенно в микросервисах с несколькими инстансами.
-
-Разница между `pooled` и `pooled-lo`. В `pooled` сам хранимый в БД счётчик увеличивается на 1, а Hibernate держит «окно» из `allocationSize`, вычисляя hi/lo внутри. В `pooled-lo` БД-последовательность **реально прыгает** на шаг `allocationSize` (INCREMENT BY N), а Hibernate на стороне приложения раздаёт значения «внутри» блока. В современных проектах чаще используют `pooled-lo`, потому что он проще согласуется между несколькими узлами и лучше восстанавливается после рестартов.
-
-Чтобы `pooled-lo` работал эффективно, **увеличьте инкремент последовательности** в схеме ровно до `allocationSize` и укажите тот же `allocationSize` в аннотации генератора. Это синхронизирует БД и ORM. Если оставить по умолчанию (JPA `allocationSize=50`, а в БД `INCREMENT BY 1`), всё будет корректно, но вы потеряете часть выгоды, делая лишние вызовы `nextval()`.
-
-При работе с SEQUENCE обратите внимание на кэшируемость последовательностей в СУБД. В Postgres последовательность сама по себе быстрая, но под большой нагрузкой упрётесь именно в количество round-trip’ов. Здесь `pooled/pooled-lo` и высокая `allocationSize` (например, 100/200) дают хороший выигрыш, если вы много вставляете.
-
-Что если у вас уже стоит `IDENTITY` из «Основ»? Для массовых вставок можно завести **отдельную сущность с SEQUENCE** и преобразовывать данные после ETL. Но чаще лучше **мигрировать** стратегию: добавить последовательность, перенастроить колонку и генератор. Да, id могут «скакнуть» при смене стратегии, но для непрозрачного внешнего мира это обычно не важно.
-
-И ещё: Spring Data `saveAll()` не делает магии — он просто вызывает `persist`/`merge` по очереди. Работать в батче он начнёт **только** при корректной стратегии id и включённых настройках Hibernate/драйвера. Проверяйте SQL-лог: вы должны увидеть «пачки» INSERT-ов, а не сотни одиночных запросов.
-
-**Flyway (PostgreSQL) — последовательность под pooled-lo**
-
-```sql
--- V1__seq_invoice.sql
-create sequence if not exists invoice_seq increment by 50 start with 1; -- allocationSize=50
-
-create table invoices(
-    id bigint primary key,
-    customer_id bigint not null,
-    amount_cents bigint not null,
-    created_at timestamptz not null default now()
-);
-```
-
-**Java — сущность с SEQUENCE + pooled-lo и сущность с IDENTITY (для контраста)**
-
-```java
-package com.example.batchid;
-
-import jakarta.persistence.*;
-import org.hibernate.annotations.GenericGenerator;
-
-@Entity
-@Table(name = "invoices")
-@SequenceGenerator(
-        name = "invoice_seq",
-        sequenceName = "invoice_seq",
-        allocationSize = 50  // согласовано с миграцией
-)
-public class Invoice {
-    @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "invoice_seq")
-    private Long id;
-
-    @Column(name = "customer_id", nullable = false)
-    private Long customerId;
-
-    @Column(name = "amount_cents", nullable = false)
-    private long amountCents;
-
-    protected Invoice() {}
-    public Invoice(Long customerId, long amountCents) {
-        this.customerId = customerId;
-        this.amountCents = amountCents;
-    }
-    // getters/setters ...
-}
-
-@Entity
-@Table(name = "tags")
-class Tag {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY) // НЕ батчится как вставка в Hibernate
-    private Long id;
-
-    @Column(nullable = false, unique = true)
-    private String name;
-
-    protected Tag() {}
-    public Tag(String name){ this.name = name; }
-    // getters/setters ...
-}
-```
-
-**Kotlin — те же сущности**
-
-```kotlin
-package com.example.batchid
-
-import jakarta.persistence.*
-
-@Entity
-@Table(name = "invoices")
-@SequenceGenerator(
-    name = "invoice_seq",
-    sequenceName = "invoice_seq",
-    allocationSize = 50
-)
-class Invoice(
-    @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "invoice_seq")
-    var id: Long? = null,
-
-    @Column(name = "customer_id", nullable = false)
-    var customerId: Long = 0,
-
-    @Column(name = "amount_cents", nullable = false)
-    var amountCents: Long = 0
-)
-
-@Entity
-@Table(name = "tags")
-class Tag(
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false, unique = true)
-    var name: String = ""
-)
-```
-
-**Java — сервис массовой вставки (батч виден только с SEQUENCE)**
-
-```java
-package com.example.batchid;
+package com.example.jpa.nativeq;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -1468,30 +1193,21 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 @Service
-public class InvoiceBatchService {
+public class RevenueReportService {
 
     @PersistenceContext
     private EntityManager em;
 
-    @Transactional
-    public void saveInvoices(List<Invoice> invoices) {
-        int batch = 50; // совпадает с jdbc.batch_size
-        int i = 0;
-        for (Invoice inv : invoices) {
-            em.persist(inv);
-            if (++i % batch == 0) {
-                em.flush();
-                em.clear(); // снижает рост L1-кэша
-            }
-        }
+    @Transactional(readOnly = true)
+    public List<CustomerRevenueDto> getRevenueReport() {
+        return em.createNamedQuery("Customer.revenueReport", CustomerRevenueDto.class)
+                 .getResultList();
     }
 }
 ```
 
-**Kotlin — аналог сервиса**
-
 ```kotlin
-package com.example.batchid
+package com.example.jpa.nativeq
 
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
@@ -1499,1440 +1215,1810 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
 @Service
-class InvoiceBatchService(
-    @PersistenceContext private val em: EntityManager
+class RevenueReportService(
+
+    @PersistenceContext
+    private val em: EntityManager
 ) {
+
+    @Transactional(readOnly = true)
+    fun getRevenueReport(): List<CustomerRevenueDto> =
+        em.createNamedQuery("Customer.revenueReport", CustomerRevenueDto::class.java)
+            .resultList
+}
+```
+
+В чём преимущества и ограничения такого подхода? Плюсы очевидны: вы получаете всю мощь SQL, включая специфичные возможности Postgres (JSONB, window-функции, CTE), и контролируете каждый байт, который идёт по JDBC. Минусы — теряете переносимость (запрос завязан на конкретную СУБД), а маппинг становится более хрупким: любое изменение схемы может сломать `@SqlResultSetMapping`, и это ещё нужно поймать тестами.
+
+По производительности нативные запросы часто выигрывают у JPQL, если вы умеете писать хороший SQL. Но если вы просто переписали простую выборку в native «ради спортивного интереса», то шансы велики, что профит будет нулевым, а код — сложнее и менее читаемым. Поэтому разумная стратегия — использовать `nativeQuery` и `SqlResultSetMapping` для действительно сложных отчётов и агрегатов, а всё, что возможно, держать на уровне JPQL/проекций.
+
+Если вы замечаете, что весь слой данных превращается в зоопарк нативных запросов, это сигнал, что вам, возможно, нужен отдельный инструмент — например, jOOQ для отчётной части, оставив JPA для доменных сущностей. Но это уже тема отдельной подтемы в этом же разделе.
+
+---
+
+## Частичные обновления: @Modifying JPQL/SQL, возвращаемые счётчики, осторожно с кешами и L1-контекстом
+
+Полноценное JPA-обновление выглядит так: вы загружаете сущность, меняете поле, транзакция коммитится, Hibernate на основе dirty checking генерирует нужный `UPDATE`. Это удобно и безопасно: контекст персистентности знает, что произошло, L1-кеш консистентен, и всё работает. Но иногда это дорого: например, когда вы хотите массово поменять статус тысяч записей, или когда вам нужно изменить одно поле без загрузки тяжёлого графа связей. Здесь на сцену выходят частичные обновления через `@Modifying`.
+
+Spring Data JPA позволяет объявлять на репозитории методы, которые выполняют `UPDATE`/`DELETE` напрямую в базе, минуя загрузку сущностей. Для этого используется аннотация `@Modifying` поверх `@Query`. Такой метод возвращает количество затронутых строк и не возвращает сущности. С точки зрения JDBC это просто выполнение DML, а Hibernate лишь проксирует запрос к драйверу.
+
+```java
+package com.example.jpa.update;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+
+public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+           update Order o
+           set o.status = :status
+           where o.id = :id
+           """)
+    int updateStatusById(Long id, OrderStatus status);
+}
+```
+
+```kotlin
+package com.example.jpa.update
+
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Query
+
+interface OrderRepository : JpaRepository<Order, Long> {
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        """
+        update Order o
+        set o.status = :status
+        where o.id = :id
+        """
+    )
+    fun updateStatusById(id: Long, status: OrderStatus): Int
+}
+```
+
+Ключевые моменты: `@Modifying` говорит Spring Data, что это не select, а update/delete; `flushAutomatically = true` заставляет сначала сбросить в базу все накопленные изменения в persistence context (чтобы не потерять их), а `clearAutomatically = true` — очистить контекст после выполнения запроса, чтобы там не оставались сущности со старым состоянием. Возвращаемое значение — количество строк, на которые повлиял update.
+
+Важно помнить, что такие bulk-операции выполняются в рамках текущей транзакции, поэтому сервисный метод, который их вызывает, должен быть помечен `@Transactional`. В противном случае Spring Data откроет короткую транзакцию только на время выполнения update, но вы потеряете возможность комбинировать эту операцию с другими действиями в одной транзакции.
+
+```java
+package com.example.jpa.update;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class OrderService {
+
+    private final OrderRepository repository;
+
+    public OrderService(OrderRepository repository) {
+        this.repository = repository;
+    }
+
     @Transactional
-    fun saveInvoices(invoices: List<Invoice>) {
-        val batch = 50
-        var i = 0
-        for (inv in invoices) {
-            em.persist(inv)
-            if (++i % batch == 0) {
-                em.flush()
-                em.clear()
-            }
+    public void cancelOrder(Long id) {
+        int updated = repository.updateStatusById(id, OrderStatus.CANCELED);
+        if (updated == 0) {
+            throw new IllegalArgumentException("Order not found: " + id);
         }
     }
 }
 ```
 
----
+```kotlin
+package com.example.jpa.update
 
-## Тюнинг батчей: `hibernate.jdbc.batch_size`, `order_inserts/updates`, драйверные оптимизации (для PG — `reWriteBatchedInserts`)
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 
-Начинаем с базового параметра `hibernate.jdbc.batch_size`. Он определяет, сколько однотипных DML-операций (INSERT/UPDATE/DELETE) Hibernate **буферизует** перед отправкой в JDBC как батч. Типичные значения — 25–100. Слишком маленькое — мало эффекта; слишком большое — рост памяти и риск попасть в большие RTT/таймаут. На практике 50 — хороший старт.
+@Service
+class OrderService(
+    private val repository: OrderRepository
+) {
 
-Опции `hibernate.order_inserts=true` и `hibernate.order_updates=true` позволяют ORM **перегруппировать** операции по типу сущности и ключам, чтобы максимизировать батчи. Без сортировки вы легко получите чередование разных типов и «разобьёте» батч на одиночные запросы. С сортировкой ORM сначала вставит все `Invoice`, затем все `Payment` и т. п., что уменьшит количество статементов.
+    @Transactional
+    fun cancelOrder(id: Long) {
+        val updated = repository.updateStatusById(id, OrderStatus.CANCELED)
+        if (updated == 0) {
+            throw IllegalArgumentException("Order not found: $id")
+        }
+    }
+}
+```
 
-Для **версионируемых** сущностей (с `@Version`) Hibernate по умолчанию осторожничает и может не батчить UPDATE-ы. Параметр `hibernate.jdbc.batch_versioned_data=true` разрешает это, если вы понимаете свои шаблоны конкурентности и готовы ловить конфликты оптимистической блокировки — в обмен вы получите существенно меньше round-trip’ов на массовых изменениях.
+Главный подводный камень частичных обновлений — контекст персистентности (L1-кеш). Bulk `UPDATE` в JPQL или native SQL **обходит** L1-контекст и изменяет данные напрямую в базе. Если в той же сессии у вас уже загружены сущности `Order` с этим id, их состояние в памяти останется старым. Любое обращение к этим сущностям после bulk-операции будет использовать устаревшие данные, пока вы явно не вызовете `refresh()` или не очистите контекст.
 
-Драйверные оптимизации. В Postgres ключевой флаг — `reWriteBatchedInserts=true` в JDBC URL. Он позволяет драйверу **переписать** серию одинаковых `INSERT INTO t(a,b) values (?, ?)` в один multi-values `INSERT ... VALUES (...), (...), ...`, что уменьшает парсинг и ускоряет запись. Это особенно ощутимо при сотнях/тысячах строк. Для UPDATE/DELETE этот флаг не помогает — но там и так работает JDBC батч.
+Параметр `clearAutomatically = true` как раз решает эту проблему: после выполнения update Spring Data попросит EntityManager сделать `clear()`, и все сущности будут отвязаны от контекста. Это безопасно с точки зрения консистентности, но может быть дорогим, если в транзакции у вас накоплено много сущностей. Поэтому иногда рациональнее явно ограничивать область применения bulk-операций и не совмещать их с «обычной» JPA-работой в одной транзакции.
 
-Не забывайте, что batched вставки работают корректно только при стратегии SEQUENCE (см. предыдущий пункт). С `IDENTITY` Hibernate вынужден выполнять INSERT немедленно — драйверу просто нечего переписывать «в пачку» от Hibernate. Исключения из этого правила бывают в кастомных сценариях, но рассчитывать на них нельзя.
-
-Важно контролировать **память**. Батчи «висят» в L1-кэше до `flush()`. Если вы вставляете десятки тысяч строк, обязательно делайте периодический `flush/clear`. Это не только освобождает память, но и сбрасывает JDBC-буфер, давая БД начать фактическую работу. Наблюдайте за GC: батчирование может кратковременно поднять давление на heap.
-
-Следите за **порядком колонок** в INSERT. Hibernate генерирует SQL с перечнем полей; если вы вручную меняете их в `@Column`/`@DynamicInsert`, не нарушайте согласованность — иначе драйвер не сможет эффективно переписать батч. Обычно это редкость, но при тонкой тюнинговой работе нюанс выстреливает.
-
-Проверяйте итоговый SQL и статистику. Включите `org.hibernate.SQL` и `hibernate.generate_statistics=true`. В логах должны появляться повторяющиеся INSERT-ы группами, а в статистике — малое количество `prepareStatement`/`closeStatement`. Если видите сотни одиночных — значит, где-то мешает стратегия id или порядок операций.
-
-И наконец, у тюнинга есть потолок. Если вам нужно заливать миллионы строк (ETL/миграции), подумайте про bulk-загрузки на уровне СУБД (COPY в Postgres), `StatelessSession` в Hibernate или уход в JDBC/jOOQ. Классический ORM предназначен для бизнес-транзакций, а не для «шлангов» данных.
-
-**Java — сравнение настроек батча на одной операции**
+Ещё один вариант — использовать native SQL для частичных обновлений. С точки зрения JPA разницы мало: это всё равно bulk DML, который обходит L1-кеш. Но вы получаете доступ к специфичным возможностям СУБД, например к `now()`/`current_timestamp`, `jsonb_set` и другим функциям Postgres.
 
 ```java
-package com.example.batchtune;
+package com.example.jpa.update;
 
-import com.example.batchid.Invoice;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+
+public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+                update orders
+                set status = :status,
+                    updated_at = now()
+                where id = :id
+                """,
+        nativeQuery = true
+    )
+    int updateStatusNative(Long id, String status);
+}
+```
+
+```kotlin
+package com.example.jpa.update
+
+import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Query
+
+interface OrderRepository : JpaRepository<Order, Long> {
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            update orders
+            set status = :status,
+                updated_at = now()
+            where id = :id
+            """,
+        nativeQuery = true
+    )
+    fun updateStatusNative(id: Long, status: String): Int
+}
+```
+
+Отдельный слой проблем связан с кешами второго уровня (L2) и кешем запросов. Bulk-операции их тоже обходят. Если у вас включен L2-кеш Hibernate, после `update` напрямую в БД кешированные сущности останутся с прежним состоянием, и при следующем чтении вы получите устаревшие данные. Поэтому либо нужно отключать L2 для сущностей, над которыми вы делаете bulk-операции, либо после таких операций явно инвалидировать соответствующие регионы кеша.
+
+Частичные обновления хорошо подходят для сценариев «массовой смены статуса» или «ночной» обработки, но для транзакций, важных с точки зрения бизнес-логики, я бы сначала подумал: нельзя ли обойтись обычной JPA-операцией с загрузкой сущности. Частичный update дешевле по JDBC, но дороже по сложности: нужно помнить про кеши, контекст, L2, кеш запросов и тестировать сценарии конкуренции. В продакшне это вполне рабочий инструмент, но использовать его стоит аккуратно и целенаправленно, а не «на всякий случай».
+
+# 3. Вставки/обновления батчами и генерация идентификаторов
+
+В этой подтеме разберём связку JPA/Hibernate ↔ JDBC: как сильно на реальную производительность влияют стратегии генерации идентификаторов, как правильно «поджечь» JDBC-батчинг, и почему массовые `bulk update/delete` — это не «чуть-чуть быстрее обычного `save()`», а принципиально другой механизм, который обходит контекст персистентности и кеши. Всё это критично важно, когда вы выходите за рамки «иногда сохранить одну сущность» и начинаете действительно грузить базу данными.
+
+Исходный стек для примеров тот же: Spring Boot 3.x, Spring Data JPA, Hibernate, Postgres. Конфигурации Gradle (Groovy/Kotlin) — стандартные для JPA; мы их дальше будем дополнять только при необходимости.
+
+---
+
+## Влияние стратегий @GeneratedValue на батчи (SEQUENCE vs IDENTITY; оптимизаторы pooled/pooled-lo)
+
+Первое, о чём обычно не думают, когда начинают «ускорять» вставки — это способ генерации первичных ключей. На уровне JPA всё выглядит просто: `@GeneratedValue(strategy = …)`, и как будто никакой магии. На самом деле выбор между `IDENTITY` и `SEQUENCE` напрямую влияет на то, сможет ли Hibernate вообще использовать JDBC-батчинг для INSERT. Если вы на Postgres бездумно ставите `GenerationType.IDENTITY` «как в MySQL», вы почти гарантированно убиваете батчи и получаете по одному INSERT на каждую сущность.
+
+Стратегия `IDENTITY` (в Postgres — `serial`/`identity column`) означает, что идентификатор генерируется самой БД при выполнении INSERT. Hibernate, чтобы узнать сгенерированный id, должен выполнить INSERT **сразу** и дождаться результата. Он не может отложить Insert и потом собрать несколько записей в один пакет, потому что ему нужно значение id уже сейчас для дальнейшего использования (в связях, в графе объектов и т.д.). В результате при `GenerationType.IDENTITY` Hibernate вынужден отправлять каждую вставку отдельным запросом, а значит JDBC-батчинг для INSERT фактически не работает.
+
+Стратегия `SEQUENCE` использует отдельный объект `SEQUENCE` в БД для генерации идентификаторов. С точки зрения JDBC это два шага: сначала Hibernate делает `select nextval('seq_name')` (иногда пачкой), получает набор id, а уже потом выполняет INSERT с уже заполненным значением pk. Ключевое преимущество здесь в том, что получение id можно отделить от самого INSERT и сгруппировать вставки в батчи. Hibernate умеет вызывать `nextval` не по одному, а блоками, и затем использовать эти id для нескольких сущностей подряд.
+
+Оптимизаторы `pooled` и `pooled-lo` как раз отвечают за то, как Hibernate взаимодействует с sequence. Без оптимизатора при каждой вставке он делает отдельный `nextval`, что при больших объёмах даёт заметную нагрузку на sequence. С `pooled` Hibernate берёт диапазон id (например, 50 штук) одним запросом, а потом раздаёт их сущностям из памяти. Как только диапазон кончается — берёт следующий. `pooled-lo` делает похожую вещь, но рассчитывает диапазоны иначе (hi/lo), уменьшая количество обращений к sequence ещё сильнее и лучше распределяя id между несколькими нодами.
+
+В Postgres типовая рекомендация для высоконагруженных вставок через Hibernate — использовать `SEQUENCE` с оптимизатором `pooled-lo`. Начиная с Hibernate 5+, `SequenceStyleGenerator` уже умеет сам подбирать оптимизатор, но вы можете его явно настроить. Сущность в Java с явным sequence и pooled-lo может выглядеть так: мы объявляем `@SequenceGenerator`, указываем имя sequence и передаём параметры оптимизатора.
+
+```java
+package com.example.jpa.batch;
+
+import jakarta.persistence.*;
+import org.hibernate.annotations.GenericGenerator;
+import org.hibernate.annotations.Parameter;
+
+@Entity
+@Table(name = "orders")
+public class Order {
+
+    @Id
+    @GeneratedValue(generator = "order_seq")
+    @GenericGenerator(
+            name = "order_seq",
+            strategy = "org.hibernate.id.enhanced.SequenceStyleGenerator",
+            parameters = {
+                    @Parameter(name = "sequence_name", value = "order_seq"),
+                    @Parameter(name = "optimizer", value = "pooled-lo"),
+                    @Parameter(name = "increment_size", value = "50")
+            }
+    )
+    private Long id;
+
+    private String description;
+
+    // другие поля, геттеры/сеттеры
+}
+```
+
+```kotlin
+package com.example.jpa.batch
+
+import jakarta.persistence.*
+import org.hibernate.annotations.GenericGenerator
+import org.hibernate.annotations.Parameter
+
+@Entity
+@Table(name = "orders")
+class Order(
+
+    @Id
+    @GeneratedValue(generator = "order_seq")
+    @GenericGenerator(
+        name = "order_seq",
+        strategy = "org.hibernate.id.enhanced.SequenceStyleGenerator",
+        parameters = [
+            Parameter(name = "sequence_name", value = "order_seq"),
+            Parameter(name = "optimizer", value = "pooled-lo"),
+            Parameter(name = "increment_size", value = "50")
+        ]
+    )
+    var id: Long? = null,
+
+    var description: String = ""
+)
+```
+
+На стороне БД при этом должна существовать sequence `order_seq`. Для Postgres типичный SQL:
+
+```sql
+create sequence if not exists order_seq increment by 50;
+```
+
+Даже если вы не конфигурируете оптимизатор вручную, уже переход с `IDENTITY` на `SEQUENCE` даёт Hibernate возможность использовать JDBC-батчинг для INSERT. С точки зрения приложения это выглядит как обычный `saveAll`, но по проволоке уезжает не 100 отдельных INSERT’ов, а 5–10 батчей, в зависимости от настроек `hibernate.jdbc.batch_size`.
+
+Отдельная ловушка связана с `GenerationType.AUTO`. На разных СУБД Hibernate маппит AUTO по-разному: на H2 это может быть sequence, на Postgres — тоже, а на другой базе — identity. На dev-стенде вы счастливо живёте с sequence и батчами, а на проде после смены диалекта внезапно получаете identity и «мистическое» проседание производительности вставки. Поэтому в серьёзном проекте лучше всегда явно выбирать стратегию генерации и не полагаться на AUTO «как повезёт».
+
+И ещё одно наблюдение: если вы используете UUID как primary key и генерируете его в приложении (например, `@GeneratedValue` с `UUIDGenerator` или просто руками), вы снимаете зависимость от БД для генерации id, и Hibernate может батчить вставки без лишних обращений к sequence. Но за это вы платите более тяжёлым pk (по размеру и по index cost). В Postgres, например, `uuid` индексируется хуже, чем `bigint`. Поэтому здесь тоже нужно смотреть на workload и выбирать сознательно.
+
+Последний штрих — обратная сторона оптимизаторов: sequence начнёт «скакать» крупными блоками id, и после рестартов приложения могут появляться большие «дыры» в значениях. С точки зрения бизнеса это почти всегда нормально, но иногда встречаются требования «id должны быть подряд без дырок» — такие требования в современных high-concurrency системах придётся признать нереалистичными.
+
+---
+
+## Тюнинг батчей: hibernate.jdbc.batch_size, order_inserts/updates, драйверные оптимизации (для PG — reWriteBatchedInserts)
+
+Когда вы разобрались с генерацией id, следующий логичный шаг — включить и настроить сам JDBC-батчинг. В Hibernate ключевой параметр — `hibernate.jdbc.batch_size`. Он говорит: «если я вижу несколько однотипных SQL (INSERT/UPDATE) подряд, собирай их в пакет указанного размера и отправляй в JDBC как batch». На уровне драйвера это превращается в вызов `PreparedStatement.addBatch()` несколько раз, а затем `executeBatch()`. Это резко уменьшает количество round-trip’ов к БД и количество парсинга SQL.
+
+Параметр задаётся в `application.yml` через Spring Boot. Дополнительно часто включают `order_inserts` и `order_updates`, чтобы Hibernate мог переупорядочить операции так, чтобы максимизировать размер батча (сгруппировать однотипные операции по таблицам). Для Postgres, чтобы батчи дали максимум, почти всегда стоит включать свойство драйвера `reWriteBatchedInserts`.
+
+```yaml
+spring:
+  jpa:
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+  datasource:
+    url: jdbc:postgresql://localhost:5432/demo
+    username: demo
+    password: demo
+    hikari:
+      data-source-properties:
+        reWriteBatchedInserts: true
+```
+
+В этой конфигурации `batch_size=50` означает, что Hibernate будет стараться аккумулировать до 50 однотипных SQL перед тем, как вызвать `executeBatch()`. Значение 20–50 часто оказывается хорошим компромиссом: слишком маленькое не даёт выигрыша, слишком большое может привести к длинным транзакциям и большим пачкам, которые сложнее откатить и которые тяжелее ложатся на БД.
+
+Свойства `order_inserts=true` и `order_updates=true` разрешают Hibernate переупорядочивать INSERT/UPDATE внутри одного flush так, чтобы операции по одной таблице и с одинаковым набором колонок были рядом. Это помогает в сценариях, когда вы сохраняете граф связей, и ORM в естественном порядке ходит по объектам в разной последовательности. Ordering позволяет «собрать» пачку вставок в таблицу `orders`, потом пачку `order_items` и т.д., что значительно увеличивает размер batch.
+
+`reWriteBatchedInserts=true` — это уже настройка на уровне драйвера Postgres. Без неё драйвер просто отправляет на сервер несколько отдельных INSERT как один batched statement; сервер выполняет их по очереди. С этой настройкой драйвер переписывает батч в **один** SQL вида `insert into ... values (...), (...), (...);`. Для Postgres это часто даёт драматический выигрыш, особенно если у вас много индексов и триггеров. Но важно помнить, что с этим свойством чуть сложнее дебажить SQL, так как логируется уже переписанный statement.
+
+На уровне кода всё выглядит просто. В сервисе вы либо используете `saveAll`, либо вручную вызываете `entityManager.persist` в цикле. Если включены батчи, Hibernate сам соберёт однотипные INSERT/UPDATE в пачки. В примере ниже `saveAll` будет использовать batching, при условии что стратегия id и настройки позволяют.
+
+```java
+package com.example.jpa.batch;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+@Service
+public class OrderBatchService {
+
+    private final OrderRepository repository;
+
+    public OrderBatchService(OrderRepository repository) {
+        this.repository = repository;
+    }
+
+    @Transactional
+    public void saveOrders(List<Order> orders) {
+        repository.saveAll(orders);
+    }
+}
+```
+
+```kotlin
+package com.example.jpa.batch
+
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+@Service
+class OrderBatchService(
+    private val repository: OrderRepository
+) {
+
+    @Transactional
+    fun saveOrders(orders: List<Order>) {
+        repository.saveAll(orders)
+    }
+}
+```
+
+Для ещё более тонкого контроля можно работать через `EntityManager`: например, каждые N сущностей вызывать `flush()` и `clear()`, чтобы не накапливать слишком много объектов в контексте персистентности. Это особенно актуально, если вы грузите десятки тысяч строк за один запуск.
+
+```java
+package com.example.jpa.batch;
+
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.List;
 
 @Service
-public class TuningDemoService {
+public class OrderBatchInsertService {
 
     @PersistenceContext
     private EntityManager em;
 
     @Transactional
-    public void insertThousandInvoices() {
-        List<Invoice> list = new ArrayList<>();
-        for (int i = 0; i < 1_000; i++) {
-            list.add(new Invoice(100L + (i % 10), 10_00L + i));
-        }
+    public void insertInBatches(List<Order> orders) {
+        int batchSize = 50;
         int i = 0;
-        for (Invoice inv : list) {
-            em.persist(inv);
-            if (++i % 50 == 0) { // совпадает с jdbc.batch_size
+        for (Order order : orders) {
+            em.persist(order);
+            i++;
+            if (i % batchSize == 0) {
                 em.flush();
                 em.clear();
             }
         }
+        em.flush();
+        em.clear();
     }
 }
 ```
 
-**Kotlin — тот же пример**
-
 ```kotlin
-package com.example.batchtune
+package com.example.jpa.batch
 
-import com.example.batchid.Invoice
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
 @Service
-class TuningDemoService(
-    @PersistenceContext private val em: EntityManager
+class OrderBatchInsertService(
+
+    @PersistenceContext
+    private val em: EntityManager
 ) {
+
     @Transactional
-    fun insertThousandInvoices() {
-        val list = MutableList(1_000) { i ->
-            Invoice(customerId = 100L + (i % 10), amountCents = 1_000L + i)
-        }
+    fun insertInBatches(orders: List<Order>) {
+        val batchSize = 50
         var i = 0
-        for (inv in list) {
-            em.persist(inv)
-            if (++i % 50 == 0) {
+        for (order in orders) {
+            em.persist(order)
+            i++
+            if (i % batchSize == 0) {
                 em.flush()
                 em.clear()
             }
         }
+        em.flush()
+        em.clear()
     }
 }
 ```
+
+Настройки батчинга касаются не только INSERT, но и UPDATE. Если вы в цикле меняете поле у множества уже загруженных сущностей и не вызываете `flush()` досрочно, Hibernate на момент commit увидит пачку однотипных UPDATE и тоже попробует их забатчить. Однако здесь стоит помнить про `hibernate.jdbc.batch_versioned_data`: по умолчанию Hibernate может избегать батчинга для версионируемых сущностей (`@Version`), чтобы корректно отслеживать оптимистические блокировки. Если вы хотите батчить и их, эту настройку можно включить, но тогда нужно внимательно следить за логикой обработки конфликтов версий.
+
+Проверить, работает ли батчинг, проще всего через SQL-логи или статистику Hibernate. При включённом `hibernate.generate_statistics=true` и батч-сценарии вы увидите меньшее количество запросов, чем количество `persist`/`save`. Это хороший sanity-check: если вы включили batch_size, но статистика показывает 1000 INSERT’ов при 1000 сущностей — значит, что-то мешает батчам (чаще всего это IDENTITY или неоднородность SQL).
+
+Стоит также иметь в виду, что слишком агрессивные батчи при долгих транзакциях могут дать обратный эффект: большие пачки блокируют много строк/страниц, увеличивают время удержания блокировок и усложняют откаты. Поэтому «поставить 1000 и забыть» — плохая идея. Более разумный подход — измерять: начать с 20–50, посмотреть на p95/p99 latency, на поведение БД под нагрузкой и уже от этого плясать.
 
 ---
 
-## Массовые операции: `bulk update/delete` через JPQL — обход 1-го уровня, необходимость ручной синхронизации
+## Массовые операции: bulk update/delete через JPQL — обход 1-го уровня, необходимость ручной синхронизации
 
-`Bulk update/delete` — это JPQL-команды вида `update Entity e set e.status = :s where ...` и `delete from Entity e where ...`, которые Hibernate транслирует в **один SQL** без загрузки отдельных сущностей и без dirty checking. Это инструмент высокой мощности: вы за одно действие меняете/удаляете тысячи строк. Но плата — они **обходят** Persistence Context (кэш 1-го уровня).
+Батчинг решает вопрос «как быстрее выполнить много похожих операций», но каждая операция всё равно описывается на уровне сущности (вставка/обновление конкретного объекта). Иногда же нужен принципиально другой подход: «обновить статус всех заказов старше N дней» или «удалить все лог-записи старше года». Грузить такие объёмы как сущности и крутить по ним циклы — и дорого, и бессмысленно. Для этого в JPA существует механизм bulk-операций: массовые `UPDATE`/`DELETE` в JPQL и native SQL.
 
-Что означает «обход»? Если в текущей транзакции у вас уже есть managed-экземпляры этой сущности, их поля **не обновятся** в памяти после bulk-операции. Вы можете тут же прочитать «старые» данные, а в БД уже «новые». Чтобы избежать рассинхрона, после bulk-операций нужно **очищать** контекст (`clear`) или хотя бы `refresh` затронутые сущности. В Spring Data JPA есть удобные флаги `@Modifying(clearAutomatically = true, flushAutomatically = true)`.
+Bulk-операция в JPQL — это запрос вида `update Entity e set e.field = :value where ...` или `delete from Entity e where ...`. Hibernate переводит его в один SQL-запрос на уровне БД. Он **не** загружает сущности в контекст персистентности, не выполняет lifecycle-callback’и (`@PreUpdate`, `@PreRemove` и т.д.) и не следит за `@Version`. Это мощный, но довольно «грубый» инструмент: вы напрямую управляете строками в таблице, обходя большинство механизмов ORM.
 
-Важно помнить и про **версионирование**. JPQL bulk не учитывает `@Version` автоматически. Если для вас критично защищаться от конкуренции, вручную добавьте в запрос `where e.version = :expected` и увеличьте `e.version = e.version + 1` в SET. И обязательно проверяйте возвращаемый счётчик строк: 0 — значит, конфликт версий/условий, реагируйте 409/404.
-
-Массовые операции — тяжёлые для БД: они держат блокировки дольше обычного апдейта одной строки, могут затронуть много страниц данных и переписать индексы. Поэтому закладывайте **таймауты** и делайте операции **порционно** (по ключевым диапазонам/статусам), если счёт идёт на миллионы. Часто выгоднее делать несколько маленьких апдейтов, чем один гигантский, особенно если на поле нет подходящего индекса.
-
-Интеграция с кэшем 2-го уровня и кешом запросов: после bulk-операции их содержимое устаревает. Либо запретите L2 для активно меняемой сущности, либо сразу инвалидируйте регион (`EntityManagerFactory.getCache().evict(Entity.class)`), либо используйте поставщик, умеющий реагировать на DML-сигналы. Кеш запросов (query cache) в таких системах вообще лучше не включать.
-
-Наблюдайте за планами: `bulk update` без селективности (без индексов в `where`) превращается в full-scan и массовую перезапись. Если у вас часто «закрываются» тысячи тикетов по статусу, добавьте индекс на `status`, и операция станет в разы дешевле. Иногда имеет смысл разбить: «отметить id в вспомогательной таблице» → «обновить по join» — так вы избежите долгих блокировок горячих таблиц.
-
-Ещё одна типичная ловушка — делать bulk в том же методе, где вы до/после читаете эти же сущности. Даже с `clearAutomatically` есть риск логической ошибки: вы предполагаете, что «статус обновился», а следом читаете коллекцию, которая была загружена раньше и ещё в памяти. Надёжнее разделять «команды» и «запросы» по разным транзакциям/методам.
-
-И помните, что bulk-операции в JPA **не вызывают** `@PreUpdate/@PostUpdate` и другие entity-listeners. Если у вас есть аудит/журналы, реализуйте их отдельно (триггеры БД, аудит-таблицы) или обновляйте сущности поштучно (дороже) там, где слушатели критичны.
-
-Если вы опираетесь на «ретраи» (повтор апдейта при конфликте — характерно для оптимистической блокировки), оборачивайте bulk-команду в цикл с ограниченным количеством попыток. Но чаще проще повторить операцию на уровне бизнес-команды («закрыть тикет»), чем на уровне общей массовой команды.
-
-**Java — репозиторий с bulk update/delete и корректной синхронизацией**
+В Spring Data такие операции объявляются через `@Modifying` поверх `@Query`. В отличие от обычных select-методов, они возвращают количество изменённых строк, а не сущности. Важно также позаботиться о синхронизации контекста: bulk-операция не знает ничего про уже загруженные сущности, поэтому либо нужно очистить контекст, либо гарантировать, что в нём нет объектов, затронутых запросом.
 
 ```java
-package com.example.bulk;
+package com.example.jpa.bulk;
 
-import jakarta.persistence.EntityManagerFactory;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 
-@Repository
-public interface TicketBulkRepository extends JpaRepository<Ticket, Long> {
+import java.time.LocalDateTime;
+
+public interface OrderBulkRepository extends JpaRepository<Order, Long> {
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
-        update Ticket t
-           set t.status = :toStatus,
-               t.updatedAt = CURRENT_TIMESTAMP,
-               t.version = t.version + 1
-         where t.status = :fromStatus
-    """)
-    int transition(@Param("fromStatus") String fromStatus,
-                   @Param("toStatus") String toStatus);
+           update Order o
+           set o.status = com.example.jpa.bulk.OrderStatus.EXPIRED
+           where o.status = com.example.jpa.bulk.OrderStatus.NEW
+             and o.createdAt < :threshold
+           """)
+    int markExpired(LocalDateTime threshold);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("delete from Ticket t where t.status = :status")
-    int deleteByStatus(@Param("status") String status);
-}
-
-@Service
-class TicketBulkService {
-    private final TicketBulkRepository repo;
-    private final EntityManagerFactory emf;
-    TicketBulkService(TicketBulkRepository repo, EntityManagerFactory emf) {
-        this.repo = repo; this.emf = emf;
-    }
-
-    @Transactional
-    public int closeAllNew() {
-        int changed = repo.transition("NEW", "CLOSED");
-        // L2-кэш, если включён:
-        emf.getCache().evict(Ticket.class);
-        return changed;
-    }
-
-    @Transactional
-    public int purgeClosed() {
-        int deleted = repo.deleteByStatus("CLOSED");
-        emf.getCache().evict(Ticket.class);
-        return deleted;
-    }
+    @Query("""
+           delete from Order o
+           where o.status = com.example.jpa.bulk.OrderStatus.CANCELED
+             and o.createdAt < :threshold
+           """)
+    int deleteOldCanceled(LocalDateTime threshold);
 }
 ```
 
-**Kotlin — тот же bulk с очисткой кэшей**
-
 ```kotlin
-package com.example.bulk
+package com.example.jpa.bulk
 
-import jakarta.persistence.EntityManagerFactory
-import org.springframework.data.jpa.repository.*
-import org.springframework.data.repository.query.Param
-import org.springframework.stereotype.Repository
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Query
+import java.time.LocalDateTime
 
-@Repository
-interface TicketBulkRepository : JpaRepository<Ticket, Long> {
+interface OrderBulkRepository : JpaRepository<Order, Long> {
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
         """
-        update Ticket t
-           set t.status = :toStatus,
-               t.updatedAt = CURRENT_TIMESTAMP,
-               t.version = t.version + 1
-         where t.status = :fromStatus
+        update Order o
+        set o.status = com.example.jpa.bulk.OrderStatus.EXPIRED
+        where o.status = com.example.jpa.bulk.OrderStatus.NEW
+          and o.createdAt < :threshold
         """
     )
-    fun transition(
-        @Param("fromStatus") fromStatus: String,
-        @Param("toStatus") toStatus: String
-    ): Int
+    fun markExpired(threshold: LocalDateTime): Int
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("delete from Ticket t where t.status = :status")
-    fun deleteByStatus(@Param("status") status: String): Int
+    @Query(
+        """
+        delete from Order o
+        where o.status = com.example.jpa.bulk.OrderStatus.CANCELED
+          and o.createdAt < :threshold
+        """
+    )
+    fun deleteOldCanceled(threshold: LocalDateTime): Int
 }
+```
+
+Сервисный слой при этом остаётся довольно простым. Bulk-операции должны выполняться внутри транзакции, как и обычные изменения. Возвращаемые счётчики удобно использовать для логирования и контроля: можно, например, алертить, если число затронутых строк неожиданно сильно выросло или упало.
+
+```java
+package com.example.jpa.bulk;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
 
 @Service
-class TicketBulkService(
-    private val repo: TicketBulkRepository,
-    private val emf: EntityManagerFactory
-) {
-    @Transactional
-    fun closeAllNew(): Int {
-        val changed = repo.transition("NEW", "CLOSED")
-        emf.cache.evict(Ticket::class.java)
-        return changed
+public class OrderMaintenanceService {
+
+    private final OrderBulkRepository repository;
+
+    public OrderMaintenanceService(OrderBulkRepository repository) {
+        this.repository = repository;
     }
 
     @Transactional
-    fun purgeClosed(): Int {
-        val deleted = repo.deleteByStatus("CLOSED")
-        emf.cache.evict(Ticket::class.java)
-        return deleted
+    public void cleanup(LocalDateTime threshold) {
+        int expired = repository.markExpired(threshold);
+        int deleted = repository.deleteOldCanceled(threshold);
+        System.out.printf("Expired: %d, deleted: %d%n", expired, deleted);
     }
 }
 ```
 
-**Подсказки эксплуатации (резюме):**
+```kotlin
+package com.example.jpa.bulk
 
-1. Для массовых **вставок** используйте `SEQUENCE + pooled-lo + batch_size + reWriteBatchedInserts`.
-2. Для массовых **обновлений/удалений** — `@Modifying` + `clearAutomatically/flushAutomatically` + контроль счётчиков.
-3. Следите за L1/L2 и таймаутами, делайте операции порциями и покрывайте их интеграционными тестами на реальной СУБД.
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDateTime
+
+@Service
+class OrderMaintenanceService(
+    private val repository: OrderBulkRepository
+) {
+
+    @Transactional
+    fun cleanup(threshold: LocalDateTime) {
+        val expired = repository.markExpired(threshold)
+        val deleted = repository.deleteOldCanceled(threshold)
+        println("Expired: $expired, deleted: $deleted")
+    }
+}
+```
+
+Главная особенность bulk-операций — они **обходят** первый уровень кеша (persistence context). Если до вызова `markExpired()` в той же транзакции вы уже загрузили какие-то `Order`’ы, их поля `status` в памяти не изменятся магическим образом. Именно поэтому в примере на репозитории стоит `clearAutomatically = true`: после выполнения запроса Spring попросит EntityManager сделать `clear()`, чтобы в нём не осталось устаревших сущностей. Альтернатива — явно вызывать `entityManager.clear()` в сервисе, но аннотация удобнее и меньше шансов забыть.
+
+С кешем второго уровня ситуация похожая: bulk-операции **не** обновляют L2-кеш и кеш запросов. Если вы активно используете кеш второго уровня для сущностей, к которым применяете bulk-update, ваши чтения могут долго пользоваться устаревшими данными. Решение — либо не включать L2 для этих сущностей, либо явно инвалидировать соответствующие регионы кеша после bulk-операции через API Hibernate. В противном случае кеш превращается в источник неконсистентности.
+
+Bulk-операции также обходят оптимистическую блокировку (`@Version`). При обычном обновлении Hibernate сравнивает версию сущности в БД и версию в памяти; при расхождении кидается `OptimisticLockException`. Bulk `UPDATE` не делает таких проверок: он просто меняет строки в таблице, и concurrent update может быть спокойно перезаписан. Если вам нужно сохранить семантику оптимистического lock’а, bulk-операции не подходят — лучше обновлять по одной сущности, пусть и с использованием JDBC-батчинга, но через обычный `save`.
+
+Ещё один аспект — блокировки и нагрузка. Большой bulk `UPDATE` по миллионам строк может надолго блокировать таблицу или её значительную часть, вызвать эскалацию блокировок или повесить конкурирующие транзакции. В таких сценариях часто лучше делить операцию на «порции», либо работать через технику «обслуживание по страницам»: выбираете пачку id по критерию, обновляете только их, коммитите, повторяете. Это чуть сложнее реализовать, но сильно уменьшает риск «заморозить» прод.
+
+Нативный SQL для bulk-операций по сути даёт те же свойства, что и JPQL, но позволяет использовать специфичные фичи СУБД. Для Postgres, например, вы можете использовать `now()`, `interval`, функции по JSONB и т.д. В Spring Data достаточно поставить `nativeQuery = true`. Однако с точки зрения консистентности и кешей ситуация такая же, как у JPQL: контекст персистентности нужно синхронизировать вручную.
+
+```java
+package com.example.jpa.bulk;
+
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+
+public interface OrderBulkRepository extends JpaRepository<Order, Long> {
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+                update orders
+                set status = 'EXPIRED'
+                where status = 'NEW'
+                  and created_at < now() - interval '30 days'
+                """,
+        nativeQuery = true
+    )
+    int expireOlderThan30Days();
+}
+```
+
+```kotlin
+package com.example.jpa.bulk
+
+import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Query
+
+interface OrderBulkRepository : JpaRepository<Order, Long> {
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            update orders
+            set status = 'EXPIRED'
+            where status = 'NEW'
+              and created_at < now() - interval '30 days'
+            """,
+        nativeQuery = true
+    )
+    fun expireOlderThan30Days(): Int
+}
+```
+
+В итоге подход к массовым операциям обычно такой: если вам важны lifecycle-события, `@Version` и аккуратная обработка конкуренции — делайте обновления через обычные сущности и используйте JDBC-батчинг для ускорения. Если у вас чисто техническая операция (архивация, чистка логов, массовая смена статуса старых «мертвых» записей), и вы готовы пожертвовать life-cycle’ом и оптимистическим lock’ом — bulk `update/delete` через JPQL/native дадут лучший результат. Важно только не смешивать bulk-операции и работу с сущностями в одном и том же `EntityManager` без явной очистки контекста: это прямой путь к «призрачным» багам, когда в памяти одно, в БД другое.
 
 # 4. Транзакции, изоляция и блокировки
 
-*Зависимости (универсально для примеров этой подтемы).*
-
-**Gradle (Groovy DSL)**
-
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-```
-
----
-
 ## Границы и изоляция: поведение `readOnly=true` как хинт, влияние `FlushMode` (COMMIT/MANUAL)
 
-`@Transactional(readOnly = true)` — это не «магический щит», а **набор подсказок** (hints) инфраструктуре. На уровне Spring он помечает транзакцию как «только чтение» и передаёт этот флаг в провайдер JPA и драйвер JDBC. На уровне Hibernate это обычно переключает **режим сброса** (flush) так, чтобы провайдер **не пытался** синхронизировать изменения сущностей с БД в конце транзакции. На уровне драйвера устанавливается `Connection.setReadOnly(true)`, что в некоторых СУБД действительно запрещает DML, а в других лишь оптимизирует планы.
+Транзакция в Spring Data JPA — это не только `@Transactional` «чтобы всё откатилось при ошибке». Это ещё и граница для работы Hibernate с JDBC: в её пределах живёт `EntityManager`, копится контекст персистентности (L1-кэш), происходит `flush` изменений и действуют выбранные уровни изоляции. От того, как вы расставите границы транзакций, будут зависеть не только корректность данных, но и производительность: сколько раз Hibernate будет ходить в базу, насколько долго будут держаться блокировки и сколько памяти съест контекст.
 
-Важно понимать, что `readOnly=true` — **операционный контракт** внутри команды. Мы обещаем «в этом методе не писать», а инфраструктура помогает это обещание выполнить быстрее и безопаснее. Но это не защита уровня безопасности: если вы умышленно вызовете нативный `UPDATE` внутри такой транзакции, часть СУБД всё равно его выполнит. Руководствуйтесь правилом: чтение — только чтение, и никаких «случайных» записей.
+По умолчанию в Spring Boot все публичные методы сервисов с `@Transactional` работают с тем уровнем изоляции, который задан в DataSource/БД (для Postgres — обычно `READ COMMITTED`). Сам `@Transactional` без параметров не меняет isolation, propagation или timeout, он лишь говорит: «здесь начинается и заканчивается транзакция». Важно понимать, что в рамках одной транзакции Hibernate хранит все загруженные сущности в persistence context, и повторные чтения той же сущности идут из кэша, а не в базу. Это иногда создаёт ощущение «repeatable read», даже если уровень изоляции ниже.
 
-Теперь о `FlushMode`. В спецификации JPA есть два значения: `AUTO` и `COMMIT`. В `AUTO` провайдер может выполнять `flush` перед выполнением JPQL/Criteria-запроса, чтобы обеспечить консистентность (вы увидите собственные изменения в том же юните работы). В `COMMIT` синхронизация откладывается до конца транзакции. У Hibernate есть также собственный `MANUAL`: ORM **вообще** не делает `flush` автоматически. В Spring при `@Transactional(readOnly = true)` для Hibernate обычно активируется эквивалент `MANUAL`, что снижает накладные расходы на dirty checking.
+Атрибут `readOnly = true` в `@Transactional` — это **хинт**, а не железная гарантия. На уровне Spring он говорит, что транзакция не будет изменять данные, и часть инфраструктуры может это использовать (например, некоторые DataSource могут включать read-only режим для соединения). В связке с Hibernate Spring по умолчанию переводит Session в режим `FlushMode.MANUAL` или `FlushMode.COMMIT` в зависимости от версии, то есть Hibernate перестаёт автоматически сбрасывать изменения в базу при выполнении запросов и будет флашить только при явном `flush()` или при коммите.
 
-Эти режимы имеют прямые последствия для производительности. Если вы выполняете «тяжёлое» чтение (потоковый экспорт, отчёт), то лишний `flush` перед каждым `select` — пустая работа (никаких записей всё равно нет). Поэтому `readOnly=true` + `COMMIT/MANUAL` экономят CPU и уменьшают количество служебных сопоставлений. При этом в обычных командных операциях (`create/update`) оставляйте `AUTO`: так JPA гарантирует видимость ваших изменений в пределах транзакции.
+Важно не переоценивать `readOnly=true`. Если внутри метода вы сами меняете сущности (`entity.setX(...)`), Hibernate по-прежнему будет трекать изменения в контексте. В большинстве конфигураций он не сделает `UPDATE` в БД (из-за флеш-мода), но L1-кэш всё равно будет расти. Поэтому «read-only метод» не должен модифицировать сущности даже «по случайности». Если внутри вы логически меняете состояние, делайте это в отдельной транзакции без readOnly, иначе получите странное поведение и возможные расхождения между тем, что в памяти, и тем, что в базе.
 
-Есть нюанс: `FlushModeType.COMMIT` — режим JPA, а `FlushMode.MANUAL` — расширение Hibernate. Если вы пишете код на «чистом» JPA API, меняйте режим через `entityManager.setFlushMode(FlushModeType.COMMIT)`. Если вы уверены, что под капотом именно Hibernate, можно «уровнем ниже» получить `Session` и включить `MANUAL` — это даёт максимальную экономию на больших чтениях.
+`FlushMode` определяет, когда Hibernate сбрасывает накопленные изменения в БД. `AUTO` (по умолчанию) означает, что flush произойдёт перед каждым запросом, который может зависеть от текущих изменений, и при commit. Это безопасно, но может приводить к лишним `UPDATE`/`INSERT` «в середине» метода. `COMMIT` означает, что Hibernate старается отложить `flush` до момента commit транзакции, за исключением особо хитрых кейсов. `MANUAL` полностью перекладывает ответственность за `flush` на разработчика: пока вы сами не скажете, Hibernate не полезет в БД.
 
-Поведение драйвера `readOnly` тоже неоднородно. Для PostgreSQL установка read-only транзакции позволяет оптимизировать планировщик и **запретит** DML в явной «read-only» транзакции, но JDBC-флаг не всегда конвертируется в `SET TRANSACTION READ ONLY` автоматически — это зависит от реализации. Рассчитывать на него как на «брейк» не стоит; относитесь к нему как к оптимизационному сигналу (и хорошей самодисциплине).
+Для read-heavy методов удобно использовать комбинацию `@Transactional(readOnly = true)` и `FlushMode.MANUAL`, чтобы Hibernate вообще не рассматривал изменения и не тратил время на dirty checking перед выполнением JPQL/Criteria. Это даёт заметный выигрыш, если у вас крупные страницы с большим количеством сущностей. Но нужно осознавать, что внутри такого метода любые изменения сущностей не будут отправлены в БД: это не «магически безопасное обновление», это просто отключённый flush.
 
-Типичный анти-паттерн — аннотировать весь сервис `@Transactional(readOnly = true)` «ради ускорения», а потом добавлять «маленький апдейт». Так вы получаете неожиданные ошибки или, что хуже, неоптимальное поведение. Правильнее разделять чтения/записи по методам, а «толстые» чтения выносить в отдельный `QueryService`.
-
-Не забывайте, что `readOnly` отключает не только `flush`, но и **снятие версий**/dirty checking: Hibernate просто не будет трекать изменения. Если вы всё-таки меняете сущности в таком методе (что уже нарушение контракта), изменения, скорее всего, не попадут в БД. Это хорошо: мы рано узнаём о нарушении инвариантов по тестам.
-
-Ещё один практический приём — отмечать сами запросы как «только чтение». В Hibernate есть хинт `org.hibernate.readOnly` для `Query`: он помечает возвращаемые сущности как **read-only**, исключая их из dirty checking. Это особенно полезно для длинных потоковых выборок, уменьшая давление на L1-кэш.
-
-Для тестовой валидации режима отслеживайте статистику Hibernate и смотрите, сколько раз сработал `flush`. В `readOnly`-методе счётчик должен быть нулевой; если нет — скорее всего, где-то в коде есть запись или вы переопределили `FlushMode`.
-
-Резюме: для чтений — `@Transactional(readOnly=true)` + `COMMIT/MANUAL` + при необходимости хинты на запрос; для команд — дефолтный `AUTO`. Чётко разделяйте «команды» и «запросы» (CQS), и транзакционные границы будут прозрачнее, а производительность — предсказуемее.
-
-**Java — чтение с ручным управлением flush и read-only хинтами**
+В Spring Boot можно задать flush-mode глобально через свойства Hibernate, но гораздо полезнее управлять им на уровне конкретных операций. Например, для некоторых long-running read-only репортов вы можете явно переключать flushMode на MANUAL через `EntityManager`. Такой подход особенно полезен там, где в рамках одной транзакции вы делаете много чтений и не хотите, чтобы Hibernate каждый раз проверял, надо ли флашить.
 
 ```java
 package com.example.tx;
 
-import jakarta.persistence.*;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.hibernate.Session;
 import org.hibernate.FlushMode;
-import org.hibernate.jpa.HibernateHints;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-
-@Entity
-@Table(name = "products")
-class Product {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String name;
-    @Column(nullable = false) Long priceCents;
-    protected Product() {}
-    Product(String name, long price){ this.name = name; this.priceCents = price; }
-}
-
 @Service
-class ProductReadService {
+public class ReportService {
 
     @PersistenceContext
     private EntityManager em;
 
     @Transactional(readOnly = true)
-    public List<Product> topExpensive(int limit) {
-        // Переключим JPA flush на COMMIT (на всякий случай)
-        em.setFlushMode(FlushModeType.COMMIT);
-
-        // Для Hibernate можно жёстко поставить MANUAL и read-only
+    public void generateBigReport() {
         Session session = em.unwrap(Session.class);
-        session.setHibernateFlushMode(FlushMode.MANUAL);
+        session.setFlushMode(FlushMode.MANUAL);
 
-        TypedQuery<Product> q = em.createQuery(
-            "select p from Product p order by p.priceCents desc", Product.class);
-        q.setMaxResults(limit);
-        q.setHint(HibernateHints.HINT_READ_ONLY, true); // сущности read-only, без dirty checking
-        return q.getResultList();
+        // длинная цепочка чтений, без модификаций
+        // ...
     }
 }
 ```
-
-**Kotlin — аналог с хинтами и MANUAL**
 
 ```kotlin
 package com.example.tx
 
-import jakarta.persistence.*
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import org.hibernate.FlushMode
 import org.hibernate.Session
-import org.hibernate.jpa.HibernateHints
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
-@Entity
-@Table(name = "products")
-class Product(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var name: String = "",
-    @Column(nullable = false) var priceCents: Long = 0
-)
-
 @Service
-class ProductReadService(
-    @PersistenceContext private val em: EntityManager
+class ReportService(
+
+    @PersistenceContext
+    private val em: EntityManager
 ) {
 
     @Transactional(readOnly = true)
-    fun topExpensive(limit: Int): List<Product> {
-        em.flushMode = FlushModeType.COMMIT
+    fun generateBigReport() {
         val session = em.unwrap(Session::class.java)
-        session.hibernateFlushMode = FlushMode.MANUAL
+        session.flushMode = FlushMode.MANUAL
 
-        val q = em.createQuery(
-            "select p from Product p order by p.priceCents desc",
-            Product::class.java
-        )
-        q.maxResults = limit
-        q.setHint(HibernateHints.HINT_READ_ONLY, true)
-        return q.resultList
+        // длинная цепочка чтений, без модификаций
+        // ...
     }
 }
 ```
+
+Отдельный аспект — уровень изоляции транзакций. Его можно задавать на `@Transactional(isolation = Isolation.REPEATABLE_READ)` и он пойдёт в драйвер/БД через DataSource. Для Postgres `REPEATABLE READ` означает моментальный снимок (snapshot) на момент начала транзакции, и все запросы внутри будут читать один и тот же снимок, независимо от параллельных коммитов. Но Hibernate при этом всё равно работает со своим L1-кэшем, и в большинстве случаев вы увидите одни и те же объекты даже при более слабом isolation — просто потому, что они уже находятся в persistence context.
+
+Наконец, важно увязать границы транзакций с жизненным циклом веб-запроса. В типичном Spring Boot приложении на MVC/WebFlux транзакция живёт в сервисном слое, а не в контроллере. Это значит, что в контроллер лучше не протаскивать ленивые сущности и не полагаться на открытые сессии (`OpenSessionInView`), иначе вы рискуете получать запросы в БД уже после выхода из транзакции. Строгое правило «всё чтение и изменение — внутри сервисных методов с @Transactional» помогает держать поведение предсказуемым и хорошо контролируемым.
+
+Чтобы всё это работало, нужны зависимости на Spring Data JPA и драйвер БД. Конфигурация Gradle стандартная: одного раза на проект достаточно, не обязательно дублировать под каждую подтему, но для полноты картины напомню типичный вид.
+
+```groovy
+// build.gradle (Groovy)
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    runtimeOnly 'org.postgresql:postgresql'
+}
+```
+
+```kotlin
+// build.gradle.kts (Kotlin)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    runtimeOnly("org.postgresql:postgresql")
+}
+```
+
+Итого: границы транзакций — это не только «где откатывать». Это ещё и место, где вы решаете, как часто Hibernate будет флашить изменения, как он будет кэшировать сущности и какой уровень изоляции будет использоваться. `readOnly=true` помогает оптимизировать read-heavy сценарии, но не освобождает от дисциплины: не менять сущности там, где вы обещали только читать, и не складывать в одну транзакцию всё подряд.
 
 ---
 
 ## Оптимистическая блокировка `@Version`: обработка конфликтов, повтор операций
 
-Оптимистическая блокировка — это способ защититься от **тихих перезаписей** при конкурентных обновлениях одной записи. Идея проста: у сущности есть поле версии (`@Version`), которое изменяется при каждом успешном `UPDATE`. Когда две транзакции читают одну и ту же строку и пытаются её обновить, у второй `UPDATE` не пройдёт по условию версии — ORM бросит исключение. Мы не блокируем никого заранее, зато обнаруживаем конфликт на записи.
+Оптимистическая блокировка — это способ сказать: «я верю, что конкуренция редкая, но если два потока всё-таки полезут править одну и ту же запись, мы это заметим и не затрём изменения друг друга». В JPA это реализуется через поле с аннотацией `@Version`: при каждом `UPDATE` Hibernate увеличивает его значение и добавляет в `WHERE` версии старое значение. Если строка уже кем-то изменена и версия в БД другая, `UPDATE` затронет 0 строк, и Hibernate бросит `OptimisticLockException`.
 
-Поле `@Version` может быть `long`/`int`, `Instant` или `Timestamp`. Числовые версии инкрементируются, временные — сравниваются на равенство/неравенство. С точки зрения операционных свойств числовая версия предсказуемее и дешевле: никаких проблем с точностью и таймзонами. На старте лучше выбирать `long`.
+Оптимистическая блокировка хорошо ложится на модель веб-приложений: пользователь открывает форму, задерживается, что-то меняет, и отправляет. В это время другой пользователь мог успеть изменить те же данные. Без блокировки вы просто затрёте чужое изменение, а с `@Version` поймаете конфликт и сможете решить, что делать: показать ошибку, отобразить diff, предложить перезагрузить форму или попробовать повторно применить действие.
 
-Важно различать два источника исключений. JPA провайдер может бросить `OptimisticLockException`, а Spring переведёт его в `OptimisticLockingFailureException`. Обрабатывать всегда нужно «верхний» спринговый тип — он одинаков для JDBC/JPA/JOOQ при честной транзакционной абстракции и легче мокается в тестах.
-
-Стратегия обработки конфликтов зависит от бизнес-кейса. В большинстве приложений вы либо сообщаете пользователю «запись изменилась, обновите форму», либо автоматически повторяете операцию (retry) несколько раз с пересчитыванием данных. Автоповторы особенно удобны в «командах без побочных эффектов» (например, «увеличить счётчик» или «сменить статус по правилам»).
-
-Повторы должны быть **идемпотентными** и ограниченными по числу. Типичный паттерн: попытаться 3 раза с короткой паузой; если не получилось — отдать 409 (Conflict) или специфичную бизнес-ошибку. Важно не «слепо» повторять `merge`, а пересчитывать предметные поля на свежем состоянии (прочитал → изменил → записал).
-
-Оптимистическая блокировка требует **коротких транзакций**. Чем дольше вы держите managed-объект в памяти, тем больше вероятность конфликта. Старайтесь не захватывать сущности «на час» во внешнем слое; закончите команду быстро, а для длительных процессов используйте сага-паттерны или очереди.
-
-Обратите внимание на массовые апдейты. JPQL `update ...` **не учитывает** `@Version` автоматически. Если у вас активна оптимистическая блокировка для сущности, а вы делаете bulk update, добавьте ручное увеличение версии и условие `where version = :expected` — иначе вы обойдёте защиту и можете перетереть чужую работу.
-
-Оптимистическая блокировка сочетается с DTO-паттерном «версия на клиенте». В ответах API отдавайте версию вместе с данными, а при `PUT/PATCH` требуйте её обратно. Так вы получаете «CAS-подобное» поведение: сервер принимает изменения только если клиент видел последнюю версию. Это особенно прозрачно при React/SPA.
-
-С тестовой стороны проверяйте, что второй конкурентный апдейт действительно не проходит. Либо разнесите апдейты по двум транзакциям в одном тесте, либо используйте два потока с барьером. Искусственно увеличивайте задержки, чтобы воспроизвести гонку, и проверяйте, что сервис либо повторяет команду, либо бросает нужное исключение.
-
-И наконец, помните, что оптимистическая блокировка **не защищает** от логических конфликтов уровня бизнес-инвариантов («сумма не должна уйти в минус»). Здесь поможет только проверка условий в транзакции и, возможно, пессимистическая блокировка строки, если правила действительно критичны.
-
-**Java — `@Version`, сервис с ретраями на конфликте**
+Типичный пример — сущность `Account` с балансом и номером версии. Версию удобно хранить в `int` или `long`, но можно использовать и `Instant/OffsetDateTime`. Hibernate сам будет увеличивать версию при каждом `UPDATE`, вам не нужно трогать поле вручную. Главное — не пытаться модифицировать версию своими руками: это ломает контракт ORM.
 
 ```java
-package com.example.version;
+package com.example.tx;
 
 import jakarta.persistence.*;
-import org.springframework.dao.OptimisticLockingFailureException;
+
+@Entity
+@Table(name = "accounts")
+public class Account {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String owner;
+
+    private long balance;
+
+    @Version
+    private long version;
+
+    // getters/setters
+}
+```
+
+```kotlin
+package com.example.tx
+
+import jakarta.persistence.*
+
+@Entity
+@Table(name = "accounts")
+class Account(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var owner: String = "",
+
+    var balance: Long = 0,
+
+    @Version
+    var version: Long = 0
+)
+```
+
+Сервис, который меняет баланс, в коде выглядит тривиально: загрузили сущность, изменили поле, транзакция закоммитилась — Hibernate сделал `UPDATE`. Но под капотом он добавит в SQL условие по версии: `where id = ? and version = ?`. Если параллельно кто-то уже успел обновить запись, версия в БД изменится, и `UPDATE` вернёт 0 затронутых строк; Hibernate это увидит и бросит `OptimisticLockException`.
+
+```java
+package com.example.tx;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-@Entity
-@Table(name = "wallets")
-class Wallet {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-
-    @Column(nullable = false) Long balanceCents = 0L;
-
-    @Version
-    Long version;
-
-    protected Wallet() {}
-    Wallet(long balance){ this.balanceCents = balance; }
-
-    void add(long delta) {
-        long next = balanceCents + delta;
-        if (next < 0) throw new IllegalArgumentException("Negative balance");
-        balanceCents = next;
-    }
-}
-
-interface WalletRepository extends org.springframework.data.jpa.repository.JpaRepository<Wallet, Long> {}
-
 @Service
-class WalletService {
-    private final WalletRepository repo;
-    WalletService(WalletRepository repo){ this.repo = repo; }
+public class AccountService {
+
+    private final AccountRepository repository;
+
+    public AccountService(AccountRepository repository) {
+        this.repository = repository;
+    }
 
     @Transactional
-    public void deposit(Long id, long delta) {
-        int attempts = 0;
-        while (true) {
-            try {
-                Wallet w = repo.findById(id).orElseThrow();
-                w.add(delta);              // dirty checking
-                // flush будет на commit
-                return;
-            } catch (OptimisticLockingFailureException e) {
-                if (++attempts >= 3) throw e;
-                // небольшой backoff; в демо просто крутим цикл
-            }
-        }
+    public void deposit(Long id, long amount) {
+        Account account = repository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+        account.setBalance(account.getBalance() + amount);
+        // при commit Hibernate попытается сделать UPDATE с проверкой версии
     }
 }
 ```
 
-**Kotlin — то же с ретраями**
-
 ```kotlin
-package com.example.version
+package com.example.tx
 
-import jakarta.persistence.*
-import org.springframework.dao.OptimisticLockingFailureException
-import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
-@Entity
-@Table(name = "wallets")
-class Wallet(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var balanceCents: Long = 0,
-    @Version var version: Long? = null
-) {
-    fun add(delta: Long) {
-        val next = balanceCents + delta
-        require(next >= 0) { "Negative balance" }
-        balanceCents = next
-    }
-}
-
-interface WalletRepository : JpaRepository<Wallet, Long>
-
 @Service
-class WalletService(private val repo: WalletRepository) {
+class AccountService(
+    private val repository: AccountRepository
+) {
 
     @Transactional
-    fun deposit(id: Long, delta: Long) {
-        var attempts = 0
+    fun deposit(id: Long, amount: Long) {
+        val account = repository.findById(id)
+            .orElseThrow { IllegalArgumentException("Account not found") }
+
+        account.balance += amount
+        // при commit Hibernate сделает UPDATE с проверкой версии
+    }
+}
+```
+
+Обработка `OptimisticLockException` — это всегда бизнес-решение. Можно просто пробрасывать её наверх и возвращать 409/409-like ошибку в API с сообщением «запись изменилась, попробуйте ещё раз». А можно реализовать ретраи: ещё раз прочитать актуальное состояние, применить действие и попытаться закоммитить. Для идемпотентных операций (например, установить статус в определённое значение) ретраи зачастую безопасны; для операций типа «увеличить баланс» нужно аккуратно думать, хотите ли вы применять их повторно.
+
+Простейший пример ретрая — обёртка с циклом. Снаружи вы вызываете метод, который внутри транзакции пытается сделать действие, а снаружи ловите `OptimisticLockException` и повторяете попытку несколько раз. Важно ограничить количество ретраев и логировать ситуации, когда конфликт долго не разрешается.
+
+```java
+package com.example.tx;
+
+import jakarta.persistence.OptimisticLockException;
+import org.springframework.stereotype.Service;
+
+@Service
+public class AccountFacade {
+
+    private final AccountService service;
+
+    public AccountFacade(AccountService service) {
+        this.service = service;
+    }
+
+    public void safeDeposit(Long id, long amount) {
+        int attempts = 0;
         while (true) {
             try {
-                val w = repo.findById(id).orElseThrow()
-                w.add(delta)
-                return
-            } catch (e: OptimisticLockingFailureException) {
-                if (++attempts >= 3) throw e
+                service.deposit(id, amount);
+                return;
+            } catch (OptimisticLockException ex) {
+                attempts++;
+                if (attempts >= 3) {
+                    throw ex;
+                }
             }
         }
     }
 }
 ```
+
+```kotlin
+package com.example.tx
+
+import jakarta.persistence.OptimisticLockException
+import org.springframework.stereotype.Service
+
+@Service
+class AccountFacade(
+    private val service: AccountService
+) {
+
+    fun safeDeposit(id: Long, amount: Long) {
+        var attempts = 0
+        while (true) {
+            try {
+                service.deposit(id, amount)
+                return
+            } catch (ex: OptimisticLockException) {
+                attempts++
+                if (attempts >= 3) {
+                    throw ex
+                }
+            }
+        }
+    }
+}
+```
+
+Есть несколько типичных ошибок при использовании `@Version`. Первая — отключать версию в bulk-обновлениях, думая, что «ничего страшного»: при этом вы разрешаете тихие перезаписи конкурирующих изменений и теряете ключевое преимущество оптимистического lock’а. Вторая — использовать версию, но игнорировать `OptimisticLockException`: ловить её и ничего не делать, кроме логирования. В таком случае приложение продолжает работать, но теряет данные при конфликте, а вы узнаёте об этом только по логам.
+
+Ещё один важный момент — выбор типа поля версии. `int`/`long` работают быстро, но в распределённых системах с большим количеством обновлений версия будет быстро расти. Обычно это не проблема, но если вы задумались об этом — можно использовать `Instant` и хранить timestamp последнего изменения. Hibernate при этом сравнивает значения на равенство, а не «больше/меньше», так что конфликт будет пойман, если в БД записано другое время.
+
+В связке с REST оптимистическая блокировка хорошо сочетается с ETag/If-Match: вы можете выставлять версию в заголовок ETag и требовать, чтобы клиент при обновлении присылал If-Match с этой версией. Тогда бэкенд сможет сопоставить версию в БД с версией у клиента и при расхождении вернуть 412 Precondition Failed. Это уже уровень API-дизайна, но важно понимать, что JPA-версия — хороший фундамент для таких протоколов.
 
 ---
 
 ## Пессимистические блокировки: `LockModeType.PESSIMISTIC_READ/WRITE`, таймауты/эскалации, риск дедлоков
 
-Пессимистические блокировки — это «жёсткое» средство: мы не допускаем конкурентных изменений, удерживая блокировки на уровне БД. В JPA они выражаются через `LockModeType`: `PESSIMISTIC_READ` (обычно shared lock), `PESSIMISTIC_WRITE` (exclusive lock), а также `PESSIMISTIC_FORCE_INCREMENT` (пишем версию, чтобы «пнуть» конкурентов). Использовать их стоит там, где цена логического конфликта неприемлемо высока: денежные переводы, уникальные слоты бронирования, единичные ресурсы.
+Пессимистическая блокировка идёт от обратного: вместо «верим, что конфликта не будет, но проверим», мы говорим «мы сразу возьмём блокировку на строку и не дадим другим её менять, пока не закончим». Это удобно там, где конфликт — норма (например, в горячей сущности с высокочастотными обновлениями) или где последствия конфликта слишком серьёзны, чтобы полагаться на ретраи. Но за это вы платите риском дедлоков и снижением параллелизма.
 
-Самый распространённый сценарий — загрузить запись «для изменения» и держать `FOR UPDATE` до конца транзакции. Это гарантирует эксклюзивный доступ, но увеличивает вероятность **взаимных блокировок** (deadlocks) при сложном порядке доступа. Поэтому важно дисциплинировать порядок: все операции берут сущности в одном и том же порядке ключей (например, сначала «меньший id»).
+В JPA пессимистические блокировки задаются через `LockModeType` при чтении: `PESSIMISTIC_READ` и `PESSIMISTIC_WRITE`. В Postgres они маппятся на `SELECT ... FOR SHARE` и `SELECT ... FOR UPDATE` соответственно. Первый режим блокирует запись от изменения, но позволяет другим читать; второй блокирует и чтение с таким же уровнем блокировки другими транзакциями, фактически гарантируя эксклюзивный доступ.
 
-`PESSIMISTIC_READ` в разных СУБД ведёт себя по-разному: где-то это shared lock, блокирующий writers, где-то он транслируется в «обычный SELECT ... FOR SHARE». Его смысл — позволить конкурентное чтение, но не давать никому обновить строку до конца транзакции. Для экраников отчётов он мало полезен; чаще вам нужен либо обычный read, либо write-lock на короткое время перед апдейтом.
-
-Таймауты — обязательная часть практики. В JPA есть хинт `jakarta.persistence.lock.timeout` (миллисекунды). Если не удалось взять блокировку за отведённое время, драйвер бросит исключение, и вы сможете решить: повторить, отдать 409/503 или пойти альтернативным путём. Никогда не оставляйте блокировки «ждать вечно» — это поведение под нагрузкой обречёт пул соединений.
-
-Ещё один хинт — «no wait». В некоторых диалектах (например, Postgres через `FOR UPDATE NOWAIT/SKIP LOCKED`) вы можете сказать «не жди». Это отличный инструмент для конкурентных workers: выбираем пачку задач `for update skip locked` и обрабатываем, не мешая друг другу. В JPA это обычно делают нативным SQL, потому что стандартные lock-моды не описывают `skip locked`.
-
-Будьте аккуратны с эскалациями: длительные транзакции и множество заблокированных строк могут привести к эскалациям на уровне страниц/таблиц (в некоторых СУБД) и к «залипанию» системы. Держите транзакции короткими, а блокировки — локальными и минимальными по времени.
-
-Комбинация с оптимистической блокировкой (`@Version`) полезна: вы можете читать без блокировок, а перед записью — брать `PESSIMISTIC_WRITE` на строку и всё равно иметь версию как «сетку безопасности». Это повышает предсказуемость поведения, особенно если часть кода иногда пишет без пессимистической блокировки.
-
-Тесты на блокировки пишите в два потока. Один берёт `PESSIMISTIC_WRITE` и «держит» некоторое время, второй пытается взять `PESSIMISTIC_WRITE` и должен упасть по таймауту. Это позволяет рано поймать конфигурационные ошибки (например, отсутствие таймаута или неверный перевод исключений).
-
-И самое важное — **порядок доступа**. Если у вас есть сценарии «перевода денег» между двумя счетами, **всегда** берите блокировки в порядке id: сначала меньший, затем больший. Это драматически снижает вероятность дедлоков при конкуренции.
-
-**Java — `@Lock` и таймаут, плюс нативный `skip locked` для очереди**
+В Spring Data JPA пессимистический lock удобно навесить через `@Lock` на метод репозитория. Например, если вам нужен «select for update» по id, вы объявляете метод с `@Lock(LockModeType.PESSIMISTIC_WRITE)` и используете его в сервисе. В результате Hibernate добавит нужный `FOR UPDATE` и повесит блокировку на выбранную строку до конца транзакции.
 
 ```java
-package com.example.lock;
+package com.example.tx;
 
-import jakarta.persistence.*;
-import org.springframework.data.jpa.repository.*;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+public interface AccountLockingRepository extends JpaRepository<Account, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Account> findWithLockById(Long id);
+}
+```
+
+```kotlin
+package com.example.tx
+
+import jakarta.persistence.LockModeType
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
+import java.util.Optional
+
+interface AccountLockingRepository : JpaRepository<Account, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    fun findWithLockById(id: Long): Optional<Account>
+}
+```
+
+Сервисный метод с такой блокировкой будет выглядеть как обычное обновление, но под капотом транзакция будет держать row lock на строку `accounts.id = ?` до самого commit. Это гарантирует, что параллельные транзакции, пытающиеся взять такой же `PESSIMISTIC_WRITE`, будут ждать или упадут по таймауту.
+
+```java
+package com.example.tx;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.Optional;
-
-@Entity
-@Table(name = "jobs")
-class Job {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String status; // NEW, RUNNING, DONE
-    protected Job() {}
-    Job(String s){ this.status = s; }
-}
-
-@Repository
-interface JobRepository extends JpaRepository<Job, Long> {
-
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "3000"))
-    @Query("select j from Job j where j.id = :id")
-    Optional<Job> lockById(@Param("id") Long id);
-
-    // Очередь: берём пачку задач без ожидания конкурентов (Postgres)
-    @Query(value = """
-        select * from jobs
-        where status = 'NEW'
-        order by id
-        for update skip locked
-        limit :n
-        """, nativeQuery = true)
-    List<Job> pollBatch(@Param("n") int n);
-}
-
 @Service
-class JobService {
-    private final JobRepository repo;
-    JobService(JobRepository repo){ this.repo = repo; }
+public class LockedAccountService {
 
-    @Transactional
-    public void runExclusive(Long id) {
-        Job j = repo.lockById(id).orElseThrow();
-        j.status = "RUNNING";
-        // делаем работу...
-        j.status = "DONE";
+    private final AccountLockingRepository repository;
+
+    public LockedAccountService(AccountLockingRepository repository) {
+        this.repository = repository;
     }
 
     @Transactional
-    public List<Job> claimNext(int n) {
-        List<Job> jobs = repo.pollBatch(n);
-        for (Job j : jobs) j.status = "RUNNING";
-        return jobs;
+    public void transfer(Long fromId, Long toId, long amount) {
+        Account from = repository.findWithLockById(fromId)
+                .orElseThrow(() -> new IllegalArgumentException("From not found"));
+        Account to = repository.findWithLockById(toId)
+                .orElseThrow(() -> new IllegalArgumentException("To not found"));
+
+        from.setBalance(from.getBalance() - amount);
+        to.setBalance(to.getBalance() + amount);
     }
 }
 ```
 
-**Kotlin — то же самое**
-
 ```kotlin
-package com.example.lock
+package com.example.tx
 
-import jakarta.persistence.*
-import org.springframework.data.jpa.repository.*
-import org.springframework.data.jpa.repository.Lock
-import org.springframework.data.repository.query.Param
-import org.springframework.stereotype.Repository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
-@Entity
-@Table(name = "jobs")
-class Job(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var status: String = "NEW"
-)
-
-@Repository
-interface JobRepository : JpaRepository<Job, Long> {
-
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @QueryHints(QueryHint(name = "jakarta.persistence.lock.timeout", value = "3000"))
-    @Query("select j from Job j where j.id = :id")
-    fun lockById(@Param("id") id: Long): java.util.Optional<Job>
-
-    @Query(
-        value = """
-        select * from jobs
-        where status = 'NEW'
-        order by id
-        for update skip locked
-        limit :n
-        """,
-        nativeQuery = true
-    )
-    fun pollBatch(@Param("n") n: Int): List<Job>
-}
-
 @Service
-class JobService(private val repo: JobRepository) {
+class LockedAccountService(
+    private val repository: AccountLockingRepository
+) {
 
     @Transactional
-    fun runExclusive(id: Long) {
-        val j = repo.lockById(id).orElseThrow()
-        j.status = "RUNNING"
-        // работа...
-        j.status = "DONE"
-    }
+    fun transfer(fromId: Long, toId: Long, amount: Long) {
+        val from = repository.findWithLockById(fromId)
+            .orElseThrow { IllegalArgumentException("From not found") }
 
-    @Transactional
-    fun claimNext(n: Int): List<Job> {
-        val jobs = repo.pollBatch(n)
-        jobs.forEach { it.status = "RUNNING" }
-        return jobs
+        val to = repository.findWithLockById(toId)
+            .orElseThrow { IllegalArgumentException("To not found") }
+
+        from.balance -= amount
+        to.balance += amount
     }
 }
 ```
+
+Таймауты для пессимистических блокировок задаются через хинты JPA: `javax.persistence.lock.timeout`. В Hibernate это можно прокинуть через `@QueryHints` или через `EntityManager` при вызове `find`/`lock`. Если таймаут истёк, Hibernate бросит `LockTimeoutException`. Это важный элемент дизайна: бесконечное ожидание блокировки обычно хуже, чем контролируемый отказ через таймаут и fallback.
+
+```java
+package com.example.tx;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.QueryHint;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+@Repository
+public class AccountLockDao {
+
+    @PersistenceContext
+    private EntityManager em;
+
+    @Transactional
+    public Account findWithTimeout(Long id) {
+        return em.find(
+                Account.class,
+                id,
+                LockModeType.PESSIMISTIC_WRITE,
+                java.util.Map.of("jakarta.persistence.lock.timeout", 5000)
+        );
+    }
+}
+```
+
+```kotlin
+package com.example.tx
+
+import jakarta.persistence.EntityManager
+import jakarta.persistence.LockModeType
+import jakarta.persistence.PersistenceContext
+import org.springframework.stereotype.Repository
+import org.springframework.transaction.annotation.Transactional
+
+@Repository
+class AccountLockDao(
+
+    @PersistenceContext
+    private val em: EntityManager
+) {
+
+    @Transactional
+    fun findWithTimeout(id: Long): Account =
+        em.find(
+            Account::class.java,
+            id,
+            LockModeType.PESSIMISTIC_WRITE,
+            mapOf("jakarta.persistence.lock.timeout" to 5000)
+        )
+}
+```
+
+Главная опасность пессимистических блокировок — дедлоки. Если два потока берут блокировки в разном порядке (первый сначала `from`, потом `to`, второй наоборот), вы легко получите взаимную блокировку на уровне БД. Чтобы этого избежать, нужно жёстко зафиксировать порядок захвата ресурсов (например, всегда блокировать аккаунты по возрастанию id), минимизировать длительность транзакций и не держать блокировки дольше, чем необходимо.
+
+Пессимистическая блокировка также чувствительна к уровню изоляции. На `READ COMMITTED` в Postgres `FOR UPDATE` блокирует только конкретные строки, и остальные, не попавшие в выборку, обрабатываются без блокировок. На более высоких уровнях (REPEATABLE READ, SERIALIZABLE) snapshot-семантика накладывается сверху, и поведение может быть сложнее. Важно помнить: JPA не скрывает от вас особенностей СУБД — она лишь маппит `LockModeType` на соответствующие SQL-конструкции.
+
+Уместность пессимистических блокировок зависит от сценария. Для финансовых переводов с сильной консистентностью они могут быть оправданы, особенно если вы удерживаете блокировку только на одном узком объекте (баланс аккаунта). Для большинства обычных CRUD-операций оптимистический lock с ретраями даёт лучший баланс между параллелизмом и безопасностью. В любом случае нельзя массово «включить PESSIMISTIC_WRITE на всё» — это верный путь к деградации производительности и дедлокам, которые тяжело воспроизводить.
+
+Наконец, не забывайте, что пессимистический lock в JPA работает только в пределах транзакции. Если вы забыли `@Transactional`, JPA сделает короткую транзакцию на SELECT, возьмёт и тут же отпустит блокировку. В коде всё отработает без ошибок, но никакой защиты от конкуренции вы не получите. Это один из тех кейсов, где наличие unit-теста мало помогает: нужно интеграционное тестирование с несколькими потоками, чтобы убедиться, что блокировки реально работают как задумано.
 
 ---
 
 ## Консистентность чтения: repeatable-read vs snapshot семантика СУБД, где важны «снимки»
 
-Изоляция транзакций определяет, **какие изменения других транзакций** вы видите, пока выполняется ваша. Классические уровни — `READ_COMMITTED`, `REPEATABLE_READ`, `SERIALIZABLE`. Но за этими именами скрываются разные реализации. Например, в PostgreSQL `REPEATABLE_READ` — это **snapshot isolation**: транзакция видит «снимок» базы на момент начала и не видит чужие коммиты до завершения. В MySQL/InnoDB поведение похожее, но детали фанттомов отличаются.
+Изоляция транзакций — это ответ на вопрос «что происходит, если параллельно кто-то пишет в те же таблицы, из которых я читаю». На уровне СУБД есть классические уровни: READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE. В реальных БД, особенно в MVCC-системах вроде Postgres, они реализованы через snapshot-семантику: каждая транзакция видит некоторую «версию базы» и работает с ней до конца. JPA поверх этого добавляет свой уровень: L1-кэш, который делает вид, что всё ещё более repeatable, чем на самом деле.
 
-`READ_COMMITTED` — дефолт для большинства OLTP систем: вы видите только подтверждённые данные, но разные запросы в одной транзакции могут видеть **разные** состояния (каждый — свой снимок на момент выполнения). Это нормально для коротких команд, но не подходит для отчётов и операций «прочитал → посчитал → записал», если критично «всё считать на одном снимке».
-
-`REPEATABLE_READ` обеспечивает стабильность чтений: «прочитал раз — вижу то же самое до конца». В PostgreSQL вы также не увидите фантомов в привычном смысле, потому что снимок фиксируется. Это удобно для отчётов, экспорта, расчётов агрегатов: вы получите **консистентный** результат на момент старта транзакции, даже если параллельно идут записи.
-
-`SERIALIZABLE` идёт дальше: база гарантирует такой результат, как если бы транзакции выполнялись по очереди. В PostgreSQL это достигается через детекцию конфликтов и возможные «serialization failures». Это дорогой режим: вы чаще будете ловить исключения и повторять транзакции. Используйте его, когда нужен строгий консистентный порядок (например, сложные взаимосвязанные суммы).
-
-В Spring уровень изоляции можно указать на методе: `@Transactional(isolation = Isolation.REPEATABLE_READ)`. Это отправит хинт менеджеру транзакций; конкретная реализация (JDBC) попытается установить уровень на соединении. Убедитесь, что ваш пула соединений и СУБД разрешают такой переключатель; иногда проще иметь **стабильный дефолт** на уровне DataSource/БД и переопределять только редко.
-
-Выбор изоляции — компромисс между консистентностью и **конкурентностью**. Чем выше изоляция, тем больше риск конфликтов и откатов. Если у вас много чтений и мало записей — `REPEATABLE_READ` на отчётных операциях — хороший выбор. Если наоборот — держитесь `READ_COMMITTED` и локальных блокировок только там, где нужно.
-
-Не путайте изоляцию с блокировками. `REPEATABLE_READ` не «запирает» строки для других писателей; он лишь даёт вам снимок. Чтобы исключить логические гонки, комбинируйте уровень изоляции с пессимистическим `FOR UPDATE` в точках критических изменений.
-
-Прослойка ORM добавляет ещё один слой — **кэш первого уровня**. Даже на `READ_COMMITTED` повторный `find()` в одной и той же транзакции вернёт объект из L1-кэша, а не читает заново. Это «локальная repeatable-read». Если вам нужно увидеть «свежее» состояние в той же транзакции, используйте `refresh()`.
-
-В отчётных сервисах полезно делать явные «снимки» логически: фиксировать момент времени `asOf` и использовать его в запросах (например, фильтровать по `created_at <= :asOf`). Это даёт воспроизводимость результатов при повторении отчёта позже и позволяет масштабировать чтения без долгих транзакций.
-
-И, наконец, тестируйте изоляцию. Пишите тесты в два потока: один коммитит изменения, другой внутри `REPEATABLE_READ` проверяет, что «снимок» стабилен; под `READ_COMMITTED` — что повторные запросы видят новые данные. Это даст уверенность, что ваша конфигурация действительно работает, как ожидается.
-
-**Java — выбор изоляции и refresh для «свежего» чтения**
+В Spring `@Transactional` позволяет указать уровень изоляции через атрибут `isolation`. Для Postgres чаще всего используется `READ COMMITTED` как дефолт, а для особо критичных сценариев — `REPEATABLE READ` или `SERIALIZABLE`. Надо понимать, что смена isolation — это не «переключение флага в Hibernate», а изменение настроек транзакции в БД: драйвер отправляет соответствующую команду, и дальше всё зависит от движка.
 
 ```java
-package com.example.isolation;
+package com.example.tx;
 
-import jakarta.persistence.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-@Entity
-@Table(name = "counters")
-class Counter {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) Long value = 0L;
-    protected Counter() {}
-}
-
-interface CounterRepository extends org.springframework.data.jpa.repository.JpaRepository<Counter, Long> {}
-
 @Service
-class CounterService {
-    private final CounterRepository repo;
-    @PersistenceContext private EntityManager em;
+public class IsolationService {
 
-    CounterService(CounterRepository repo){ this.repo = repo; }
+    private final AccountRepository repository;
 
-    // Консистентное чтение на одном «снимке»
-    @Transactional(isolation = Isolation.REPEATABLE_READ, readOnly = true)
-    public long readConsistent(Long id) {
-        Counter c1 = repo.findById(id).orElseThrow();
-        // ... здесь могут идти другие запросы ...
-        Counter c2 = repo.findById(id).orElseThrow(); // тот же L1-экземпляр, repeatable внутри транзакции
-        return c2.value;
+    public IsolationService(AccountRepository repository) {
+        this.repository = repository;
     }
 
-    // Принудительно увидеть свежие данные в текущей транзакции
-    @Transactional
-    public long readFresh(Long id) {
-        Counter c = em.find(Counter.class, id);
-        em.refresh(c); // перечитать из БД, игнорируя L1
-        return c.value;
+    @Transactional(isolation = Isolation.REPEATABLE_READ, readOnly = true)
+    public Account loadTwice(Long id) {
+        Account first = repository.findById(id)
+                .orElseThrow();
+        Account second = repository.findById(id)
+                .orElseThrow();
+        return second;
     }
 }
 ```
 
-**Kotlin — изоляция и refresh**
-
 ```kotlin
-package com.example.isolation
+package com.example.tx
 
-import jakarta.persistence.*
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
-import org.springframework.data.jpa.repository.JpaRepository
-
-@Entity
-@Table(name = "counters")
-class Counter(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var value: Long = 0
-)
-
-interface CounterRepository : JpaRepository<Counter, Long>
 
 @Service
-class CounterService(
-    private val repo: CounterRepository,
-    @PersistenceContext private val em: EntityManager
+class IsolationService(
+    private val repository: AccountRepository
 ) {
 
     @Transactional(isolation = Isolation.REPEATABLE_READ, readOnly = true)
-    fun readConsistent(id: Long): Long {
-        val c1 = repo.findById(id).orElseThrow()
-        val c2 = repo.findById(id).orElseThrow()
-        return c2.value
+    fun loadTwice(id: Long): Account {
+        val first = repository.findById(id).orElseThrow()
+        val second = repository.findById(id).orElseThrow()
+        return second
+    }
+}
+```
+
+Даже если вы оставите изоляцию `READ_COMMITTED`, повторный вызов `findById` в рамках одной транзакции вернёт тот же объект из L1-кэша Hibernate, а не свежие данные из БД. Это важно: JPA добавляет поверх изоляции БД свой слой кэширования. В результате вы практически всегда получаете «repeatable read» на уровне сущностей, пока не сделаете `clear()`/`refresh()`. Если вам по бизнесу важно перечитать состояние строки с учётом параллельных изменений, нужно либо явно вызывать `refresh`, либо разбивать операцию на несколько транзакций.
+
+```java
+package com.example.tx;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class RefreshService {
+
+    @PersistenceContext
+    private EntityManager em;
+
+    private final AccountRepository repository;
+
+    public RefreshService(AccountRepository repository) {
+        this.repository = repository;
     }
 
     @Transactional
-    fun readFresh(id: Long): Long {
-        val c = em.find(Counter::class.java, id)
-        em.refresh(c)
-        return c.value
+    public long readAndRefresh(Long id) {
+        Account account = repository.findById(id)
+                .orElseThrow();
+        long firstBalance = account.getBalance();
+
+        // ... кто-то параллельно мог изменить баланс ...
+
+        em.refresh(account);
+        long secondBalance = account.getBalance();
+
+        return secondBalance - firstBalance;
     }
 }
 ```
 
-**application.yml — пример глобального таймаута запросов (PostgreSQL)**
+```kotlin
+package com.example.tx
 
-```yaml
-spring:
-  jpa:
-    properties:
-      hibernate:
-        jdbc.time_zone: UTC
-  datasource:
-    hikari:
-      connection-timeout: 30000
-      # В Postgres можно управлять statement_timeout на уровне сессии:
-      data-source-properties:
-        options: '-c statement_timeout=5000'
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+@Service
+class RefreshService(
+
+    @PersistenceContext
+    private val em: EntityManager,
+    private val repository: AccountRepository
+) {
+
+    @Transactional
+    fun readAndRefresh(id: Long): Long {
+        val account = repository.findById(id)
+            .orElseThrow()
+        val firstBalance = account.balance
+
+        // ... параллельно баланс могли изменить ...
+
+        em.refresh(account)
+        val secondBalance = account.balance
+        return secondBalance - firstBalance
+    }
+}
 ```
+
+Postgres реализует `REPEATABLE READ` как snapshot isolation: в начале транзакции фиксируется снимок видимых коммитов, и все запросы читают именно его, не видя более поздних коммитов. Это защищает от non-repeatable read и большинства аномалий, но phantoms всё ещё возможны в специфических сценариях. На практике для большей части бизнес-логики `READ COMMITTED` достаточно, а `REPEATABLE READ` используют для критичных отчётных операций, где важно, чтобы все выборки были согласованы между собой.
+
+С точки зрения JPA часто более важна не изоляция чтения, а то, как вы формулируете запросы. Если вы на уровне приложения хотите «снимок» состояния на момент начала операции, проще сделать один `SELECT` с нужными join’ами и агрегатами, чем играть с уровнями изоляции. Уровень `SERIALIZABLE` может казаться привлекательным, но в реальных нагрузках он даёт много конфликтов транзакций и откатов, особенно в Postgres, где он реализован через проверку зависимостей, а не через глобальные блокировки.
+
+Ещё одна важная точка — разделение чтения и записи по транзакциям. Если вы в одном методе и читаете, и пишете, и хотите, чтобы чтения видели только коммиты до начала операции, имеет смысл делать «читающую часть» в `readOnly` транзакции с нужным isolation, а «пишущую» — в отдельной. Spring позволяет это через разные сервисные методы с разными аннотациями и propagation. Это сложнее, чем «обернуть всё в одну транзакцию», но даёт более предсказуемое поведение и изоляцию.
+
+Важно также понимать, что для некоторых отчётных задач snapshot нужна не на уровне одной транзакции, а на уровне «логического времени» системы. В таких случаях проще делать материализованные представления, отчётные таблицы или использовать `AS OF`/`txid_snapshot`-подходы на стороне СУБД, чем пытаться выставить правильный isolation для огромной транзакции. JPA здесь всё равно будет только тонкой обёрткой над SQL.
+
+И последнее: изоляция — это всегда компромисс между целостностью и производительностью. Чем выше isolation, тем больше риск блокировок, конфликтов и откатов. JPA и Spring не снимают с вас ответственности выбрать правильный уровень и правильно спроектировать операции. Они лишь дают инструменты: `@Transactional` с `isolation`, L1-кэш с `refresh`, возможность явно управлять границами транзакций и блокировками. Остальное — архитектурное решение на уровне системы.
 
 # 5. Управление Persistence Context
 
-*Зависимости для примеров (самодостаточно).*
-
-**Gradle (Groovy DSL)**
-
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-```
+`Persistence Context` (контекст персистентности) — это сердце работы Hibernate/JPA. Это и 1-й уровень кэша (L1), и трекер изменений, и идентификационная карта всех загруженных/созданных сущностей в рамках текущей сессии/транзакции. Пока сущность «управляемая» (managed), Hibernate следит за её полями, сравнивает старое и новое состояние и при `flush()` генерирует нужные SQL. Как только контекст разрастается, вы начинаете платить памятью, временем на dirty checking и риском тащить в него «полмира», а потом героически бороться с утечками. Эта подтема как раз про то, как не дать контексту сойти с ума: когда использовать `clear()`/`detach()`, как оптимизировать read-only сценарии и как взглянуть на L1-кэш, одновременно как на защиту от лишних SELECT и как на источник «устаревших» данных.
 
 ---
 
 ## Когда уместно `clear()/detach()`, «длинные» сессии и утечки памяти
 
-Persistence Context (PC) — это «единица работы» JPA и **кэш первого уровня** (identity map): все загруженные и созданные в рамках одной транзакции сущности живут здесь, Hibernate следит за их изменениями (dirty checking) и синхронизирует с БД на `flush`. Это удобно, но память не бесконечна: чем больше вы держите managed-объектов, тем выше давление на heap и GC.
+Первое, что нужно зафиксировать: в типичном Spring Boot приложении одна транзакция = один `EntityManager` = один persistence context. Вы делаете `@Transactional` на сервисе, внутри него загружаете и модифицируете сущности, при коммите Hibernate делает `flush()` и отправляет SQL, а потом контекст уничтожается. Такой «короткоживущий» подход («session-per-request») почти всегда безопасен: контекст не успевает раздуться до гигантских размеров, и риск утечек памяти минимален.
 
-«Длинные» сессии — антипаттерн, когда одна транзакция «таскается» через множество шагов/страниц/сообщений, а PC копит сотни тысяч объектов. Часто так происходит в батч-процессинге: читаем миллион строк, преобразуем и сохраняем. Без периодического «сбрасывания» PC вы быстро упрётесь в память, а `flush` начнёт занимать секунды.
+Проблемы начинаются, когда вы отходите от модели «короткая транзакция на обычный HTTP-запрос» к длинным сценариям: импорт большого файла, массовая миграция, пересчёт отчётов, ночная обработка. Там внутри одной транзакции вы можете пройтись по десяткам/сотням тысяч строк, для каждой создать/загрузить сущность, потрогать поля — и всё это окажется в одном persistence context. Если вы ничего не делаете с этим контекстом, он растёт как снежный ком, увеличивая затраты на dirty checking, потребление heap и время `flush()`.
 
-`EntityManager.clear()` очищает **весь** PC: все managed-экземпляры становятся detached, dirty-пометки забыты. Это основной инструмент циклических ETL: «пакет (N записей) → `flush()` → `clear()` → следующий пакет». Такой ритм обеспечивает стабильное потребление памяти и предсказуемые паузы.
+Например, вы читаете CSV на 200 000 строк и для каждой создаёте сущность `Order`. Без специальных мер Hibernate будет держать в памяти все эти 200 000 объектов до конца транзакции. Каждый новый `persist()` будет добавлять ещё одну сущность в L1-кэш, каждая ассоциация — ещё несколько. В какой-то момент вы начнёте видеть рост heap, GC-паузы, а то и `OutOfMemoryError`. Это и есть классический пример «длинной сессии», где контекст персистентности живёт слишком долго и хранит слишком много.
 
-`EntityManager.detach(entity)` — хирургический вариант: убрать **конкретный** объект из PC, оставив остальных. Это полезно, когда вы маппите сущность в DTO, отдали наружу и не хотите, чтобы дальнейшие изменения по ошибке затронули ту же ссылку, либо когда читаете огромный поток сущностей, обрабатываете и не хотите держать их в PC до конца транзакции.
+Чтобы этого избежать, для batch-обработки используют паттерн «батчи внутри транзакции»: вы прогоняете данные порциями, для каждой порции делаете `flush()` и `clear()`. `flush()` отправляет накопленные изменения в БД, а `clear()` выбрасывает все сущности из контекста, делая его пустым. После этого следующая порция снова начинает с чистого листа, и контекст никогда не вырастает больше, чем размер текущей порции. Цена — вы теряете возможность работать с уже загруженными сущностями после `clear()` — они становятся detached.
 
-Важно понимать, что после `detach` JPA перестаёт отслеживать объект; любые изменения в нём **не попадут** в БД без `merge`. Поэтому `detach` уместен там, где вы точно завершили работу с объектом (например, записали в файл), либо где вы сознательно хотите разорвать связь с PC.
+Иногда вам не нужно очищать весь контекст, а нужно просто «отвязать» конкретную сущность. Для этого есть `detach(entity)`: вы говорите Hibernate, что этот конкретный объект больше не managed. Изменения в нём не будут учитываться при `flush`, и он перестанет участвовать в dirty checking. Это удобно, когда вы, например, прогружаете большой список, делаете сериализацию в JSON и больше к этим объектам внутри транзакции не возвращаетесь. В отличие от `clear()`, `detach()` не трогает остальные сущности в контексте.
 
-Ещё одна причина применять `clear/detach` — **утечки ссылок из PC** в долгоживущие структуры (кеши, статические поля, синглтоны). Managed-объекты часто содержат ссылки на другие сущности/коллекции (графы), и удержание даже одной сущности может удерживать «целый город». Лучший приём — на границе слоя конвертировать в **плоские DTO** и `detach` исходник (или чистить весь PC).
+Важно понимать, что после `clear()`/`detach()` все ссылки в вашем коде на эти сущности продолжают указывать на объекты в памяти, но эти объекты больше никак не связаны с контекстом персистентности. Попытка работать с ленивой коллекцией (lazy association) на таком объекте приведёт к `LazyInitializationException`, потому что для подгрузки нужна сессия/контекст, а объект уже detached. Поэтому очищать контекст нужно осознанно: делать все необходимые операции с сущностями до `clear()`, а не после.
 
-Open-Session-In-View (`spring.jpa.open-in-view`) соблазняет «удобством» — ленивые ассоциации будут доступными в веб-слое. Но это продлевает жизнь PC до конца web-запроса, увеличивает риск N+1 и «длинных» транзакций. Для публичных API **отключайте** OSIV и управляйте загрузкой данных осознанно в сервисном слое.
-
-В батчах `flush()` обязателен: он синхронизирует накопленный dirty state с БД. Делать только `clear()` без `flush()` — значит «забыть» изменения. Типичный рисунок: каждые 50–100 операций — `flush()` и затем `clear()`. Размер порции подбирайте экспериментально по профилю памяти и времени отклика БД.
-
-`clear()` также помогает избежать «ложных» повторных SELECT: когда вы читаете ту же сущность повторно в рамках **другого** шага, PC может возвращать «старую» версию. Если вы хотите точно читать «свежее» состояние при длинном процессе — либо делите процесс на транзакции, либо периодически очищайте PC, либо используйте `refresh`.
-
-Не забывайте, что `clear()` обнуляет не только сущности, но и контекст каскадов. Если вы держали bidirectional-граф и полагались на автоматическую синхронизацию, после `clear` это перестанет работать — манипулируйте графом **до** очистки.
-
-Наконец, проверяйте себя тестами с профилированием (например, Java Flight Recorder). Запустите ETL с 100k записей, добавьте `flush/clear`, сравните память и латентность. Правильный ритм почти всегда заметно улучшает профиль GC и стабильность.
-
-**Java — батч-обработка с `flush()/clear()` и точечным `detach()`**
+Типичный пример batch-паттерна в Java выглядит так: мы читаем коллекцию DTO, маппим в сущности, и каждые N записей делаем `flush()` и `clear()`. Важно, что транзакция при этом одна, так что либо коммитятся все батчи, либо всё откатывается. Но persistence context внутри транзакции переиспользуется, и мы намеренно его чистим.
 
 ```java
-package com.example.pc;
+package com.example.jpa.context;
 
-import jakarta.persistence.*;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.util.List;
 
-@Entity
-@Table(name = "events")
-class Event {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String type;
-    @Column(nullable = false) Instant createdAt = Instant.now();
-    protected Event() {}
-    Event(String type){ this.type = type; }
-}
-
-interface EventRepository extends org.springframework.data.jpa.repository.JpaRepository<Event, Long> {
-    @org.springframework.data.jpa.repository.Query("""
-        select e from Event e where e.createdAt < :before order by e.id
-    """)
-    List<Event> findChunk(@org.springframework.data.repository.query.Param("before") Instant before,
-                          org.springframework.data.domain.Pageable pageable);
-}
-
 @Service
-class EventExportService {
-    @PersistenceContext private EntityManager em;
-    private final EventRepository repo;
-    EventExportService(EventRepository repo){ this.repo = repo; }
+public class OrderImportService {
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Transactional
-    public void exportOld(Instant before) {
-        int page = 0;
-        while (true) {
-            var chunk = repo.findChunk(before, org.springframework.data.domain.PageRequest.of(page, 200));
-            if (chunk.isEmpty()) break;
-            for (Event e : chunk) {
-                // ... маппим в CSV/DTO ...
-                em.detach(e); // не держим в PC после использования
+    public void importOrders(List<OrderDto> dtos) {
+        int batchSize = 50;
+        int count = 0;
+
+        for (OrderDto dto : dtos) {
+            Order order = new Order();
+            order.setExternalId(dto.externalId());
+            order.setAmount(dto.amount());
+            order.setStatus(OrderStatus.NEW);
+
+            entityManager.persist(order);
+
+            count++;
+            if (count % batchSize == 0) {
+                entityManager.flush();
+                entityManager.clear();
             }
-            em.flush(); // если что-то сохраняли по пути
-            em.clear(); // гарантированно очищаем графы
-            page++;
         }
+
+        entityManager.flush();
+        entityManager.clear();
     }
 }
 ```
-
-**Kotlin — тот же паттерн**
 
 ```kotlin
-package com.example.pc
+package com.example.jpa.context
 
-import jakarta.persistence.*
-import org.springframework.data.domain.PageRequest
-import org.springframework.data.jpa.repository.Query
-import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.data.repository.query.Param
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.time.Instant
-
-@Entity
-@Table(name = "events")
-class Event(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var type: String = "",
-    @Column(nullable = false) var createdAt: Instant = Instant.now()
-)
-
-interface EventRepository : JpaRepository<Event, Long> {
-    @Query("select e from Event e where e.createdAt < :before order by e.id")
-    fun findChunk(@Param("before") before: Instant, pageable: org.springframework.data.domain.Pageable): List<Event>
-}
 
 @Service
-class EventExportService(
-    private val repo: EventRepository,
-    @PersistenceContext private val em: EntityManager
+class OrderImportService(
+
+    @PersistenceContext
+    private val entityManager: EntityManager
 ) {
+
     @Transactional
-    fun exportOld(before: Instant) {
-        var page = 0
-        while (true) {
-            val chunk = repo.findChunk(before, PageRequest.of(page, 200))
-            if (chunk.isEmpty()) break
-            chunk.forEach { e ->
-                // ... пишем в файл/канал ...
-                em.detach(e)
+    fun importOrders(dtos: List<OrderDto>) {
+        val batchSize = 50
+        var count = 0
+
+        for (dto in dtos) {
+            val order = Order().apply {
+                externalId = dto.externalId
+                amount = dto.amount
+                status = OrderStatus.NEW
             }
-            em.flush()
-            em.clear()
-            page++
+
+            entityManager.persist(order)
+            count++
+
+            if (count % batchSize == 0) {
+                entityManager.flush()
+                entityManager.clear()
+            }
         }
+
+        entityManager.flush()
+        entityManager.clear()
     }
 }
 ```
+
+Такой код позволяет держать размер persistence context примерно в рамках 50 сущностей, даже если всего мы импортируем десятки тысяч. Это сильно снижает нагрузку на память и ускоряет `flush()`, потому что Hibernate не приходится держать и анализировать гигантский граф объектов. При этом транзакция всё ещё одна, и вы сохраняете атомарность операции: либо импорт целиком, либо ничего.
+
+При работе с отношениями нужно учитывать, что `clear()` выбрасывает из контекста **всё**, включая связанные сущности. Если вы, например, создаёте `Order` и связанные `OrderItem`, а потом сразу делаете `clear()`, то в оперативной памяти у вас останутся объекты с заполненными коллекциями, но с точки зрения Hibernate они detached. Любое дальнейшее изменение этих объектов не попадёт в БД. Поэтому обычно batched-паттерн строят так, чтобы после `flush()/clear()` вы больше не трогали эти сущности до конца транзакции (а лучше вообще не держали на них ссылок).
+
+Ещё один сценарий, где `detach()` бывает полезен — когда вы загружаете сущность только для чтения, но не хотите, чтобы случайные изменения в коде привели к SQL-обновлению. Например, вы читаете сущность, передаёте её в слой, где могут быть «грязные» мапперы/маппинг на DTO, и хотите гарантировать, что никакие изменения не уйдут в БД. Можно сразу после `find()` вызвать `entityManager.detach(entity)` и тем самым превратить сущность в обычный POJO, не связанный с контекстом. Это не заменяет нормальный дизайн слоёв, но иногда помогает в легаси.
+
+Стоит упомянуть «extended persistence context» — концепцию JPA, где контекст живёт не один HTTP-запрос, а целую user-session/«conversation». В Spring этот режим почти не используется (чаще — в Jakarta EE с stateful EJB), потому что он сильно усложняет жизнь: ещё проще получить «длинную сессию», утечки, устаревшие данные и всё то, с чем мы боремся. В Spring Boot стандарт — «transaction-scoped persistence context», и это то, на что нужно ориентироваться по умолчанию.
+
+Итог по этой части: `clear()` и `detach()` — это не «магическая оптимизация», а хирургический инструмент. `clear()` — для batch-сценариев и борьбы с раздутыми контекстами, `detach()` — для точечного «отключения» сущностей от Hibernate. В обычных CRUD-сервисах в 99 % случаев они не нужны: достаточно коротких транзакций и здравого смысла. Но как только вы лезете в массовую обработку, эти методы становятся критически важными, чтобы не утонуть в памяти и грязных сущностях.
 
 ---
 
 ## Read-only оптимизации: `Query.setReadOnly(true)`, «immutable»-сущности, `StatelessSession` (узкие случаи)
 
-Read-only — это про экономию: если вы **точно** не будете изменять загруженные сущности, не нужно тратить CPU на dirty checking и bookkeeping. В Hibernate для запроса можно указать хинт `HINT_READ_ONLY`, который пометит возвращённые сущности как «только чтение»; провайдер не будет отслеживать их изменения и будет экономить на снимках состояний.
+Большая часть продакшн-нагрузки — это чтение: списки, карточки, отчёты, поисковые страницы. Каждое чтение через JPA по умолчанию превращается в managed-сущность, попадает в persistence context и участвует в dirty checking. Для обычных запросов это нормально, но если у вас большие отчёты, сложные графы и вы точно знаете, что менять ничего не будете, есть смысл помочь Hibernate и сказать: «это read-only». Это уменьшит накладные расходы на трекинг изменений и освободит часть памяти.
 
-Помимо хинта на уровне запроса, есть настройка уровня сессии: `Session.setDefaultReadOnly(true)` — все загруженные далее сущности считаются read-only. Это полезно для больших отчётных операций, где вы выполняете несколько запросов подряд и уверены, что записи не модифицируются.
+Первый простой инструмент — `@Transactional(readOnly = true)`, о котором мы уже говорили в предыдущей подтеме. Но на уровне конкретного запроса можно пойти дальше и сказать Hibernate, что результат этого JPQL/SQL вообще не надо отслеживать, даже если внутри кода кто-то попытается изменить поля. Для этого используют Hibernate-специфичный флаг readOnly на Query: либо через `org.hibernate.query.Query#setReadOnly(true)`, либо через `setHint("org.hibernate.readOnly", true)`.
 
-Для неизменяемых справочников хорошо подходит **аннотация Hibernate** `@org.hibernate.annotations.Immutable` на сущности. Такая сущность рассматривается как «read-only» всегда; попытка изменить её поля игнорируется с точки зрения dirty checking (но конечно, вы можете сделать `native update` вручную — ORM тут не спасёт). Это снижает накладные расходы и защищает от случайных обновлений справочников.
-
-`StatelessSession` — это «облегчённая» сессия Hibernate без PC и L1-кэша. Она не делает dirty checking, не поддерживает ассоциации и каскады, работает ближе к JDBC. Чтение через неё минимально нагружает память, а массовые вставки/обновления идут без «обрастания» PC. Но вы теряете все удобства ORM: нет «магии» графов, нет автоматической генерации id (кроме прямых значений/sequence), нет listeners.
-
-Когда уместен `StatelessSession`? В узких случаях: огромные однотипные выборки на выгрузку, массовые вставки/апдейты без загрузки существующих сущностей, миграции/ETL. В «обычной» бизнес-логике он избыточен и опасен: легко нарушить инварианты, забыть про ключи или обработку связей.
-
-Read-only режим стоит сочетать с отключением OSIV и `@Transactional(readOnly = true)`. В таком профиле Hibernate часто переключает `FlushMode` на MANUAL, и вы получаете минимальную цену за чтение. Хорошо также добавить хинт `setReadOnly(true)` на каждый `Query` — это документирует намерение и защищает от случайных модификаций.
-
-В отчётах и потоковой выгрузке добавляйте `setFetchSize`/`setHint(HibernateHints.HINT_FETCH_SIZE, ...)` и используйте forward-only курсоры. Так вы не материализуете весь результат в память. В Postgres это особенно полезно, если у вас длинные транзакции: сервер отдаёт строки порциями.
-
-Не забывайте о сериализации. Если вы всё равно будете превращать результат в DTO/CSV/JSON — подумайте, нужен ли вам вообще ORM на этом пути. Часто `JdbcTemplate`/jOOQ даёт ещё более тонкий контроль и меньшие накладные расходы. Read-only JPA — компромисс, когда у вас уже есть маппинг сущностей и нужно быстро собрать отчёт.
-
-И ещё: read-only «означает договор». Не меняйте поля сущностей, помеченных как read-only, даже «в шутку». Такие правки не сохранятся, а в тестах вы легко перепутаете, почему значение «не доехало».
-
-**Java — read-only запрос, `@Immutable` и `StatelessSession` чтение**
+В Spring Data JPA мы можем получить доступ к низкоуровневому API через `EntityManager#unwrap(Session.class)` и затем — к Hibernate Query. Пример: у нас есть тяжёлый отчёт `ReportRow`, который мы хотим читать большим листом без dirty checking. Мы пишем сервис, который формирует JPQL, разворачивает запрос в Hibernate Query и помечает его `setReadOnly(true)`. Тогда Hibernate поставит сущности в специальный режим: они будут загружены, но не будут включены в dirty checking и flush.
 
 ```java
-package com.example.ro;
+package com.example.jpa.readonly;
 
-import jakarta.persistence.*;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.hibernate.Session;
-import org.hibernate.SessionFactory;
-import org.hibernate.StatelessSession;
-import org.hibernate.Transaction;
-import org.hibernate.jpa.HibernateHints;
-import org.hibernate.annotations.Immutable;
+import org.hibernate.query.Query;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
-@Entity
-@Table(name = "countries")
-@Immutable // справочник: никогда не меняем
-class Country {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false, unique = true) String code;
-    @Column(nullable = false) String name;
-    protected Country() {}
-    Country(String code, String name){ this.code=code; this.name=name; }
-}
-
-interface CountryRepository extends org.springframework.data.jpa.repository.JpaRepository<Country, Long> { }
-
 @Service
-class ReadOnlyService {
-    @PersistenceContext private EntityManager em;
-    private final SessionFactory sf;
+public class ReportReadOnlyService {
 
-    ReadOnlyService(EntityManagerFactory emf) {
-        this.sf = emf.unwrap(SessionFactory.class);
-    }
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Transactional(readOnly = true)
-    public List<Country> topCountries() {
-        var q = em.createQuery("select c from Country c order by c.name", Country.class);
-        q.setHint(HibernateHints.HINT_READ_ONLY, true); // сущности read-only
-        return q.getResultList();
-    }
+    public List<ReportRow> loadReport() {
+        Session session = entityManager.unwrap(Session.class);
 
-    // Используем StatelessSession для очень большого чтения
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    public void exportHugeTable() {
-        try (StatelessSession ss = sf.openStatelessSession()) {
-            Transaction tx = ss.beginTransaction();
-            var query = ss.createQuery("select c from Country c order by c.id", Country.class);
-            query.setHint(HibernateHints.HINT_FETCH_SIZE, 500);
-            for (Country c : query.list()) {
-                // пишем c в поток/файл; PC отсутствует, память не растёт
-            }
-            tx.commit();
-        }
+        Query<ReportRow> query = session.createQuery(
+                """
+                select new com.example.jpa.readonly.ReportRow(
+                    o.id,
+                    o.customerName,
+                    o.amount
+                )
+                from Order o
+                where o.status = :status
+                """,
+                ReportRow.class
+        );
+
+        query.setParameter("status", OrderStatus.FINISHED);
+        query.setReadOnly(true);
+
+        return query.list();
     }
 }
 ```
-
-**Kotlin — те же приёмы**
 
 ```kotlin
-package com.example.ro
+package com.example.jpa.readonly
 
-import jakarta.persistence.*
-import org.hibernate.SessionFactory
-import org.hibernate.StatelessSession
-import org.hibernate.Transaction
-import org.hibernate.jpa.HibernateHints
-import org.hibernate.annotations.Immutable
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import org.hibernate.Session
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 
-@Entity
-@Table(name = "countries")
-@Immutable
-class Country(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false, unique = true) var code: String = "",
-    @Column(nullable = false) var name: String = ""
-)
-
-interface CountryRepository : org.springframework.data.jpa.repository.JpaRepository<Country, Long>
-
 @Service
-class ReadOnlyService(
-    @PersistenceContext private val em: EntityManager,
-    emf: EntityManagerFactory
+class ReportReadOnlyService(
+
+    @PersistenceContext
+    private val entityManager: EntityManager
 ) {
-    private val sf: SessionFactory = emf.unwrap(SessionFactory::class.java)
 
     @Transactional(readOnly = true)
-    fun topCountries(): List<Country> {
-        val q = em.createQuery("select c from Country c order by c.name", Country::class.java)
-        q.setHint(HibernateHints.HINT_READ_ONLY, true)
-        return q.resultList
-    }
+    fun loadReport(): List<ReportRow> {
+        val session = entityManager.unwrap(Session::class.java)
 
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    fun exportHugeTable() {
-        sf.openStatelessSession().use { ss: StatelessSession ->
-            val tx: Transaction = ss.beginTransaction()
-            val query = ss.createQuery("select c from Country c order by c.id", Country::class.java)
-            query.setHint(HibernateHints.HINT_FETCH_SIZE, 500)
-            query.list().forEach { c ->
-                // пишем c в поток
-            }
-            tx.commit()
+        val query = session.createQuery(
+            """
+            select new com.example.jpa.readonly.ReportRow(
+                o.id,
+                o.customerName,
+                o.amount
+            )
+            from Order o
+            where o.status = :status
+            """.trimIndent(),
+            ReportRow::class.java
+        )
+
+        query.setParameter("status", OrderStatus.FINISHED)
+        query.isReadOnly = true
+
+        return query.list()
+    }
+}
+```
+
+Обратите внимание, что в примере мы сразу выбираем DTO `ReportRow`, а не сущность. В таком режиме Hibernate вообще не трекает объекты как сущности: это обычные Java-объекты, на которые никакой flush не влияет. Это фактически идеальный read-only сценарий: вы минимизируете накладные расходы ORM, не рискуете случайно что-то записать в БД и явно отделяете «модель чтения» от «модели записи».
+
+Следующий уровень — «immutable»-сущности. Если у вас есть таблицы-справочники, которые меняются крайне редко или только админским скриптом (например, типы операций, статусы, конфигурационные записи), вы можете пометить соответствующие сущности как неизменяемые через `@Immutable`. Это Hibernate-аннотация, которая говорит: не пытайся генерировать `UPDATE`/`DELETE` для этой сущности, считай её read-only. Hibernate при этом не будет включать такие сущности в dirty checking, что снижает накладные расходы.
+
+```java
+package com.example.jpa.readonly;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import org.hibernate.annotations.Immutable;
+
+@Entity
+@Table(name = "operation_type")
+@Immutable
+public class OperationType {
+
+    @Id
+    private Integer id;
+
+    private String code;
+
+    private String description;
+
+    // getters (сеттеров может и не быть)
+}
+```
+
+```kotlin
+package com.example.jpa.readonly
+
+import jakarta.persistence.Entity
+import jakarta.persistence.Id
+import jakarta.persistence.Table
+import org.hibernate.annotations.Immutable
+
+@Entity
+@Table(name = "operation_type")
+@Immutable
+class OperationType(
+
+    @Id
+    var id: Int? = null,
+
+    var code: String? = null,
+
+    var description: String? = null
+)
+```
+
+Использование `@Immutable` особенно полезно, когда такие сущности часто попадают в графы: вы подгружаете `OperationType` для каждой операции, но сами типы не меняете. Без `@Immutable` Hibernate добавляет их в dirty checking и учитывает при flush, хотя реальных изменений там нет. С `@Immutable` он может пропустить этот шаг и сэкономить время.
+
+Самый радикальный инструмент для read-only — `StatelessSession`. Это специальный режим Hibernate, в котором вообще нет persistence context: никакого L1-кэша, никакого dirty checking, никакого каскадного flush. Каждая операция (insert/update/delete/select) напрямую превращается в SQL, а результаты — в detached-объекты. Это похоже на `JdbcTemplate`, но с меппингом через ORM. Такой режим полезен для очень больших batch-чтений/записей, где вы хотите минимального overhead со стороны ORM.
+
+В Spring доступ к `StatelessSession` можно получить через `SessionFactory`, который можно достать из обычного `Session`. Код получается чуть более низкоуровневым: вы сами отвечаете за открытие/закрытие `StatelessSession` и за то, чтобы не смешивать его с обычным `EntityManager` внутри одной транзакции.
+
+```java
+package com.example.jpa.readonly;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.StatelessSession;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+@Service
+public class StatelessReportService {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @Transactional(readOnly = true)
+    public List<Order> loadAllOrdersStateless() {
+        Session session = entityManager.unwrap(Session.class);
+        SessionFactory sessionFactory = session.getSessionFactory();
+
+        try (StatelessSession stateless = sessionFactory.openStatelessSession()) {
+            return stateless
+                    .createQuery("select o from Order o", Order.class)
+                    .list();
         }
     }
 }
 ```
+
+```kotlin
+package com.example.jpa.readonly
+
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import org.hibernate.Session
+import org.hibernate.StatelessSession
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+@Service
+class StatelessReportService(
+
+    @PersistenceContext
+    private val entityManager: EntityManager
+) {
+
+    @Transactional(readOnly = true)
+    fun loadAllOrdersStateless(): List<Order> {
+        val session = entityManager.unwrap(Session::class.java)
+        val sessionFactory = session.sessionFactory
+
+        StatelessSession(sessionFactory.openStatelessSession()).use { stateless ->
+            @Suppress("UNCHECKED_CAST")
+            return stateless.createQuery(
+                "select o from Order o",
+                Order::class.java
+            ).list()
+        }
+    }
+}
+```
+
+У `StatelessSession` есть серьёзные ограничения: не работает каскадирование, не обрабатываются события (`@PrePersist` и т.п.), нет L1-кэша. Вы должны чётко понимать, что получаете и чего лишаетесь. Но для сценариев типа «прочитать 10 миллионов строк, выгрузить в файл» или «сыграть в большой ETL» это может быть отличным вариантом, когда обычный `EntityManager` уже душит вас памятью и overhead’ом.
+
+В итоге read-only оптимизации сводятся к нескольким уровням: на верхнем — просто `@Transactional(readOnly = true)` для чтений; глубже — DTO-проекции и `setReadOnly(true)` на уровне запросов; ещё глубже — `@Immutable` для действительно неизменяемых сущностей и `StatelessSession` для тяжёлых batch-сценариев. Чем ниже вы опускаетесь, тем больше ручной ответственности берёте, но тем меньше платите за сервис Hibernate при чтении.
 
 ---
 
 ## Кэш 1-го уровня как защита от двойных SELECT, но источник «устаревших» данных — критерии и баланс
 
-Кэш первого уровня (PC) — ваш друг: он гарантирует **идентичность** экземпляров в рамках транзакции (identity map) и защищает от повторных SELECT того же объекта по id. Если вы дважды вызываете `find()` с тем же ключом, второй раз Hibernate вернёт объект из PC без похода в БД — экономия на лицe.
+Persistence context = L1-кэш по сути представляет из себя identity map: внутри `EntityManager` есть мапа `EntityKey → entity instance`. Каждый раз, когда вы делаете `find()`/`getReference()`/загружаете сущность через JPQL, Hibernate сначала смотрит в этот кэш, а только потом идёт в БД. Это даёт два ключевых свойства: защита от повторных SELECT по одному и тому же id в рамках транзакции и гарантия, что в пределах контекста для каждой записи в БД будет максимум один Java-объект.
 
-Однако у этой медали есть оборотная сторона: PC может стать источником **устаревших данных**, если состояние в БД изменилось «мимо» (native update, триггеры, другая транзакция) и вы продолжаете работать с кэшированным экземпляром. В этом случае поможет `em.refresh(entity)` — он перечитает запись из БД и обновит поля объекта.
+С точки зрения производительности это отлично: если в одном сервисном методе вы дважды вызываете `findById(42L)`, в БД уйдёт только один SELECT, а второй вызов вернёт тот же объект из L1-кэша. Это особенно заметно, когда вы используете ассоциации: загрузили заказ, прошлись по списку позиций, у каждой позиции взяли ссылку на товар — Hibernate под капотом сделает JOIN или несколько SELECT’ов, но по каждому id товара будет только по одному объекту в контексте.
 
-Смешивание `native update` и чтения в одной транзакции — частая ловушка. Вы делаете `UPDATE ...` через нативный `Query`, а затем читаете сущность через `repo.findById` — получите старое значение из PC. Правильная практика: `em.flush()` перед native, а после — либо `em.clear()`, либо `em.refresh()` конкретной сущности. Идеально — разделяйте запись и чтение по разным методам/транзакциям.
+Ещё один плюс L1-кэша — согласованность внутри транзакции. Если вы загрузили сущность, поменяли в ней поле и потом снова её прочитали (даже через JPQL), вы увидите уже изменённое значение, даже если flush ещё не происходил. Для бизнес-логики это естественное поведение: «я в рамках операции работаю с целостным объектом, и любые мои изменения тут же видны». Hibernate за счёт identity map и dirty checking это обеспечивает.
 
-Поведение JPQL-запросов относительно PC тоже важно: провайдер обязан возвращать **тот же управляемый экземпляр** для строк с id, которые уже в PC. Даже если он выполнит SELECT, результат будет «сшит» с PC. Поэтому иногда вы не увидите «новое» состояние, даже делая query, — снова выручат `refresh/clear`.
-
-L1-кэш помогает и в другом: при сборке сложной карточки, если вы уже загружали `Customer` по id, все дальшеe ссылки на этого клиента из `Order` будут указывать на **тот же** объект из PC, без дополнительных SELECT. Это уменьшает вероятность N+1 в простых путях, хотя полностью проблему не решает (для коллекций всё сложнее).
-
-С точки зрения производительности L1 — бесплатный, но он **растёт** с числом загруженных сущностей. В длинных потоках чтения его нужно «подстри¬гать» `clear()/detach()`. Иначе PC станет «кладбищем» ссылок и начнёт мешать сборщику мусора.
-
-Не путайте L1 и кэш второго уровня. L1 — всегда включён, локален транзакции/сессии, потокобезопасен за счёт границ транзакции и никак не реплицируется. L2 — опционально, разделяется между сессиями и инстансами (в зависимости от провайдера), требует строгой стратегии инвалидации. Здесь мы говорим только про L1.
-
-В тестах удобно смотреть **статистику Hibernate** (`generate_statistics`). Счётчик `prepareStatementCount` и раздел `entityFetchCount`/`secondLevelCacheHitCount` помогут подтвердить, что вторые чтения по id действительно не ходят в БД. Это мощный «охранник» от регресса N+1.
-
-Памятка: «читать → обрабатывать → возможно записывать → `flush()` → при необходимости `clear()`». Если между шагами данные могут меняться другими транзакциями, не стесняйтесь делать `refresh()` выборочно — это дешево по сравнению с расследованием инцидентов.
-
-И наконец, health-check для себя: если вы видите в логах повторные одинаковые SELECT по id внутри одной транзакции — это признак, что вы делаете `clear()` слишком часто или обращаетесь к данным из разных контекстов. Проверьте границы `@Transactional` и места, где вы вручную очистили PC.
-
-**Java — демонстрация L1: двойное чтение, native-update и `refresh()`**
+Простейший пример: сервис, который дважды читает одну и ту же сущность в рамках транзакции. При включённом SQL-логе вы увидите только один SELECT, хотя вызовы репозитория два. Это и есть эффект L1-кэша. Именно поэтому многие «подозрительные» N+1-сценарии в тестах не так страшны, как выглядят на уровне кода: пока вы не выходите за рамки одного контекста, Hibernate не будет дёргать базу лишний раз по одному и тому же id.
 
 ```java
-package com.example.l1;
+package com.example.jpa.l1cache;
 
-import jakarta.persistence.*;
-import org.hibernate.SessionFactory;
-import org.hibernate.stat.Statistics;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-@Entity
-@Table(name = "articles")
-class Article {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String title;
-    protected Article() {}
-    Article(String t){ this.title = t; }
-}
-
-interface ArticleRepository extends org.springframework.data.jpa.repository.JpaRepository<Article, Long> { }
-
 @Service
-class L1DemoService {
-    private final ArticleRepository repo;
-    @PersistenceContext private EntityManager em;
-    private final SessionFactory sf;
+public class AccountReadService {
 
-    L1DemoService(ArticleRepository repo, EntityManagerFactory emf) {
-        this.repo = repo;
-        this.sf = emf.unwrap(SessionFactory.class);
+    private final AccountRepository repository;
+
+    public AccountReadService(AccountRepository repository) {
+        this.repository = repository;
     }
 
-    @Transactional
-    public void demo(Long id) {
-        Statistics st = sf.getStatistics(); st.clear();
+    @Transactional(readOnly = true)
+    public void readTwice(Long id) {
+        Account first = repository.findById(id)
+                .orElseThrow();
 
-        Article a1 = repo.findById(id).orElseThrow(); // 1-й SELECT
-        Article a2 = repo.findById(id).orElseThrow(); // из L1, без SELECT
+        Account second = repository.findById(id)
+                .orElseThrow();
 
-        // Нативно изменим заголовок
-        em.createNativeQuery("update articles set title = :t where id = :id")
-          .setParameter("t", "New Title")
-          .setParameter("id", id)
-          .executeUpdate();
-
-        // Всё ещё старый title в L1:
-        System.out.println("Before refresh: " + a1.title);
-        em.refresh(a1); // перечитываем из БД
-        System.out.println("After  refresh: " + a1.title);
-
-        System.out.println("SQL statements total: " + st.getPrepareStatementCount());
+        System.out.println("Same instance: " + (first == second));
     }
 }
 ```
 
-**Kotlin — аналогичная демонстрация**
-
 ```kotlin
-package com.example.l1
+package com.example.jpa.l1cache
 
-import jakarta.persistence.*
-import org.hibernate.SessionFactory
-import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
-@Entity
-@Table(name = "articles")
-class Article(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var title: String = ""
-)
-
-interface ArticleRepository : JpaRepository<Article, Long>
-
 @Service
-class L1DemoService(
-    private val repo: ArticleRepository,
-    @PersistenceContext private val em: EntityManager,
-    emf: EntityManagerFactory
+class AccountReadService(
+    private val repository: AccountRepository
 ) {
-    private val sf: SessionFactory = emf.unwrap(SessionFactory::class.java)
 
-    @Transactional
-    fun demo(id: Long) {
-        val st = sf.statistics; st.clear()
+    @Transactional(readOnly = true)
+    fun readTwice(id: Long) {
+        val first = repository.findById(id).orElseThrow()
+        val second = repository.findById(id).orElseThrow()
 
-        val a1 = repo.findById(id).orElseThrow() // первый SELECT
-        val a2 = repo.findById(id).orElseThrow() // кэш 1-го уровня
-
-        em.createNativeQuery("update articles set title = :t where id = :id")
-            .setParameter("t", "New Title")
-            .setParameter("id", id)
-            .executeUpdate()
-
-        println("Before refresh: ${a1.title}")
-        em.refresh(a1)
-        println("After  refresh: ${a1.title}")
-
-        println("SQL statements total: ${st.prepareStatementCount}")
+        println("Same instance: ${first === second}")
     }
 }
 ```
 
-# 6. Сложные маппинги и модель
+При этом важно понимать, что L1-кэш живёт только в рамках текущего `EntityManager`/транзакции. Как только транзакция завершилась, контекст уничтожается, и при следующем запросе всё начинается с нуля. Это не распределённый кеш, не L2-кэш, а чисто внутритранзакционный механизм. Он не уменьшает количество запросов между разными веб-запросами, он лишь оптимизирует работу внутри одной операции.
 
-*Зависимости и базовые настройки для всей подтемы (самодостаточно для компиляции примеров).*
+Обратная сторона медали: L1-кэш может стать источником «устаревших» данных, если вы в одной транзакции комбинируете JPA-обновления, bulk-DML или прямые SQL-операции по той же таблице. Например, вы загрузили сущность, потом где-то в этом же `EntityManager` выполнили `nativeQuery` с `UPDATE` по той же строке, а потом снова обращаетесь к сущности — в L1-кэше по-прежнему лежит старая версия. Hibernate не знает, что вы руками обошли его и что-то поменяли в БД.
 
-**Gradle (Groovy DSL)**
+Чтобы явно сказать Hibernate «перечитай эту сущность из БД», есть метод `EntityManager.refresh(entity)`. Он берёт primary key объекта, делает SELECT в БД и обновляет поля объекта в соответствии с текущим состоянием таблицы. После `refresh()` L1-кэш и БД снова синхронизированы по этой сущности. Это единственный правильный способ «насильно» подтянуть изменения, сделанные вне обычного JPA-потока.
 
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
+```java
+package com.example.jpa.l1cache;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class AccountRefreshService {
+
+    private final AccountRepository repository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    public AccountRefreshService(AccountRepository repository) {
+        this.repository = repository;
+    }
+
+    @Transactional
+    public void demoRefresh(Long id) {
+        Account account = repository.findById(id)
+                .orElseThrow();
+
+        long balanceBefore = account.getBalance();
+
+        // ... где-то здесь могли произойти изменения в БД другим процессом ...
+
+        entityManager.refresh(account);
+
+        long balanceAfter = account.getBalance();
+
+        System.out.printf("Before: %d, after refresh: %d%n",
+                balanceBefore, balanceAfter);
+    }
 }
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
 ```
-
-**Gradle (Kotlin DSL)**
 
 ```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
+package com.example.jpa.l1cache
+
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+@Service
+class AccountRefreshService(
+
+    private val repository: AccountRepository,
+
+    @PersistenceContext
+    private val entityManager: EntityManager
+) {
+
+    @Transactional
+    fun demoRefresh(id: Long) {
+        val account = repository.findById(id).orElseThrow()
+
+        val balanceBefore = account.balance
+
+        // ... в это время кто-то другой мог изменить баланс в БД ...
+
+        entityManager.refresh(account)
+
+        val balanceAfter = account.balance
+
+        println("Before: $balanceBefore, after refresh: $balanceAfter")
+    }
 }
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
 ```
 
----
+Тот же эффект возникает и после bulk-операций (`update/delete` через JPQL или native), о которых говорили в предыдущей подтеме. Bulk-DML обходит L1-кэш и меняет строки напрямую в БД. L1-кэш при этом остаётся со старыми значениями, и любые чтения сущностей из него не увидят изменений. Поэтому после bulk-операций всегда либо делают `clear()` контекста, либо аккуратно `refresh()` нужные сущности. Иначе вы получаете тихую неконсистентность между памятью и базой.
+
+Также нужно помнить, что L1-кэш — это не просто map, а map + «грязные» сущности, за которыми Hibernate следит. Чем больше сущностей вы загружаете и оставляете managed, тем больше работы для dirty checking при каждом `flush()`/запросе (в `FlushMode.AUTO`). Поэтому хорошая практика — не тянуть в одну транзакцию слишком много несвязанных сущностей и не использовать «универсальные» сервисы, которые за один вызов загружают половину базы «на всякий случай».
+
+Баланс здесь такой: для обычных CRUD-операций вы доверяете L1-кэшу и не вмешиваетесь — он даёт вам и меньше SELECT, и локальную согласованность. Как только вы начинаете делать bulk-обновления, прямой JDBC или несколько независимых действий в одной транзакции — вы явно управляете контекстом: `clear()` там, где нужно, `refresh()` там, где важно получить свежие данные. Важно не пытаться использовать L1-кэш как «мини-L2», то есть не рассчитывать, что он «прикроет» вас между разными запросами или потоками — для этого он не предназначен.
+
+В завершение: L1-кэш — это одновременно ваш друг и потенциальный враг. Он защищает от лишних SELECT и даёт естественную модель работы с объектами внутри транзакции. Но как только вы начинаете обходить JPA через native SQL, bulk-операции или слишком длинные транзакции, он может подложить мину из устаревших данных или избыточного потребления памяти. Ключ к здравому использованию — чёткие границы транзакций, понимание того, что происходит в контексте, и осознанное применение `clear()`/`refresh()` там, где вы нарушаете «обычный поток» ORM.
+
+# 6. Сложные маппинги и модель
 
 ## Наследование: SINGLE_TABLE vs JOINED vs TABLE_PER_CLASS — компромиссы производительности/нормализации
 
-Наследование в JPA — инструмент для моделирования семейства сущностей с общим API и общими полями. На практике оно влияет не только на структуру кода, но и на физическую схему, скорость запросов, размер индексов и сложность миграций. Три стратегии — `SINGLE_TABLE`, `JOINED` и `TABLE_PER_CLASS` — представляют три разных компромисса между производительностью и нормализацией.
+В объектной модели наследование — абсолютно естественная вещь: у вас есть базовый класс `Payment`, от него наследуются `CardPayment`, `BankTransfer`, `QrPayment` и т.д. В реляционной же модели таблиц наследования нет, и JPA/Hibernate должны как-то «развернуть» иерархию классов в набор таблиц и связей. Выбор стратегии наследования напрямую влияет на структуру схемы, количество join’ов, объём данных и производительность запросов. Если отнестись к этому как к случайному выбору, очень легко получить либо раздутую таблицу, либо сложные запросы, либо очень тяжёлую поддержку в будущем.
 
-`SINGLE_TABLE` складывает всех наследников в **одну таблицу** с колонкой-дискриминатором (`DTYPE`). Это максимально быстро на чтение: полиморфный запрос — это один `SELECT` без джоинов и `UNION`. Но вы платите **разрежённостью**: поля, присутствующие только у части наследников, становятся `NULL`-колонками. При большом количестве таких полей таблица «распухает», индексы становятся тяжелее, а `UPDATE` затрагивает больше страниц.
+Стратегия `SINGLE_TABLE` хранит всю иерархию в одной таблице, с дискриминаторным столбцом и набором nullable-колонок под поля всех подклассов. Это самый быстрый по чтению вариант: один `select` по одной таблице, никакого join’инга, всё прямолинейно. Но за скорость вы платите денормализацией: в таблице много колонок, из которых большая часть для конкретного типа просто `null`, и по мере роста иерархии таблица пухнет. Для одних доменов это нормально, для других — превращается в проблему с управляемостью схемы.
 
-`JOINED` хранит общие поля в базовой таблице, а специфичные — в таблицах-наследниках, соединяемых по PK=FK. Запросы к конкретному наследнику быстрые (один `JOIN`), а полиморфные читаются через серию `OUTER JOIN` или `UNION` (в зависимости от диалекта и JPQL). Это хорошо нормализовано, но даёт накладные расходы на джоины и требует аккуратных индексов по внешним ключам.
+Плюсы `SINGLE_TABLE` очевидны: простые запросы, минимум join’ов, хорошая производительность на типичных CRUD-операциях, особенно когда запросы идут по pk или по общим полям базового класса. Минусы — ограниченная эволюция (добавление новых типов ведёт к модификации одной и той же таблицы), необходимость жить с кучей nullable-полей, сложность для DBA, которые привыкли видеть более нормализованную схему. Плюс сюда добавляются тонкости с ограничениями: например, уникальность на уровне конкретного подкласса приходится обеспечивать сложными частичными индексами или триггерами.
 
-`TABLE_PER_CLASS` создаёт **по таблице на наследника** и выполняет полиморфные выборки через `UNION ALL`. Для сущности с десятком наследников полиморфный `SELECT` превращается в десяток под-запросов — дорого и тяжело для планировщика. Стратегия уместна редко: когда вы почти не делаете полиморфных запросов и вам нужна физическая изоляция данных наследников.
+Стратегия `JOINED` раскладывает наследование на нормализованные таблицы: общие поля — в базовой таблице, специфичные для подкласса — в отдельной таблице с тем же `id` и `foreign key` на базовую. При чтении конкретного подкласса Hibernate делает join по этим таблицам, получая полную картину. Это хорошая середина между нормализацией и читабельностью: общие данные живут в одном месте, специфичные — в своих таблицах, схема читается, а антипаттерн с десятком nullable-колонок в одной таблице исчезает.
 
-С точки зрения миграций у `SINGLE_TABLE` проще всего **добавлять** колонки, но сложнее выкидывать «мусор»: null-колонок становится много. У `JOINED` проще контролировать эволюцию отдельных веток, но при переносе полей между базой и наследником приходится переписывать данные. `TABLE_PER_CLASS` чаще всего упирается в сложность отчётных запросов и индексации.
+С `JOINED` вы выигрываете в нормализации и структурной чистоте схемы, но платите join’ами. Если у вас длинная иерархия, запрос к самому нижнему подклассу превращается в join по нескольким таблицам. Для OLTP-нагрузок это зачастую приемлемо, но для очень горячих таблиц и тяжёлых запросов нужно внимательно смотреть на планы выполнения. Отдельный нюанс: вставка нового экземпляра подкласса — это уже минимум два INSERT’а (в базовую и в таблицу подкласса), что при агрессивных батчах и массовых вставках тоже имеет значение.
 
-Ещё один аспект — «горячие» индексы. В `SINGLE_TABLE` один большой индекс на `DTYPE`+«бизнес-поля» работает как универсальный, но может конфликтовать по структуре доступа у разных наследников. В `JOINED` индексы на дочерних таблицах компактнее и ориентированы на конкретные запросы; общий PK/DTYPE остаётся на базе. Это часто даёт выигрыш под OLTP-нагрузкой.
+Стратегия `TABLE_PER_CLASS` создаёт отдельную таблицу под каждый конкретный класс, включая базовый. Для каждого подкласса есть своя таблица с полным набором полей, и базовый класс не представлен одной общей таблицей. При запросе по базовому типу Hibernate вынужден делать `UNION` по всем таблицам подклассов. Это может быть удобно, когда вы почти всегда работаете с подклассами и почти никогда — с базовым типом, но в большинстве бизнес-домена этот вариант оказывается самым тяжёлым по запросам и редко подходит под требовательные к производительности системы.
 
-Правило большого пальца: если у вас немного наследников, а полиморфные запросы — частое явление (например, «все платежи разных типов, отсортированные по времени»), берите **`SINGLE_TABLE`**. Если наследники сильно различаются по набору колонок и полиморфные запросы редки, — **`JOINED`**. `TABLE_PER_CLASS` — только когда вы почти всегда обращаетесь к конкретным типам и хотите жёсткой физической сегрегации.
+Выбор стратегии должен быть осознанным. Если у вас небольшая иерархия и много запросов по «общим» полям, `SINGLE_TABLE` часто выигрывает и по простоте, и по скорости. Если важна нормализация, чёткая схема и количество типов растёт, `JOINED` обычно предпочтительнее. `TABLE_PER_CLASS` чаще всего оправдан либо для очень специфичных аналитических задач, либо для случаев, когда базовый тип почти не используется и каждый подкласс живёт в своём микромире. В микросервисной архитектуре с узкими bounded context’ами вы обычно можете спроектировать модель так, чтобы не упираться в TABLE_PER_CLASS.
 
-Избегайте перегиба: иногда наследование в модели — избыточно, и лучше использовать **композицию** (встроенные значения, стратегии) или «тип поля + JSON с параметрами» (для редких расширений). Наследование — мощное, но делает SQL и миграции менее очевидными для команды.
+Важно помнить и про практические ограничения ORM. У `SINGLE_TABLE` есть дискриминаторный столбец, который должен быть корректно заполнен и проиндексирован, иначе поиск по типу будет медленным. У `JOINED` есть риск неоптимальных join-планов, если не следить за индексами и не анализировать реальные запросы. У `TABLE_PER_CLASS` запросы по базовому типу могут вообще стать неприемлемыми на больших объёмах данных из-за `UNION` по множеству таблиц. Каждый из подходов требует своих DBA-практик, а не живёт «по умолчанию».
 
-Проверяйте планы запросов и реальный SQL, который генерирует Hibernate. В `SINGLE_TABLE` не забывайте про `@DiscriminatorColumn` и явные `@DiscriminatorValue` — это улучшает читаемость SQL и защищает от сюрпризов при рефакторинге имён классов. В `JOINED` обязательно индексируйте FK-колонки дочерних таблиц, иначе любое чтение превратится в nested loop без индекса.
+Наконец, в продакшене очень часто оказывается, что наследование как таковое можно заменить композицией или просто отдельными сущностями с общими полями в `@MappedSuperclass`. Это менее «объектно чисто», но даёт более предсказуемое поведение и структуру БД. Если иерархия поведения между типами совпадает не всегда, а данные различаются радикально, часто честнее сделать несколько отдельных агрегатов, чем пытаться загнать всё в одну JPA-иерархию и потом разбираться с дискриминаторами и каскадами.
 
-И наконец, имейте в виду, что наследование усложняет кэширование L2 и сериализацию. DTO-проекции по месту — лёгкий способ упростить контракт наружу и не тянуть за собой полиморфные графы в JSON.
-
-**Java — пример `SINGLE_TABLE` для иерархии платежей**
+В качестве иллюстрации рассмотрим классический пример с платёжными средствами. Мы сделаем базовый класс `BillingDetails` и два подкласса — `CreditCard` и `BankAccount` — и промапим их через `SINGLE_TABLE`. Это хорошая демонстрация, как работает дискриминаторный столбец и как в коде выглядит стратегия наследования. Код ниже показывает сами сущности и репозиторий для работы с ними.
 
 ```java
-package com.example.inheritance;
+package com.example.jpa.inheritance;
 
 import jakarta.persistence.*;
-import java.time.Instant;
 
 @Entity
-@Table(name = "payments")
+@Table(name = "billing_details")
 @Inheritance(strategy = InheritanceType.SINGLE_TABLE)
-@DiscriminatorColumn(name = "ptype", length = 16)
-public abstract class Payment {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@DiscriminatorColumn(name = "billing_type")
+public abstract class BillingDetails {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE)
     private Long id;
 
-    @Column(nullable = false) private Long amountCents;
-    @Column(nullable = false) private Instant createdAt = Instant.now();
+    @Column(name = "owner", nullable = false)
+    private String owner;
 
-    protected Payment() {}
-    protected Payment(long amountCents){ this.amountCents = amountCents; }
+    // геттеры/сеттеры
 
-    // getters
-    public Long getId() { return id; }
-    public Long getAmountCents() { return amountCents; }
-    public Instant getCreatedAt() { return createdAt; }
+    public Long getId() {
+        return id;
+    }
+
+    public String getOwner() {
+        return owner;
+    }
+
+    public void setOwner(String owner) {
+        this.owner = owner;
+    }
 }
 
 @Entity
 @DiscriminatorValue("CARD")
-class CardPayment extends Payment {
-    @Column(name = "card_last4", length = 4)
-    private String cardLast4;
+class CreditCard extends BillingDetails {
 
-    protected CardPayment() {}
-    public CardPayment(long amountCents, String cardLast4) {
-        super(amountCents);
-        this.cardLast4 = cardLast4;
-    }
+    @Column(name = "card_number", nullable = false)
+    private String cardNumber;
+
+    @Column(name = "exp_month", nullable = false)
+    private int expMonth;
+
+    @Column(name = "exp_year", nullable = false)
+    private int expYear;
+
+    // геттеры/сеттеры
 }
 
 @Entity
-@DiscriminatorValue("CASH")
-class CashPayment extends Payment {
-    @Column(name = "cashbox")
-    private String cashbox;
+@DiscriminatorValue("BANK")
+class BankAccount extends BillingDetails {
 
-    protected CashPayment() {}
-    public CashPayment(long amountCents, String cashbox) {
-        super(amountCents);
-        this.cashbox = cashbox;
-    }
-}
+    @Column(name = "account_number", nullable = false)
+    private String accountNumber;
 
-interface PaymentRepository extends org.springframework.data.jpa.repository.JpaRepository<Payment, Long> {
-    // полиморфный запрос — одна таблица
-    java.util.List<Payment> findTop10ByOrderByCreatedAtDesc();
+    @Column(name = "bank_name", nullable = false)
+    private String bankName;
+
+    // геттеры/сеттеры
 }
 ```
 
-**Kotlin — тот же пример, но с `JOINED` для контраста**
-
 ```kotlin
-package com.example.inheritance
+package com.example.jpa.inheritance
 
 import jakarta.persistence.*
-import java.time.Instant
 
 @Entity
-@Table(name = "payments2")
-@Inheritance(strategy = InheritanceType.JOINED)
-open class Payment2(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    open var id: Long? = null,
-    @Column(nullable = false) open var amountCents: Long = 0,
-    @Column(nullable = false) open var createdAt: Instant = Instant.now()
+@Table(name = "billing_details")
+@Inheritance(strategy = InheritanceType.SINGLE_TABLE)
+@DiscriminatorColumn(name = "billing_type")
+abstract class BillingDetails(
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE)
+    var id: Long? = null,
+
+    @Column(name = "owner", nullable = false)
+    var owner: String = ""
 )
 
 @Entity
-@Table(name = "card_payments2")
-class CardPayment2(
-    id: Long? = null,
-    amountCents: Long = 0,
-    createdAt: Instant = Instant.now(),
-    @Column(name = "card_last4", length = 4) var cardLast4: String = ""
-) : Payment2(id, amountCents, createdAt)
+@DiscriminatorValue("CARD")
+class CreditCard(
+
+    owner: String = "",
+
+    @Column(name = "card_number", nullable = false)
+    var cardNumber: String = "",
+
+    @Column(name = "exp_month", nullable = false)
+    var expMonth: Int = 0,
+
+    @Column(name = "exp_year", nullable = false)
+    var expYear: Int = 0
+) : BillingDetails(owner = owner)
 
 @Entity
-@Table(name = "cash_payments2")
-class CashPayment2(
-    id: Long? = null,
-    amountCents: Long = 0,
-    createdAt: Instant = Instant.now(),
-    @Column(name = "cashbox") var cashbox: String = ""
-) : Payment2(id, amountCents, createdAt)
+@DiscriminatorValue("BANK")
+class BankAccount(
 
-interface Payment2Repository : org.springframework.data.jpa.repository.JpaRepository<Payment2, Long>
+    owner: String = "",
+
+    @Column(name = "account_number", nullable = false)
+    var accountNumber: String = "",
+
+    @Column(name = "bank_name", nullable = false)
+    var bankName: String = ""
+) : BillingDetails(owner = owner)
 ```
+
+Этот пример подчёркивает, что выбор стратегии наследования — это не просто аннотация на базовом классе. За ней стоит конкретная структура таблицы, набор ограничений и профиль запросов. Если вы заранее понимаете, как реальные запросы будут работать по этой иерархии, вы сможете выбрать подходящую стратегию и не столкнуться с неожиданным деградом через год эксплуатации.
 
 ---
 
 ## Связи: избегаем «грузных» `@ManyToMany` — предпочтительна явная сущность связи (join-entity)
 
-`@ManyToMany` кажется заманчиво коротким: две коллекции — и Hibernate сам создаст промежуточную таблицу. Но в продакшн-сценариях это почти всегда оборачивается проблемами. Связь «многие-ко-многим» редко бывает «просто связью»: у связи появляются атрибуты (роль, дата, порядок, флаги), а операции над ней требуют тонкого контроля (soft-delete, аудит, уникальность). У JPA-коллекций `@ManyToMany` нет места для атрибутов — и вы быстро упираетесь в потолок.
+В объектном мире связь многие-ко-многим кажется естественной: у студента может быть много курсов, у курса — много студентов. В JPA это легко маппится через `@ManyToMany`, и первое время всё выглядит прекрасно. Но по мере развития системы оказывается, что к связи хочется добавить дополнительные атрибуты (например, дату записи на курс, статус, оценку), повлиять на каскады, оптимизировать запросы — и простой `@ManyToMany` начинает ограничивать. Поэтому в продакшн-коде гораздо чаще используют явную сущность связи (join-entity), а `@ManyToMany` оставляют для очень простых и редко меняющихся кейсов.
 
-Даже если атрибутов нет, «грязные» операции коллекций вызывают каскады `DELETE/INSERT` в таблицу связей при каждом изменении набора. Это дорого, сложно кешируется и плохо объяснимо по SQL. Любая попытка «подобрать» связи точечным `UPDATE` идёт вразрез с моделью `@ManyToMany`, потому что промежуточная таблица не явлена в коде.
+Классический `@ManyToMany` в JPA — это две сущности, каждая из которых ссылается на другую через коллекцию, а Hibernate под капотом создаёт третью таблицу для join’а. Таблица обычно содержит два столбца с внешними ключами, и на нее не маппится отдельный класс. Это удобно, когда связь — чистая и без дополнительных данных, и когда вы уверены, что это не изменится. Как только бизнес приходит и говорит «давайте добавим дату начала, приоритет, ограничение по ролям», такая схема начинает ломаться.
 
-Явная сущность связи (join-entity) решает обе проблемы. Мы моделируем связь как обычную сущность с PK (часто составным) и двумя `@ManyToOne` на «края», добавляем атрибуты и индексы, управляем жизненным циклом, как нам нужно. Это немного больше кода, но в разы больше прозрачности, контроля и производительности.
+Проблема «грузных» `@ManyToMany` не только в том, что туда невозможно добавить поля. Важен контроль над направлением и каскадами. При двусторонней связи легко получить неожиданные каскадные обновления и удаление строк в join-таблице, особенно если вы используете `cascade = CascadeType.ALL` не очень осознанно. Hibernate пытается синхронизировать обе стороны связи, и при неправильном управлении коллекциями может генерировать лишние DELETE/INSERT, что резко ухудшает производительность.
 
-Отдельная боль — сериализация. Бидирекционная `@ManyToMany` легко превращается в рекурсивную JSON-структуру. С join-entity вы сериализуете плоские DTO, а края добавляете по необходимости. Это лучше для API и снимает риски `LazyInitializationException` при ленивых коллекциях.
+Подход с явной сущностью связи решает почти все эти проблемы. Вместо `ManyToMany` вы моделируете два `ManyToOne` на отдельную сущность, например `Enrollment`, которая связывает `Student` и `Course` и несёт дополнительные атрибуты (дата регистрации, статус, источник). Эта сущность становится полноправным участником домена: по ней можно строить репозитории, индексы, накладывать уникальные ограничения и правила валидации. Для ORM это просто обычная сущность без магии.
 
-Ещё один плюс join-entity — простые **уникальные ограничения**. В промежуточной таблице вы ставите `unique (a_id, b_id)` и уверены, что дубликаты не появятся. С `@ManyToMany` Hibernate может «насовывать» дубликаты в коллекцию в памяти, если вы неправильно определили `equals/hashCode`. С явной сущностью у вас есть полный контроль.
+Отдельный плюс join-entity — предсказуемость SQL. JPA с `@ManyToMany` генерирует очистку join-таблицы при изменении коллекций весьма агрессивно, иногда предпочитая «удалить все связи и вставить заново», если не может построить diff. Явная связь же ведёт себя как обычная сущность: вы явно создаёте новые записи, явно удаляете ненужные, можете использовать `@BatchSize` или `JOIN FETCH`, а также точечно оптимизировать запросы.
 
-С точки зрения производительности join-entity помогает оптимизировать чтения. Вы можете сначала выбрать набор связей по критериям (и с пагинацией), затем догрузить «края» батчем — без гигантских `JOIN`. Это особенно полезно для «каталогов» и «подписок», когда связей очень много.
+Композиция через join-entity даёт и более чистую модель с точки зрения домена. Появляется возможность отразить смысл: «запись на курс», «участие в проекте», «подписка» — это обычно отдельное понятие в предметной области, а не просто «строчка в join-таблице». Как только вы начинаете думать о связи как о сущности, появляются поля и правила, которые очень сложно выразить через голый `@ManyToMany` без перехода к более низкоуровневому маппингу.
 
-Для корректности всегда пишите **вспомогательные методы** на сторонах, чтобы поддерживать обе стороны в консистентности (`addEnrollment`, `removeEnrollment`). Это защищает от рассинхронизаций между памятью и БД и делает код читаемым в сервисах.
-
-Наконец, миграция: начинать с `@ManyToMany` «на время» почти всегда плохо — любые реальные требования быстро заставят переписывать схему. Лучше сразу проектировать через join-entity, даже если сейчас атрибутов нет. Вы выиграете на поддержке и избежите сложных миграций.
-
-И последнее — индексы. На таблице связи ставьте `unique(a_id, b_id)` и отдельные BTREE-индексы на `a_id` и `b_id` (если запросы асимметричны). Это даёт селективность и ускоряет джоины. Для мягкого удаления добавляйте составные индексы с `deleted_at is null`.
-
-**Java — наивный `@ManyToMany` (для контраста, использовать с осторожностью)**
+Посмотрим на код. Сначала пример «как делать не стоит» — простой `@ManyToMany` между `Student` и `Course`. Он работает, но очень быстро упрётся в ограничения.
 
 ```java
-package com.example.mtm;
+package com.example.jpa.relations;
 
 import jakarta.persistence.*;
 import java.util.HashSet;
@@ -2941,2161 +3027,1796 @@ import java.util.Set;
 @Entity
 @Table(name = "students")
 public class Student {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+
+    @Id
+    @GeneratedValue
     private Long id;
-    @Column(nullable = false) private String name;
+
+    private String name;
 
     @ManyToMany
-    @JoinTable(name = "enrollments_mtm",
-        joinColumns = @JoinColumn(name = "student_id"),
-        inverseJoinColumns = @JoinColumn(name = "course_id"))
+    @JoinTable(
+            name = "student_course",
+            joinColumns = @JoinColumn(name = "student_id"),
+            inverseJoinColumns = @JoinColumn(name = "course_id")
+    )
     private Set<Course> courses = new HashSet<>();
 
-    protected Student() {}
-    public Student(String name){ this.name = name; }
-
-    public void enroll(Course c){ courses.add(c); c.getStudents().add(this); }
-    public void drop(Course c){ courses.remove(c); c.getStudents().remove(this); }
-
-    public Set<Course> getCourses() { return courses; }
+    // геттеры/сеттеры
 }
 
 @Entity
 @Table(name = "courses")
 class Course {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+
+    @Id
+    @GeneratedValue
     private Long id;
-    @Column(nullable = false) private String title;
 
-    @ManyToMany(mappedBy = "courses")
-    private Set<Student> students = new HashSet<>();
+    private String title;
 
-    protected Course() {}
-    public Course(String title){ this.title = title; }
-    public Set<Student> getStudents() { return students; }
+    // обратная сторона можно добавить, но опустим для краткости
 }
 ```
 
-**Kotlin — рекомендуемая join-entity с атрибутами**
-
 ```kotlin
-package com.example.mtm
+package com.example.jpa.relations
 
 import jakarta.persistence.*
-import java.time.Instant
+import java.util.*
 
 @Entity
-@Table(name = "students2")
-class Student2(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "students")
+class Student(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false) var name: String = ""
+
+    var name: String = ""
 ) {
-    @OneToMany(mappedBy = "student", cascade = [CascadeType.ALL], orphanRemoval = true)
-    var enrollments: MutableSet<Enrollment> = mutableSetOf()
 
-    fun enroll(course: Course2, role: String = "REGULAR") {
-        val e = Enrollment(student = this, course = course, role = role)
-        enrollments += e
-        course.enrollments += e
-    }
-
-    fun drop(course: Course2) {
-        val e = enrollments.firstOrNull { it.course == course } ?: return
-        enrollments.remove(e)
-        course.enrollments.remove(e)
-        e.student = null; e.course = null
-    }
+    @ManyToMany
+    @JoinTable(
+        name = "student_course",
+        joinColumns = [JoinColumn(name = "student_id")],
+        inverseJoinColumns = [JoinColumn(name = "course_id")]
+    )
+    var courses: MutableSet<Course> = HashSet()
 }
 
 @Entity
-@Table(name = "courses2")
-class Course2(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "courses")
+class Course(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false) var title: String = ""
-) {
-    @OneToMany(mappedBy = "course", cascade = [CascadeType.ALL], orphanRemoval = true)
-    var enrollments: MutableSet<Enrollment> = mutableSetOf()
+
+    var title: String = ""
+)
+```
+
+Теперь — вариант с явной сущностью `Enrollment`. Здесь мы отказываемся от `@ManyToMany` и строим модель через `@ManyToOne` с обеих сторон. `Enrollment` получает дополнительные поля, в БД под неё заводится отдельная таблица с собственным pk и fk на `students` и `courses`. В будущем мы можем добавлять туда атрибуты сколько угодно, не ломая модель.
+
+```java
+package com.example.jpa.relations;
+
+import jakarta.persistence.*;
+
+import java.time.LocalDate;
+
+@Entity
+@Table(
+        name = "enrollments",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_enrollment_student_course",
+                columnNames = {"student_id", "course_id"}
+        )
+)
+public class Enrollment {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "student_id")
+    private Student student;
+
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "course_id")
+    private Course course;
+
+    @Column(name = "enrolled_at", nullable = false)
+    private LocalDate enrolledAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false)
+    private EnrollmentStatus status;
+
+    // геттеры/сеттеры
 }
+```
+
+```kotlin
+package com.example.jpa.relations
+
+import jakarta.persistence.*
+import java.time.LocalDate
 
 @Entity
 @Table(
     name = "enrollments",
-    uniqueConstraints = [UniqueConstraint(columnNames = ["student_id", "course_id"])]
+    uniqueConstraints = [
+        UniqueConstraint(
+            name = "uk_enrollment_student_course",
+            columnNames = ["student_id", "course_id"]
+        )
+    ]
 )
 class Enrollment(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
 
-    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "student_id", nullable = false)
-    var student: Student2? = null,
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "student_id")
+    var student: Student? = null,
 
-    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "course_id", nullable = false)
-    var course: Course2? = null,
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "course_id")
+    var course: Course? = null,
 
-    @Column(nullable = false) var role: String = "REGULAR",
-    @Column(nullable = false) var joinedAt: Instant = Instant.now()
+    @Column(name = "enrolled_at", nullable = false)
+    var enrolledAt: LocalDate = LocalDate.now(),
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false)
+    var status: EnrollmentStatus = EnrollmentStatus.ACTIVE
 )
 ```
+
+Такой подход даёт полный контроль: вы можете навесить уникальный индекс на пару `(student_id, course_id)`, следить за статусом записи, хранить историю, статистику и т.д. Модель остаётся прозрачной для JPA и SQL, проблем с «грузным» `@ManyToMany` и невозможностью расширяться у вас не возникает. В реальных системах join-entity — почти всегда лучший выбор.
 
 ---
 
 ## Встроенные значения: `@Embeddable` для value-объектов; `@MappedSuperclass` для общих полей, не для связей
 
-`@Embeddable` позволяет моделировать **value-объекты**: неизменяемые (по смыслу) кусочки данных, которые живут только в составе сущности. Классическая примета — «нет собственного идентификатора и жизненного цикла». Адрес, деньги, интервал времени — отличные кандидаты. Встраивание даёт читаемую доменную модель и избавляет от плоских префиксов в коде (`userStreet`, `userZip`), оставляя их только в схеме через `@AttributeOverride`.
+Часть данных в домене естественно живёт как «значения», а не как «сущности». Адрес, диапазон дат, денежная величина, координаты — у этих объектов нет самостоятельной идентичности в БД, их жизнь зависит от их владельца, и сравнивать их логично по значениям полей, а не по id. В JPA таким объектам хорошо подходит `@Embeddable`: это класс, чьи поля «встраиваются» в таблицу владельца, без отдельной таблицы и fk, но при этом остаются отдельным типом в коде с собственными инвариантами и логикой.
 
-Value-объекты хороши для инвариантов. Вы можете валидировать состояние в конструкторе/билдере `@Embeddable` и быть уверены, что в БД не попадут «битые» значения. В JPA это обычные поля, поэтому индексы и уникальные ограничения объявляются на колонках владельца, что удобно для поиска.
+`@Embeddable` говорит Hibernate, что поля этого класса нужно разложить по колонкам таблицы сущности, где он используется. Владелец помещает такое значение через `@Embedded` или просто по имени поля. Вы получаете сильную типизацию в коде и избежание копипасты полей по сущностям, при этом схема БД остаётся простой: вместо `address` как отдельной таблицы вы храните `address_street`, `address_city` и т.п. рядом с основными колонками.
 
-`@MappedSuperclass` — другой инструмент: вынос **общих полей и маппингов** в базовый класс, который сам **не сущность** и таблицы не имеет. Типичный кейс — аудит: `createdAt`, `updatedAt`, `createdBy`. Все наследники получают колонки и аннотации. Важно: `@MappedSuperclass` не подходит для **связей** (`@ManyToOne` и коллекций) — это создаёт неявные графы и затрудняет анализ схемы. Связи лучше описывать в конкретных сущностях.
+Преимущество `@Embeddable` ещё и в том, что вы можете сконцентрировать доменную логику значения в одном классе: валидировать поля в конструкторе, реализовать `equals/hashCode` по всем компонентам, добавить методы вроде `isInCountry(String)` или `format()`. Вместо того чтобы тянуть разбросанные поля по сущностям, вы работаете с полноценным value object, что делает модель богаче и код чище.
 
-С точки зрения производительности `@Embeddable` бесплатен: это те же колонки в таблице, и Hibernate не создаёт лишних SQL-джоинов. Главное — не делать огромных вложенных структур с десятками колонок: это уже «впечатанные» денормализации и риск превратить таблицу в «широкую».
+Есть, однако, несколько подводных камней. Во-первых, изменения внутри `@Embeddable` отслеживаются Hibernate как изменения полей сущности. Это значит, что при любой модификации value-object’а будет генерироваться `UPDATE` по сущности. Во-вторых, embeddable не имеет собственного жизненного цикла и не может быть связью к другим сущностям: в `@Embeddable` не стоит определять `@ManyToOne` и подобное, это уже сильный запах плохого дизайна. Value object должен быть действительно «значением», а не полусущностью.
 
-Ещё одна практика — **повторное использование** value-объектов. Если в нескольких сущностях встречается `Money` (валюта + сумма) или `Period` (от/до), их удобно переиспользовать как тип поля. Это сокращает количество дефектов — валидаторы и сериализация определены в одном месте и не дублируются.
+`@MappedSuperclass` решает другую задачу — он позволяет вынести общие поля и маппинг в базовый класс, от которого наследуются «настоящие» сущности. Такой класс не является сущностью сам по себе, по нему нельзя сделать запрос, но его поля будут промаплены в таблицы подклассов. Типичный случай — аудитные поля (`createdAt`, `updatedAt`, `createdBy`), технические флаги, общие enum’ы и т.п. Это удобно, когда таких полей много и они повторяются в десятках сущностей.
 
-С `@AttributeOverride` легко контролировать имена колонок и типы. Например, у адреса можно задать префикс `home_`/`billing_`, не дублируя сам класс. Для JSON-сериализации в REST ничего дополнительного не нужно: Jackson прекрасно сериализует `@Embeddable` как вложенный объект.
+Важно понимать разницу: `@Embeddable` — это «встроенный» объект-значение, который живёт как поле сущности; `@MappedSuperclass` — это про наследование иерархии сущностей. Использовать mapped superclass для связей (`@ManyToOne` к общему родителю) почти всегда плохая идея, потому что вы начнёте тянуть в базовый класс куски конкретных агрегатов. В результате весь домен запутается: подклассы станут неотделимы друг от друга, а схема будет странно переплетена fk через классы, которые даже не являются сущностями.
 
-Про неизменяемость: JPA технически требует пустой конструктор, но вы можете скрыть сеттеры и предоставлять методы, которые создают **новый** value-объект. Это сильнее отражает доменную идею и снижает риск частичной модификации.
+Хорошая практика — держать `@MappedSuperclass` максимально «техническим», без бизнес-полей и связей. Audit, soft delete, оптимистическая версия, технический идентификатор — нормальные кандидаты. Любые бизнес-смыслы и особенно навигационные связи лучше оставить на уровне собственных сущностей, даже ценой некоторого дублирования.
 
-По тестируемости `@Embeddable` приятны: их можно создавать и валидировать отдельно от БД. Unit-тесты защищают инварианты и облегчают ревью.
-
-И наконец, не путайте `@Embeddable` и «вложенные сущности». Если у части системы потребуется ссылаться на адрес отдельно (связи, ACL, аудит), значит адрес — **сущность** со своим PK, а не `@Embeddable`. На ранних этапах проще стартовать с value-объектов и «поднимать» их в сущности, когда реально появятся ссылочные требования.
-
-**Java — `@Embeddable` Address + `@MappedSuperclass` Auditable**
+Посмотрим на пример с адресом и audit-базовым классом. Мы создадим `Address` как `@Embeddable` и будем использовать его в сущности `Customer`. Параллельно определим `Auditable` как `@MappedSuperclass` с полями `createdAt`/`updatedAt`, от которого будет наследоваться сущность `Order`.
 
 ```java
-package com.example.embedded;
+package com.example.jpa.embedded;
 
 import jakarta.persistence.*;
 import java.time.Instant;
 
 @Embeddable
 public class Address {
-    @Column(name = "addr_city", nullable = false, length = 100)
-    private String city;
 
-    @Column(name = "addr_street", nullable = false, length = 200)
+    @Column(name = "address_street", nullable = false)
     private String street;
 
-    @Column(name = "addr_zip", nullable = false, length = 12)
+    @Column(name = "address_city", nullable = false)
+    private String city;
+
+    @Column(name = "address_zip", nullable = false)
     private String zip;
 
-    protected Address() {}
-    public Address(String city, String street, String zip) {
-        if (city == null || street == null || zip == null) throw new IllegalArgumentException("addr");
-        this.city = city; this.street = street; this.zip = zip;
+    protected Address() {
     }
-    // getters...
-}
 
-@MappedSuperclass
-public abstract class Auditable {
-    @Column(name = "created_at", nullable = false)
-    protected Instant createdAt = Instant.now();
+    public Address(String street, String city, String zip) {
+        this.street = street;
+        this.city = city;
+        this.zip = zip;
+    }
 
-    @Column(name = "updated_at", nullable = false)
-    protected Instant updatedAt = Instant.now();
-
-    @PreUpdate
-    protected void touch() { this.updatedAt = Instant.now(); }
+    // геттеры, equals/hashCode и доменные методы
 }
 
 @Entity
-@Table(name = "customers3")
-public class Customer3 extends Auditable {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "customers")
+public class Customer {
+
+    @Id
+    @GeneratedValue
     private Long id;
 
-    @Column(nullable = false, length = 120)
     private String name;
 
     @Embedded
     private Address address;
 
-    protected Customer3() {}
-    public Customer3(String name, Address address){ this.name = name; this.address = address; }
+    // геттеры/сеттеры
+}
+
+@MappedSuperclass
+public abstract class Auditable {
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    protected Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    protected Instant updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        Instant now = Instant.now();
+        createdAt = now;
+        updatedAt = now;
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = Instant.now();
+    }
+}
+
+@Entity
+@Table(name = "orders")
+public class Order extends Auditable {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private Long amount;
+
+    // геттеры/сеттеры
 }
 ```
 
-**Kotlin — те же идеи (встроенный адрес, базовый аудит)**
-
 ```kotlin
-package com.example.embedded
+package com.example.jpa.embedded
 
 import jakarta.persistence.*
 import java.time.Instant
 
 @Embeddable
 class Address(
-    @Column(name = "addr_city", nullable = false, length = 100)
-    var city: String = "",
-    @Column(name = "addr_street", nullable = false, length = 200)
+
+    @Column(name = "address_street", nullable = false)
     var street: String = "",
-    @Column(name = "addr_zip", nullable = false, length = 12)
+
+    @Column(name = "address_city", nullable = false)
+    var city: String = "",
+
+    @Column(name = "address_zip", nullable = false)
     var zip: String = ""
 )
 
-@MappedSuperclass
-abstract class Auditable {
-    @Column(name = "created_at", nullable = false)
-    var createdAt: Instant = Instant.now()
-
-    @Column(name = "updated_at", nullable = false)
-    var updatedAt: Instant = Instant.now()
-
-    @PreUpdate
-    protected fun touch() { updatedAt = Instant.now() }
-}
-
 @Entity
-@Table(name = "customers3")
-class Customer3(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "customers")
+class Customer(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false, length = 120)
+
     var name: String = "",
 
     @Embedded
     var address: Address = Address()
+)
+
+@MappedSuperclass
+abstract class Auditable {
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    protected var createdAt: Instant? = null
+
+    @Column(name = "updated_at", nullable = false)
+    protected var updatedAt: Instant? = null
+
+    @PrePersist
+    protected fun onCreate() {
+        val now = Instant.now()
+        createdAt = now
+        updatedAt = now
+    }
+
+    @PreUpdate
+    protected fun onUpdate() {
+        updatedAt = Instant.now()
+    }
+}
+
+@Entity
+@Table(name = "orders")
+class Order(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var amount: Long = 0
 ) : Auditable()
 ```
+
+Этот пример показывает, как грамотно разделять обязанности. Адрес реализован как embeddable и не претендует на самостоятельную жизнь. Audit реализован как mapped superclass и переиспользуется во многих сущностях. Мы сознательно не добавляем в базовый класс никаких `@ManyToOne` и других связей, чтобы не превратить его в «бога домена». Такое разделение даёт чистую схему и предсказуемое поведение ORM.
 
 ---
 
 ## События/слушатели: `@PrePersist/@PreUpdate` и entity-listener’ы — минимум логики, без I/O
 
-События жизненного цикла сущности — удобный крючок для поддержания **инвариантов**: выставить временные метки, нормализовать формат, сгенерировать человекочитаемый `slug`. JPA предоставляет аннотации `@PrePersist`, `@PreUpdate`, `@PostLoad` и др., а также механизм внешних слушателей через `@EntityListeners`. Это мощный инструмент — и потому требует дисциплины.
+Жизненный цикл сущности в Hibernate проходит через ряд стадий, и на этих стадиях можно повесить слушателей: `@PrePersist`, `@PostPersist`, `@PreUpdate`, `@PostUpdate`, `@PreRemove`, `@PostRemove`, `@PostLoad`. Эти callbacks позволяют автоматически проставлять поля (audit, дефолты), выполнять простые проверки и трансформации перед сохранением, а также реагировать на загрузку. Это мощный механизм, но его очень легко превратить в источник скрытой бизнес-логики и хаотичных побочных эффектов.
 
-Главное правило: **никакого I/O** в слушателях. Ни сетевых вызовов, ни обращений к файловой системе, ни даже к другим репозиториям. Почему? Эти методы выполняются внутри `flush`, часто — в самый неподходящий момент для внешних зависимостей. Любая задержка или ошибка приведёт к трудноотлавливаемым инцидентам. Ограничьтесь чистыми, быстрыми преобразованиями в памяти.
+Основное правило здорового использования entity listeners — держать их максимально лёгкими и локальными. Они должны заниматься тем, что тесно связано с самой сущностью и не требует внешних ресурсов: установить timestamp, нормализовать строку, проставить дефолтный статус, вычислить derived-поле. Всё, что связано с I/O (HTTP, Kafka, файловая система), тяжёлыми вычислениями или обращением к другим агрегатам — не место для lifecycle-колбеков. Такие вещи лучше выносить в сервисный слой, где их проще контролировать, тестировать и оборачивать в retry/circuit breaker.
 
-Второе правило — отсутствие скрытой бизнес-логики. Слушатели должны делать только технические вещи: timestamps, нормализация текстов, транслитерация для `slug`, «обрезка» длинных строк. Настоящая предметная логика должна жить в сервисах — её проще тестировать и контролировать транзакционные границы.
+Слушатели можно определять прямо в сущности через методы, помеченные `@PrePersist` и т.п., а можно вынести в отдельный класс и подключать через `@EntityListeners`. Второй подход удобен, когда вы хотите переиспользовать одну и ту же логику между несколькими сущностями, например аудит. Отдельный listener-класс остаётся обычным POJO с методами, принимающими сущность как аргумент, и его проще тестировать отдельно, чем разбросанный по нескольким entity код.
 
-Внешние entity-listeners полезны, когда вы хотите переиспользовать одинаковое поведение между сущностями или держать доменную модель «чистой» от инфраструктурных аннотаций. Класс-слушатель получает сущность и может изменить её поля, но не должен знать про `EntityManager`.
+Важно помнить, что lifecycle-колбеки выполняются внутри того же `EntityManager` и в рамках той же транзакции, что и операция сохранения. Если внутри listener’а вы бросите непроверенное исключение, Hibernate откатит транзакцию. Поэтому код слушателей должен быть максимально детерминированным и предсказуемым. Любые случайные NPE или ошибки в валидации превращаются в непонятные падения на уровне JPA, что усложняет отладку.
 
-Следите за производительностью: `@PreUpdate` вызывается при каждом `flush` у грязной сущности. Если вы, например, пересчитываете `slug` на основе заголовка при каждом апдейте, добавьте короткую проверку «изменился ли заголовок» — иначе получите лишнюю работу.
+Ещё один момент — слушатели вызываются и при merge detached-сущностей. Если вы активно используете `merge`, стоит учитывать, что `@PreUpdate` будет дергаться и в этих сценариях. Если в listener’ах есть какая-то логика, которая не рассчитана на merge, вы можете получить неожиданные эффекты. Это ещё один аргумент делать listener’ы максимально простыми и не зависящими от контекста вызова.
 
-При генерации значений учитывайте **уникальность**. Если `slug` должен быть уникальным, слушатель — не место для поиска коллизий в БД (это I/O). Лучше хранить временный «сырой slug» и разрешать коллизии в сервисе (или через БД-констрейнт + обработку исключения), а слушатель пусть только нормализует.
+Хорошая практика — использовать listeners только для «технических» задач: аудит, технические флаги, инварианты самой сущности. Бизнес-правила и кросс-агрегатное взаимодействие лучше держать в доменных сервисах. Слушатель должен корректно отрабатывать даже при массовых операциях, транзакционных ретраях и параллелизме — то есть не иметь скрытых зависимостей от внешнего состояния или глобальных синглтонов.
 
-Если вам нужны «доменные события» (например, «заказ создан»), не генерируйте их из `@PostPersist`. Этот момент неудобен: у вас нет инфраструктуры для публикации сообщений, и вы завяжетесь на контекст JPA. Лучше в сервисе после успешного сохранения опубликуйте событие через ApplicationEventPublisher / Kafka продюсер — это явнее и контролируемо.
-
-Тестируйте слушатели простыми unit-тестами на сущности (без БД), а также интеграционными тестами на репозитории. В unit-тестах вызывайте методы слушателя напрямую — так вы быстрее отлавливаете регресс. В интеграционных убедитесь, что поля выставляются при `save`.
-
-И наконец, помните, что слушатели — это «скрытая магия». Документируйте их поведение рядом с сущностями и избегайте чрезмерной «автоматики». Код, который «сам что-то сделал» при сохранении, легко удивляет нового разработчика.
-
-**Java — entity-listener для slug и таймстемпов (без I/O)**
+Посмотрим на пример с аудитом через отдельный listener-класс. Мы создадим `AuditableEntity` как базовый класс с полями `createdAt`/`updatedAt` и подключим к нему `AuditEntityListener`, который проставляет timestamps перед сохранением и обновлением. Логика проста, не зависит от внешних систем и безопасна для выполнения внутри транзакции.
 
 ```java
-package com.example.listener;
+package com.example.jpa.listener;
 
 import jakarta.persistence.*;
-import java.text.Normalizer;
 import java.time.Instant;
 
+@MappedSuperclass
+@EntityListeners(AuditEntityListener.class)
+public abstract class AuditableEntity {
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    protected Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    protected Instant updatedAt;
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
+}
+
+public class AuditEntityListener {
+
+    @PrePersist
+    public void prePersist(AuditableEntity entity) {
+        Instant now = Instant.now();
+        entity.createdAt = now;
+        entity.updatedAt = now;
+    }
+
+    @PreUpdate
+    public void preUpdate(AuditableEntity entity) {
+        entity.updatedAt = Instant.now();
+    }
+}
+
 @Entity
-@EntityListeners(ArticleListener.class)
-@Table(name = "articles3", uniqueConstraints = @UniqueConstraint(columnNames = "slug"))
-public class Article3 {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "customers")
+class Customer extends AuditableEntity {
+
+    @Id
+    @GeneratedValue
     private Long id;
 
-    @Column(nullable = false, length = 160)
-    private String title;
+    private String name;
 
-    @Column(nullable = false, length = 200)
-    private String slug;
-
-    @Column(nullable = false) private Instant createdAt;
-    @Column(nullable = false) private Instant updatedAt;
-
-    protected Article3() {}
-    public Article3(String title) { this.title = title; }
-
-    // getters/setters
-    public String getTitle() { return title; }
-    public void setSlug(String slug) { this.slug = slug; }
-    public String getSlug() { return slug; }
-    public void setCreatedAt(Instant t){ this.createdAt = t; }
-    public void setUpdatedAt(Instant t){ this.updatedAt = t; }
-}
-
-class ArticleListener {
-
-    @PrePersist
-    public void prePersist(Article3 a) {
-        if (a.getSlug() == null || a.getSlug().isBlank()) {
-            a.setSlug(slugify(a.getTitle()));
-        }
-        Instant now = Instant.now();
-        a.setCreatedAt(now);
-        a.setUpdatedAt(now);
-    }
-
-    @PreUpdate
-    public void preUpdate(Article3 a) {
-        // пересчитываем slug только при смене заголовка — в простом виде сравнивать негде,
-        // поэтому обычно сервис сам выставляет slug. Здесь — сохранение updatedAt.
-        a.setUpdatedAt(Instant.now());
-    }
-
-    private String slugify(String s) {
-        String n = Normalizer.normalize(s, Normalizer.Form.NFD)
-                .replaceAll("\\p{InCombiningDiacriticalMarks}+", "")
-                .toLowerCase();
-        n = n.replaceAll("[^a-z0-9\\s-]", "").trim().replaceAll("\\s+", "-");
-        return n.substring(0, Math.min(200, n.length()));
-    }
+    // геттеры/сеттеры
 }
 ```
-
-**Kotlin — тот же подход с `@EntityListeners`**
 
 ```kotlin
-package com.example.listener
+package com.example.jpa.listener
 
 import jakarta.persistence.*
-import java.text.Normalizer
 import java.time.Instant
-import kotlin.math.min
 
-@Entity
-@Table(name = "articles3", uniqueConstraints = [UniqueConstraint(columnNames = ["slug"])])
-@EntityListeners(ArticleKListener::class)
-class Article3(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
+@MappedSuperclass
+@EntityListeners(AuditEntityListener::class)
+abstract class AuditableEntity {
 
-    @Column(nullable = false, length = 160)
-    var title: String = "",
+    @Column(name = "created_at", nullable = false, updatable = false)
+    protected var createdAt: Instant? = null
 
-    @Column(nullable = false, length = 200)
-    var slug: String = "",
+    @Column(name = "updated_at", nullable = false)
+    protected var updatedAt: Instant? = null
 
-    @Column(nullable = false)
-    var createdAt: Instant? = null,
+    fun getCreatedAt(): Instant? = createdAt
+    fun getUpdatedAt(): Instant? = updatedAt
+}
 
-    @Column(nullable = false)
-    var updatedAt: Instant? = null
-)
-
-class ArticleKListener {
+class AuditEntityListener {
 
     @PrePersist
-    fun prePersist(a: Article3) {
-        if (a.slug.isBlank()) a.slug = slugify(a.title)
+    fun prePersist(entity: AuditableEntity) {
         val now = Instant.now()
-        a.createdAt = now
-        a.updatedAt = now
+        entity.createdAt = now
+        entity.updatedAt = now
     }
 
     @PreUpdate
-    fun preUpdate(a: Article3) {
-        a.updatedAt = Instant.now()
-    }
-
-    private fun slugify(s: String): String {
-        var n = Normalizer.normalize(s, Normalizer.Form.NFD)
-            .replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "")
-            .lowercase()
-        n = n.replace("[^a-z0-9\\s-]".toRegex(), "").trim().replace("\\s+".toRegex(), "-")
-        return n.substring(0, min(200, n.length))
+    fun preUpdate(entity: AuditableEntity) {
+        entity.updatedAt = Instant.now()
     }
 }
+
+@Entity
+@Table(name = "customers")
+class Customer(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var name: String = ""
+) : AuditableEntity()
 ```
+
+В этом примере listener выполняет ровно одну задачу: проставляет время создания и обновления. Он не ходит в другие таблицы, не дергает внешние сервисы, не пишет в логи всего подряд. Такой код спокойно переживает массовые вставки, транзакционные ретраи и параллельные запросы. Если позже вы захотите добавить, например, запись пользователя-создателя, можно передавать эту информацию через `Auditing`-инфраструктуру Spring Data, а не пытаться внутри listener’а тянуть `SecurityContextHolder` или что-то подобное напрямую.
+
+Итог по listeners простой: это удобный инструмент для автоматизации технических аспектов жизненного цикла сущности, но очень плохое место для бизнес-логики и I/O. Если следовать правилу «минимум, без внешних эффектов», listener’ы станут союзником, а не источником «магических» багов, которые невозможно воспроизвести в тестах.
 
 # 7. Кеширование 2-го уровня и кеш запросов
 
-*Ниже — практическое руководство по включению и безопасной эксплуатации L2-кеша Hibernate и кеша запросов. Покажу рабочие конфиги и код (Java и Kotlin), а также нюансы инвалидации и распределённости.*
-
-**Gradle (Groovy DSL)**
-
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    // JCache (JSR-107) + Ehcache 3 как провайдер L2
-    implementation 'org.ehcache:ehcache:3.10.8'
-    implementation 'javax.cache:cache-api:1.1.1'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    implementation("org.ehcache:ehcache:3.10.8")
-    implementation("javax.cache:cache-api:1.1.1")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-```
-
-**application.yml — включаем L2 и кеш запросов (Hibernate + JCache/Ehcache)**
-
-```yaml
-spring:
-  jpa:
-    open-in-view: false
-    properties:
-      hibernate:
-        cache:
-          use_second_level_cache: true
-          use_query_cache: true
-          region.factory_class: org.hibernate.cache.jcache.JCacheRegionFactory
-        # Укажем провайдера JCache (Ehcache 3)
-        javax:
-          cache:
-            provider: org.ehcache.jsr107.EhcacheCachingProvider
-        generate_statistics: true
-  cache:
-    type: jcache
-    jcache:
-      config: classpath:ehcache.xml  # конфигурация регионов
-logging:
-  level:
-    org.hibernate.SQL: warn
-    org.hibernate.orm.cache: debug
-```
-
-**ehcache.xml — регионы L2 и кеша запросов (classpath:ehcache.xml)**
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<config xmlns='http://www.ehcache.org/v3'
-        xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
-        xmlns:jcache='http://www.ehcache.org/v3/jsr107'
-        xsi:schemaLocation="
-           http://www.ehcache.org/v3 http://www.ehcache.org/schema/ehcache-core-3.0.xsd
-           http://www.ehcache.org/v3/jsr107 http://www.ehcache.org/schema/ehcache-107-ext-3.0.xsd">
-
-    <cache alias="country">
-        <key-type>java.lang.Long</key-type>
-        <value-type>com.example.cache.Country</value-type>
-        <resources>
-            <heap unit="entries">10000</heap>
-            <offheap unit="MB">64</offheap>
-        </resources>
-        <expiry><ttl unit="minutes">0</ttl></expiry> <!-- 0 => без TTL (read-only справочник) -->
-    </cache>
-
-    <cache alias="country.byName"> <!-- регион для кеша запросов -->
-        <key-type>java.lang.Object</key-type>
-        <value-type>java.util.List</value-type>
-        <resources>
-            <heap unit="entries">1000</heap>
-        </resources>
-        <expiry><ttl unit="minutes">10</ttl></expiry>
-    </cache>
-
-    <!-- Включаем интеграцию JCache (имена регионов = alias) -->
-    <jcache:defaults enable-management="true" enable-statistics="true"/>
-</config>
-```
-
----
-
 ## Когда имеет смысл L2: справочники/редко меняемые сущности; регионы, режимы (read-only/non-strict/transactional)
 
-L2-кеш (второй уровень) хранит **снимки сущностей** за пределами Persistence Context’а и переживает границы транзакций и сессий. Это снижает количество SELECT по «холодным» данным и снимает нагрузку с БД. Лучшие кандидаты — **справочники и редко меняемые записи**: страны, валюты, статусы, тарифные планы. Там, где запись «живёт» долго и почти не обновляется, L2 даёт стабильный выигрыш и минимальные риски несогласованности.
+Второй уровень кеша (L2-кеш Hibernate) — это кеш поверх БД, общий для всех `EntityManager`/Session внутри одного процесса (а при кластерном провайдере — и между процессами). В отличие от контекста персистентности (L1-кеш), который живёт ровно столько, сколько живёт транзакция, L2-кеш хранит данные дольше и переживает множество транзакций и HTTP-запросов. Идея простая: если вы многократно читаете одни и те же сущности и меняете их редко, то выгоднее держать их в памяти и доставать оттуда, чем каждый раз ходить в Postgres. Но за это вы платите дополнительной памятью, сложностью инвалидации и риском столкнуться с «почти устаревшими» данными.
 
-L2 работает по регионам. Для каждой сущности можно указать **стратегию конкурентности**:
+L2-кеш имеет смысл включать прежде всего для справочников и «почти неизменяемых» сущностей. Это всевозможные типы операций, статусы, региональные справочники, иногда — профили тарифов или продуктовые каталоги, которые меняются в основном ночными джобами. Типичный паттерн: у вас есть таблица на десятки тысяч строк, вы по ней много раз читаете «по id» или небольшие выборки, а обновляется она раз в сутки. Классическое L2-кеширование даёт высокий hit ratio, сильно разгружает БД и почти не создаёт проблем с консистентностью.
 
-* `READ_ONLY` — максимально дёшево и безопасно, **только** для неизменяемых данных.
-* `NONSTRICT_READ_WRITE` — допускает «окно» несогласованности, быстрее `READ_WRITE`.
-* `READ_WRITE` — обеспечивает «мягкую» согласованность с блокировкой кэш-записей.
-* `TRANSACTIONAL` — требует транзакционный провайдер кэша (редко в проектной практике).
+По умолчанию Hibernate разделяет кеш на регионы — логические «секции», каждая со своей политикой. Для сущностей можно задать concurrency strategy: `READ_ONLY`, `NONSTRICT_READ_WRITE`, `READ_WRITE`, `TRANSACTIONAL` (последняя обычно используется с JTA и провайдерами, поддерживающими XA). В контексте Spring Boot и Postgres чаще всего используются `READ_ONLY` и изредка `NONSTRICT_READ_WRITE`. `READ_ONLY` означает, что Hibernate предполагает полное отсутствие изменений через ORM: сущность один раз загрузили из БД и дальше только читают. В этом режиме кеш проще, быстрее и надёжнее. `NONSTRICT_READ_WRITE` допускает редкие изменения, но без строгих гарантий «прочитал — увидел точно последнюю версию».
 
-Правило выбора простое: **если сущность меняется редко — READ_ONLY**. Если меняется редко, но нужно обновлять «сейчас» — `READ_WRITE` (дороже). Для активно меняемых сущностей L2 чаще **отключают**, чтобы не раздувать память и не ловить частые инвалидации.
+Режим `READ_ONLY` идеально подходит для справочников. Ключевое требование — никаких `UPDATE` этой сущности через JPA. Если нужно сменить значение, вы делаете это через админские инструменты или Migra/SQL, а приложение воспринимает это как «редкое событие», после которого кеш можно сбросить целиком или дождаться истечения TTL, если провайдер его поддерживает. Взамен вы получаете очень быстрые чтения: практически все запросы по первичному ключу будут без похода в БД, и Hibernate даже не будет тратить время на сложную синхронизацию кеша.
 
-Следите за бюджетом памяти и GC: L2 — это реальные байты в heap/off-heap у провайдера кэша. Распределяйте регионы, задавайте явную ёмкость (entries/MB), мониторьте hit/miss. «Бездонные» кэши превращаются в паузы GC и регресс производительности.
+`NONSTRICT_READ_WRITE` — компромисс: сущность можно иногда изменять через ORM, но провайдер кеша не даёт жёстких гарантий, что сразу после коммита все ноды увидят актуальное значение. Обычно инвалидация делается через «грубые» приёмы: пометить запись как потенциально грязную, сбросить регион целиком или с определённой задержкой. В системах, где допустимо прочитать чуть устаревшие данные (например, в UI-справочнике), это нормальный вариант. Но для критичных к консистентности сущностей (балансы, лимиты, статусы заявок) такой режим опасен.
 
-Ещё нюанс: L2 кеширует **по id**. Если у вас часто идут чтения «по бизнес-ключу» (например, код страны), отдавайте DTO через **кеш запросов** (см. следующий раздел) или заведите маленький «индекс»-кэш (map код→id) в памяти сервиса.
+Важно понимать, что L2-кеш не бесплатен. Каждая сущность в кеше занимает память, а при большом объёме кеша вы получаете более тяжёлый GC: больше объектов в old generation, более длинные паузы при сборке и риск «вылета» в stop-the-world на неподходящий момент. Поэтому кешировать «всё подряд» — плохая идея. Нужно явно выбирать те классы, где отношение «число чтений» к «числу изменений» велико, а размер агрегата относительно небольшой. Если сущность часто меняется, да ещё и имеет большой граф связей, L2-кеш будет только мешать: его постоянно будет инвалидировать, а память забивать.
 
-Наконец, не путайте L2 с Spring Cache. Spring Cache аннотации (`@Cacheable`) — абстракция над любыми кэшами; L2 — встроенная функция Hibernate. Их можно использовать **вместе**, но отвечают они за разное.
+На уровне конфигурации в Spring Boot включение L2-кеша делается через свойства Hibernate и через аннотации на сущностях. Типичный путь: вы включаете `hibernate.cache.use_second_level_cache=true`, выбираете провайдер (Ehcache, Hazelcast, Infinispan и т.д.) и помечаете нужные сущности `@org.hibernate.annotations.Cache`. Spring-стартера для кеша (например, `spring-boot-starter-cache`) этого не делает автоматически: L2 — именно фича Hibernate, а не Spring Cache API.
 
-**Java — сущность-справочник с L2 и статистика попаданий**
+Ещё один аспект — кеширование коллекций. Hibernate позволяет кешировать не только отдельные сущности, но и коллекционные ассоциации (`@OneToMany`, `@ManyToMany`). Для этого есть отдельная стратегия concurrency для коллекций. На практике кеш коллекций полезен, когда у вас относительно небольшой и стабильный список элементов, часто читаемый целиком. Но кешировать большие и горячие коллекции опасно: повышение потребления памяти, сложная инвалидация при изменениях и риск попадания в тяжёлые GC-паузы.
+
+Хорошая практика — начинать с очень узкого листа кандидатов на L2-кеш: один–два справочника, возможно, ещё одну важную read-only сущность. Включаете кеш для них, настраиваете регион, следите за метриками (hit/miss, размер, влияние на GC). Если всё хорошо — можно расширять. Если видите резкий рост old-gen и падение latency при остановленных GC, значит, кеш либо слишком велик, либо выбран неправильный набор сущностей. L2-кеш — это не «включил и забыл», а управляемый ресурс.
+
+Простейший пример настройки L2 для справочника на Ehcache в Spring Boot выглядит так: в `application.yml` вы включаете параметры Hibernate для L2 и используете Ehcache как провайдер, а сущность помечаете как `@Cache(usage = CacheConcurrencyStrategy.READ_ONLY)`. Ниже — минимальный пример конфигурации и сущности для Java и Kotlin.
 
 ```java
-package com.example.cache;
+// application.yml (фрагмент)
+//
+// spring:
+//   jpa:
+//     properties:
+//       hibernate.cache.use_second_level_cache: true
+//       hibernate.cache.use_query_cache: false
+//       hibernate.cache.region.factory_class: org.hibernate.cache.jcache.JCacheRegionFactory
+//   cache:
+//     jcache:
+//       config: classpath:ehcache.xml
+```
+
+```java
+package com.example.jpa.cache;
 
 import jakarta.persistence.*;
 import org.hibernate.annotations.Cache;
 import org.hibernate.annotations.CacheConcurrencyStrategy;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.hibernate.SessionFactory;
-import org.hibernate.stat.Statistics;
-
-import java.util.Optional;
-import java.util.List;
 
 @Entity
-@Table(name = "countries")
-@Cacheable
-@Cache(usage = CacheConcurrencyStrategy.READ_ONLY, region = "country")
-public class Country {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    @Column(nullable = false, unique = true, length = 2)
+@Table(name = "operation_type")
+@Cache(usage = CacheConcurrencyStrategy.READ_ONLY, region = "operationType")
+public class OperationType {
+
+    @Id
+    private Integer id;
+
+    @Column(nullable = false, unique = true)
     private String code;
-    @Column(nullable = false) private String name;
-    protected Country() {}
-    public Country(String code, String name){ this.code=code; this.name=name; }
-    public Long getId(){ return id; } public String getCode(){ return code; } public String getName(){ return name; }
-}
 
-interface CountryRepository extends org.springframework.data.jpa.repository.JpaRepository<Country, Long> {
-    Optional<Country> findByCode(String code);
-    List<Country> findTop10ByOrderByNameAsc();
-}
+    @Column(nullable = false)
+    private String description;
 
-@Service
-class CountryService {
-    private final CountryRepository repo;
-    private final SessionFactory sf;
-    CountryService(CountryRepository repo, EntityManagerFactory emf) {
-        this.repo = repo; this.sf = emf.unwrap(SessionFactory.class);
-    }
-
-    @Transactional(readOnly = true)
-    public Country byId(Long id) {
-        Statistics st = sf.getStatistics(); st.clear();
-        Country c1 = repo.findById(id).orElseThrow(); // 1й раз — miss -> БД -> put в L2
-        Country c2 = repo.findById(id).orElseThrow(); // 2й раз — hit из L2
-        System.out.println("L2 hits=" + st.getSecondLevelCacheHitCount()
-                + ", puts=" + st.getSecondLevelCachePutCount()
-                + ", misses=" + st.getSecondLevelCacheMissCount());
-        return c2;
-    }
+    // геттеры/сеттеры
 }
 ```
 
-**Kotlin — тот же пример**
+```kotlin
+// application.yml (фрагмент)
+//
+// spring:
+//   jpa:
+//     properties:
+//       hibernate.cache.use_second_level_cache: true
+//       hibernate.cache.use_query_cache: false
+//       hibernate.cache.region.factory_class: org.hibernate.cache.jcache.JCacheRegionFactory
+//   cache:
+//     jcache:
+//       config: classpath:ehcache.xml
+```
 
 ```kotlin
-package com.example.cache
+package com.example.jpa.cache
 
 import jakarta.persistence.*
 import org.hibernate.annotations.Cache
 import org.hibernate.annotations.CacheConcurrencyStrategy
-import org.hibernate.SessionFactory
-import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
 
 @Entity
-@Table(name = "countries")
-@Cacheable
-@Cache(usage = CacheConcurrencyStrategy.READ_ONLY, region = "country")
-class Country(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false, unique = true, length = 2)
+@Table(name = "operation_type")
+@Cache(usage = CacheConcurrencyStrategy.READ_ONLY, region = "operationType")
+class OperationType(
+
+    @Id
+    var id: Int? = null,
+
+    @Column(nullable = false, unique = true)
     var code: String = "",
+
     @Column(nullable = false)
-    var name: String = ""
+    var description: String = ""
 )
-
-interface CountryRepository : JpaRepository<Country, Long> {
-    fun findByCode(code: String): java.util.Optional<Country>
-    fun findTop10ByOrderByNameAsc(): List<Country>
-}
-
-@Service
-class CountryService(repo: CountryRepository, emf: EntityManagerFactory) {
-    private val repo = repo
-    private val sf: SessionFactory = emf.unwrap(SessionFactory::class.java)
-
-    @Transactional(readOnly = true)
-    fun byId(id: Long): Country {
-        val st = sf.statistics; st.clear()
-        val c1 = repo.findById(id).orElseThrow()
-        val c2 = repo.findById(id).orElseThrow()
-        println("L2 hits=${st.secondLevelCacheHitCount}, puts=${st.secondLevelCachePutCount}, misses=${st.secondLevelCacheMissCount}")
-        return c2
-    }
-}
 ```
+
+Этот пример не претендует на полноту боевой конфигурации, но хорошо иллюстрирует идею: L2-кеш включается точечно, под конкретные сущности, и для них выбирается консервативный режим `READ_ONLY`. Всё остальное по умолчанию продолжает ходить в БД напрямую, опираясь только на L1-кеш.
 
 ---
 
 ## Кеш запросов: риск «несогласованности», ключи инвалидации, осторожно с частыми изменениями
 
-Кеш запросов (query cache) хранит **результаты** конкретных JPQL/Criteria/native-запросов (обычно — список id/rowset) по ключу «SQL + параметры + регион». Это удобно для часто повторяющихся **однотипных** чтений: «топ-10 стран по имени», «список статусов», «популярные товары дня». Но у query cache хрупкая природа: любая модификация затрагиваемых таблиц требует инвалидации соответствующих регионов, иначе вы увидите «вчерашний» список.
+Кеш запросов Hibernate (query cache) — это отдельный слой, который кеширует не сами сущности, а результаты конкретных запросов: список идентификаторов и иногда агрегаты. В отличие от L2-кеша, привязанного к id сущности, query cache работает по ключу «HQL/JPQL + параметры + настройки пагинации», и при повторном выполнении того же запроса может вернуть результат из памяти, не обращаясь ни к БД, ни к L2-кешу. Это соблазнительный инструмент для популярных отчётов и списков, но с ним нужно обращаться гораздо осторожнее, чем с кешем сущностей.
 
-Правила безопасного применения:
+Важно понимать базовую архитектуру: кеш запросов не хранит копии сущностей. Он хранит, грубо говоря, «снимок» результата в виде набора primary keys и метаданных. Когда вы повторно выполняете кешированный запрос, Hibernate берет кэшированный список id и для каждого id обращается к L2-кешу (если тот включён) или в БД. В идеальном сценарии все сущности уже есть в L2 и запрос к БД вообще не делается. В менее идеальном — часть сущностей придётся перечитать из БД, но вы всё равно сэкономите на повторном выполнении сложного SQL с join’ами.
 
-1. Кешируйте **стабильные** запросы над редкими изменениями.
-2. Всегда задавайте **регион** и TTL (в провайдере), чтобы старые ответы не жили вечно.
-3. При записях — **инвалидируйте** нужные регионы (или все регионы сущности), если результат зависит от этих данных.
-4. Не кешируйте параметризованные запросы с высокой кардинальностью (много разных значений параметров) — кэш будет «забит» уникальными ключами и перестанет окупаться.
+Основная проблема кеша запросов — инвалидация. Если вы изменили одну из сущностей, участвующую в запросе, Hibernate должен понять, какие именно записи в кеш запросов теперь устарели. Для простых случаев (one-to-one mapping «таблица–сущность») он знает, в каких регионах cached queries участвуют эти сущности, и может пометить их как dirty. Но на практике часто возникает ситуация, когда запрос включает join’ы, фильтрацию по не кешированным полям, агрегаты, подзапросы — и корректная инвалидация становится нетривиальной. В результате либо кеш инвалидируется слишком грубо (сброс целых регионов), либо риск несогласованности результатов возрастает.
 
-**Java — кешируемый запрос с регионом + инвалидация при записи**
+Кеш запросов особенно опасен при частых изменениях данных. Если вы пытаетесь кешировать, например, список активных заказов, которые меняются каждую секунду, вы получите постоянные инвалидации, churn в кеше и минимальную пользу. Более того, есть риск, что какой-то запрос на чтение увидит устаревший результат на несколько миллисекунд/секунд, пока инвалидация не успела пробежаться по всем узлам. Для финансовых и критичных к консистентности сценариев это неприемлемо. Query cache здесь скорее враг, чем друг.
+
+Хорошее правило — кешировать запросы только поверх сущностей, которые уже кешируются во втором уровне и изменяются редко. Тогда query cache работает как дополнительная оптимизация: он избавляет от повторных тяжёлых SELECT’ов, опираясь на уже готовый L2-кеш. Если же L2-кеш выключен, а query cache включён, пользы будет заметно меньше: вы всё равно будете ходить в БД за каждой сущностью по id, просто избежите исполнения «большого» SQL. Иногда это выгодно (например, при тяжёлых join’ах), но гарантировать эффект сложно.
+
+Ключи кеша запросов строятся по полному тексту HQL/JPQL, параметрам, их значениям и ряду дополнительных характеристик (лимит, offset). Это значит, что два почти одинаковых запроса, отличающихся лишь лишним пробелом, или с разными названиями параметров будут кешироваться отдельно. Поэтому крайне важно, чтобы код, который вы хотите кешировать, был стабильным: константная строка JPQL, одинаковый набор параметров, предсказуемый порядок. Динамически собираемые запросы, конструкторы Criteria без доп.слоя, где вы нормализуете ключ, — плохие кандидаты.
+
+Практически в Hibernate query cache включается глобально (`hibernate.cache.use_query_cache=true`), а дальше пометкой конкретных запросов как кешируемых через hint `org.hibernate.cacheable`. Spring Data JPA позволяет использовать `@QueryHints` на уровне метода репозитория, а при явной работе с `EntityManager` можно вызвать `query.setHint("org.hibernate.cacheable", true)`. Важно не пытаться включать кеш «на всё подряд», а явно выбирать 1–2 действительно тяжёлых запроса с хорошими характеристиками (много чтений, мало изменений).
+
+Нужно помнить и про размер результатов. Кешировать «весь каталог из 200 тысяч строк» — почти всегда плохая идея: вы забьёте память и получите тяжёлые GC, а польза окажется сомнительной, потому что такие запросы редко исполняются полностью одинаково (фильтры, пагинация). Query cache особенно хорошо работает для небольших, но часто повторяющихся выборок: «справочник активных тарифов» для конкретного региона или «последние N записей по конкретному ключу». Там размер набора мал, а вероятность повторного запроса высока.
+
+Есть ещё риск «нестабильных» запросов: если вы включили кеш для JPQL, который логически должен всегда возвращать одно и то же, но на самом деле завязан на данные вне наблюдаемой Hibernate модели (например, на view, обновляемый внешним процессом), вы можете легко прочитать устаревший результат и долго не понимать почему. Hibernate не умеет отслеживать изменения во view или в таблицах, на которые вы не повесили сущности; для него это просто «ещё один SELECT». В итоге query cache нужно использовать только там, где вся зависимая от него схема контролируется через ORM.
+
+Пример: у нас есть справочник активных тарифов, который меняется раз в день, а читается на каждом запросе к тарифному сервису. Мы включаем L2-кеш для сущности `Tariff` и кеш запросов для JPQL, который выбирает только активные тарифы. В репозитории Spring Data JPA это можно сделать через `@QueryHints`. Ниже — пример для Java и Kotlin.
 
 ```java
-package com.example.qcache;
+package com.example.jpa.querycache;
 
-import jakarta.persistence.*;
-import org.hibernate.jpa.HibernateHints;
-import org.hibernate.SessionFactory;
-import org.hibernate.stat.Statistics;
-import org.springframework.stereotype.Repository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.QueryHint;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
 
-@Entity
-@Table(name = "tags2")
-class Tag2 {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
-    @Column(nullable = false, unique = true) String name;
-    protected Tag2() {}
-    Tag2(String n){ this.name=n; }
-}
+public interface TariffRepository extends JpaRepository<Tariff, Long> {
 
-@Repository
-interface TagRepository extends org.springframework.data.jpa.repository.JpaRepository<Tag2, Long> {
-    // можно и через @Query + Pageable, но для демонстрации используем EntityManager напрямую в сервисе
-}
-
-@Service
-class TagService {
-    @PersistenceContext private EntityManager em;
-    private final SessionFactory sf;
-    private final TagRepository repo;
-
-    TagService(EntityManagerFactory emf, TagRepository repo) {
-        this.sf = emf.unwrap(SessionFactory.class);
-        this.repo = repo;
-    }
-
-    @Transactional(readOnly = true)
-    public List<Tag2> topAlphabetical(int limit) {
-        var st = sf.getStatistics(); st.clear();
-        TypedQuery<Tag2> q = em.createQuery(
-            "select t from Tag2 t order by t.name asc", Tag2.class);
-        q.setMaxResults(limit);
-        q.setHint(HibernateHints.HINT_CACHEABLE, true);
-        q.setHint(HibernateHints.HINT_CACHE_REGION, "country.byName"); // регион из ehcache.xml
-        List<Tag2> first = q.getResultList();       // 1-й раз -> miss/put
-        List<Tag2> second = q.getResultList();      // 2-й раз -> hit (query cache)
-        System.out.println("Query cache hits=" + st.getQueryCacheHitCount()
-            + ", puts=" + st.getQueryCachePutCount());
-        return second;
-    }
-
-    @Transactional
-    public Tag2 create(String name) {
-        Tag2 t = new Tag2(name);
-        repo.save(t);
-        // Инвалидация: менялись данные таблицы tags2, выбьем регион кеша запросов.
-        em.getEntityManagerFactory().getCache().evict(Tag2.class); // L2 региона сущности
-        // Для query cache regions — через SessionFactory API:
-        sf.getCache().evictQueryRegion("country.byName");
-        return t;
-    }
+    @Query("select t from Tariff t where t.active = true")
+    @org.springframework.data.jpa.repository.QueryHints({
+            @QueryHint(name = "org.hibernate.cacheable", value = "true"),
+            @QueryHint(name = "org.hibernate.cacheRegion", value = "activeTariffs")
+    })
+    List<Tariff> findAllActive();
 }
 ```
-
-**Kotlin — кешируемый запрос + очистка регионов**
 
 ```kotlin
-package com.example.qcache
+package com.example.jpa.querycache
 
-import jakarta.persistence.*
-import org.hibernate.jpa.HibernateHints
-import org.hibernate.SessionFactory
+import jakarta.persistence.QueryHint
 import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.stereotype.Repository
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.data.jpa.repository.Query
+import org.springframework.data.jpa.repository.QueryHints
 
-@Entity
-@Table(name = "tags2")
-class Tag2(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false, unique = true) var name: String = ""
-)
+interface TariffRepository : JpaRepository<Tariff, Long> {
 
-@Repository
-interface TagRepository : JpaRepository<Tag2, Long>
-
-@Service
-class TagService(
-    emf: EntityManagerFactory,
-    private val repo: TagRepository,
-    @PersistenceContext private val em: EntityManager
-) {
-    private val sf: SessionFactory = emf.unwrap(SessionFactory::class.java)
-
-    @Transactional(readOnly = true)
-    fun topAlphabetical(limit: Int): List<Tag2> {
-        val st = sf.statistics; st.clear()
-        val q = em.createQuery("select t from Tag2 t order by t.name asc", Tag2::class.java)
-        q.maxResults = limit
-        q.setHint(HibernateHints.HINT_CACHEABLE, true)
-        q.setHint(HibernateHints.HINT_CACHE_REGION, "country.byName")
-        val first = q.resultList
-        val second = q.resultList
-        println("Query cache hits=${st.queryCacheHitCount}, puts=${st.queryCachePutCount}")
-        return second
-    }
-
-    @Transactional
-    fun create(name: String): Tag2 {
-        val t = Tag2(name = name)
-        repo.save(t)
-        em.entityManagerFactory.cache.evict(Tag2::class.java)
-        sf.cache.evictQueryRegion("country.byName")
-        return t
-    }
+    @Query("select t from Tariff t where t.active = true")
+    @QueryHints(
+        value = [
+            QueryHint(name = "org.hibernate.cacheable", value = "true"),
+            QueryHint(name = "org.hibernate.cacheRegion", value = "activeTariffs")
+        ]
+    )
+    fun findAllActive(): List<Tariff>
 }
 ```
 
-Комментарий: в примерах выше мы **сознательно** держим query cache только для стабильного «топ-N». Для динамических поисков по множеству параметров лучше использовать L2 для связанных справочников или вовсе обойтись без кеша запросов.
+Для полноты картины вы, конечно, должны ещё включить query cache в конфигурации Hibernate и определить регион `activeTariffs` в провайдере кеша. Но главная мысль — кеширование запросов — это точечный инструмент, а не «галочка в настройках». Им пользуются там, где чётко понимают, как и когда будут меняться данные, какие запросы повторяются, и где допустим небольшой риск устаревания.
 
 ---
 
 ## Распределённость: репликация/инвалидация между инстансами, влияние на память и GC
 
-В кластере (несколько инстансов приложения) L2-кеш нужно **согласовывать** между узлами. Есть два пути:
+Когда у вас один инстанс приложения, L2-кеш — это просто in-process структура данных: Hibernate кладёт туда сущности, извлекает их и при изменениях инвалидирует локальные записи. Как только вы переходите к нескольким инстансам (2+ поды в Kubernetes, несколько JVM за балансировщиком), возникает вопрос: что происходит с кешом между ними. Либо L2-кеш становится локальным для каждого инстанса, и вы миритесь с тем, что разные ноды могут видеть слегка разные данные, либо вы подключаете распределённый кеш-провайдер, который обеспечивает репликацию или инвалидацию по сети.
 
-1. **Локальный L2 + внешняя инвалидация.** Каждый инстанс держит локальный Ehcache, а при записях вы выполняете **широковещательную** инвалидацию (через брокер событий, Redis pub/sub, Kafka). Плюсы: минимальная латентность чтения, независимость от сети на hot-path. Минусы: сложность инвалидации, риск «окна» несогласованности на время доставки события.
+Локальный L2-кеш на каждом инстансе — самый простой вариант. Каждый JVM-процесс хранит свои данные, которые не разделяются с соседями. При изменении сущности Hibernate инвалидирует кеш только на текущем инстансе, а остальные узнают о новых значениях только после следующего чтения из БД. Это даёт вам максимальную скорость (нет сетевого хопа за кешем), но при этом снижает ценность кеша для «горячих» сущностей: вероятность того, что следующий запрос на другой ноде попадёт именно в тот же L2-кеш, заметно ниже. Зато нет сложностей с кластерной конфигурацией и распределённой согласованностью.
 
-2. **Распределённый JCache-провайдер.** Подставляете провайдер с кластером (например, Hazelcast/Infinispan в режиме JCache). Тогда регионы L2 и query cache **общие** для всех инстансов (репликация/инвалидация на уровне провайдера). Плюсы: прозрачность. Минусы: зависимость от сети/кластерного кэша, дополнительные ресурсы, нюансы настройки.
+Распределённый L2-кеш строится поверх кластерных провайдеров: Hazelcast, Infinispan, Redis (через интеграционные модули), иногда — Ehcache в clustered-режиме. В этом случае каждый инстанс подключается к общей кеш-сети, где регионы кеша хранятся либо в репликативной, либо в партиционированной форме. При изменении сущности провайдер рассылает события инвалидации или реплицирует новые значения на другие ноды. Логика Hibernate остаётся той же, но за кулисами работает распределённый data grid.
 
-Любой распределённый вариант усиливает требования к **ёмкости** и **мониторингу**. Регионы должны иметь чёткие лимиты (entries/MB), а вы — метрики hit/miss, время «get/put», количество инвалидаций. Память кэша напрямую влияет на GC (если heap) и на задержки сетевых операций (если кластерный).
+Плюс распределённого подхода в том, что любой инстанс может получить кеш-хит по сущности, которую до этого кто-то читал на соседней ноде. При высокой доле чтения и большом количестве инстансов это даёт заметный выигрыш: вместо «теплого» кеша на одной машине вы получаете «теплый» кеш на весь кластер. Но минусы очевидны: добавляется сетевой hop, увеличивается сложность конфигурации, а согласованность кеша становится вопросом дизайна провайдера (синхронная/асинхронная репликация, eventual consistency, и т.д.).
 
-Отдельная практика — **инвалидация при записи**. Даже с распределённым провайдером полезно явно чистить регионы, зависящие от изменённых данных. Для Hibernate это:
+С точки зрения памяти и GC распределённый кеш зачастую даже сложнее, чем локальный. Если вы используете полностью репликативный режим (каждый узел хранит копию всех данных), вы фактически умножаете потребление памяти на число инстансов: каждая JVM держит полный шатл кеша. Это бьёт по old-gen, приводит к тяжёлым GC-паузам и требует тщательного тюнинга размеров кеша и параметров GC (G1/ZGC). Партиционированный режим снимает часть нагрузки (каждый узел хранит только часть данных), но усложняет маршрутизацию данных внутри провайдера.
 
-* `EntityManagerFactory.getCache().evict(Entity.class)` / `evict(Entity.class, id)` — сущностные регионы.
-* `SessionFactory.getCache().evictQueryRegion("region")` / `evictQueryRegions()` — регионы кеша запросов.
-  Такая явность уменьшает «случайные» несогласованности и облегчает поиск проблем.
+Ещё один аспект — стратегия обновления/инвалидации. В `READ_WRITE` и `TRANSACTIONAL` режимах L2-кеша нужен корректный кластерный протокол, который гарантирует, что две ноды не одновременно запишут в кеш две разные версии сущности и не разойдутся. Это довольно сложная задача, которую провайдеры решают через блокировки, versioning и транзакционные алгоритмы. В реальных системах это значит, что каждый `UPDATE` через ORM будет не только идти в БД, но и в кеше сопровождаться дополнительными синхронными операциями по сети — цена за согласованность.
 
-Если вы **часто обновляете** данные (горячие заказы, корзины), L2 может стать скорее **вредным**: много инвалидаций, мало попаданий, большой расход памяти. На таких сущностях L2 лучше отключать и опираться на точные чтения из БД (возможно, с батч-фетчем, проекциями и грамотными индексами).
+Если вы используете проще режимы (`READ_ONLY`, `NONSTRICT_READ_WRITE`), провайдеру можно позволить более лёгкие схемы: асинхронные уведомления об инвалидации, периодический refresh, грубую очистку регионов. Но тогда вы сознательно принимаете eventual consistency: между коммитом на одной ноде и обновлением кеша на другой может пройти время, в течение которого запрос прочитает устаревшие данные из L2. Это нормальная цена для справочников и ряда UI-сценариев, но критична для финансовых и консистентных областей.
 
-И наконец, держите транзакции короткими. Долгие транзакции + L2 + кластер — отличная почва для «странных» гонок и задержек инвалидации. «Сначала подумай — потом кэшируй»: включайте L2 точечно, по зрелым горячим точкам чтения.
+Важный практический момент — комбинация L1 и L2. При распределённом провайдере каждый инстанс имеет локальный L1-кеш (persistence context) и «удалённый» L2-кеш. При запросе Hibernate сначала смотрит в L1, потом — в L2, и только потом идёт в БД. Фактически L2 становится шареным «old-generation-кешем» для всей системы, а L1 — маленьким, быстрым локальным буфером. Если данных слишком много, и L2 сильно нагружен, GC будет страдать на каждом инстансе. Поэтому разумная стратегия — держать L2 относительно небольшим и использовать TTL/size-политику, а всё горячее — или читать напрямую из БД, или кешировать в специализированных решениях (например, Redis как отдельный слой, не жестко привязанный к JPA).
 
-**Java — пример «инстанс-нейтральной» инвалидации при записи**
+С точки зрения Spring Boot интеграция с кластерными провайдерами может быть реализована через Spring Cache + JCache (JSR-107) поверх Hazelcast/Infinispan, которые в свою очередь используются Hibernate как RegionFactory. Тогда вы настраиваете кластер на уровне кеш-провайдера, а Hibernate просто работает с регионами. Пример конфигурации для Hazelcast: создаёте `hazelcast.yaml` с настройками кластера, подключаете `hazelcast-spring` и указываете фабрику регионов `HazelcastCacheRegionFactory` в Hibernate.
+
+Ниже приведён упрощённый пример конфигурации Hazelcast для L2-кеша и соответствующей настройки Hibernate в Spring Boot. Это не честный production-ready кластер, но демонстрирует базовый wiring. Java и Kotlin-код отличаются только синтаксисом конфигурационного класса.
 
 ```java
-package com.example.dist;
-
-import jakarta.persistence.EntityManagerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.hibernate.SessionFactory;
-
-@Service
-public class InvalidationService {
-    private final EntityManagerFactory emf;
-    private final SessionFactory sf;
-    public InvalidationService(EntityManagerFactory emf) {
-        this.emf = emf; this.sf = emf.unwrap(SessionFactory.class);
-    }
-
-    @Transactional
-    public void afterCountryChanged(Long id) {
-        // Вызывайте после commit'а (TransactionSynchronization) — здесь для простоты внутри транзакции.
-        emf.getCache().evict(com.example.cache.Country.class, id);     // сущностный регион
-        sf.getCache().evictQueryRegion("country.byName");               // регион кеша запросов
-        // При наличии внешнего pub/sub — отправьте «invalidate(country,id)»
-    }
-}
+// build.gradle (фрагмент Groovy)
+// implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+// implementation 'com.hazelcast:hazelcast'
+// implementation 'com.hazelcast:hazelcast-spring'
 ```
-
-**Kotlin — то же**
 
 ```kotlin
-package com.example.dist
-
-import jakarta.persistence.EntityManagerFactory
-import org.hibernate.SessionFactory
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import com.example.cache.Country
-
-@Service
-class InvalidationService(emf: EntityManagerFactory) {
-    private val emf = emf
-    private val sf: SessionFactory = emf.unwrap(SessionFactory::class.java)
-
-    @Transactional
-    fun afterCountryChanged(id: Long) {
-        emf.cache.evict(Country::class.java, id)
-        sf.cache.evictQueryRegion("country.byName")
-        // при необходимости — опубликовать событие в брокер
-    }
+// build.gradle.kts (фрагмент)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    implementation("com.hazelcast:hazelcast")
+    implementation("com.hazelcast:hazelcast-spring")
 }
 ```
 
-**(Опционально) Hazelcast в роли распределённого провайдера JCache**
-*Если нужно общий L2 между инстансами, можно подключить JCache-провайдер Hazelcast:*
-
-* зависимости: `com.hazelcast:hazelcast:5.4.0`, `com.hazelcast:hazelcast-client:5.4.0` (если клиент-сервер), `javax.cache:cache-api:1.1.1`;
-* `application.yml`:
-
 ```yaml
+# application.yml (фрагмент)
 spring:
   jpa:
     properties:
-      hibernate:
-        cache:
-          use_second_level_cache: true
-          use_query_cache: true
-          region.factory_class: org.hibernate.cache.jcache.JCacheRegionFactory
-        javax:
-          cache:
-            provider: com.hazelcast.client.cache.HazelcastClientCachingProvider
+      hibernate.cache.use_second_level_cache: true
+      hibernate.cache.use_query_cache: false
+      hibernate.cache.region.factory_class: org.hibernate.cache.hazelcast.HazelcastCacheRegionFactory
+      hibernate.javax.cache.missing_cache_strategy: create
   cache:
-    type: jcache
-    jcache:
-      config: classpath:hazelcast-client.xml
+    hazelcast:
+      config: classpath:hazelcast.yaml
 ```
 
-* в `hazelcast-client.xml` описать кластеры и карты с теми же именами регионов (`country`, `country.byName`).
+```java
+package com.example.jpa.clusteredcache;
 
----
+import com.hazelcast.config.Config;
+import com.hazelcast.config.JoinConfig;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
-**Итоги практики**
+@Configuration
+public class HazelcastConfig {
 
-* Включайте L2 **точечно** и в первую очередь для справочников → `READ_ONLY` регионы.
-* Кеш запросов — только для **стабильных однотипных** выборок, всегда задавайте **регион** и TTL, чистите его при записи.
-* В кластере либо используйте распределённый JCache-провайдер, либо шлите **инвалидации** между инстансами.
-* Мониторинг — обязателен: hit/miss, размер регионов, GC/heap и задержки.
+    @Bean
+    public Config hazelcastConfig() {
+        Config config = new Config("jpa-cache-cluster");
+
+        // упрощённая сетевой конфиг, для прода нужен нормальный discovery
+        JoinConfig join = config.getNetworkConfig().getJoin();
+        join.getMulticastConfig().setEnabled(true);
+        join.getTcpIpConfig().setEnabled(false);
+
+        config.getMapConfig("operationType")
+                .setTimeToLiveSeconds(3600)
+                .setBackupCount(1);
+
+        return config;
+    }
+}
+```
+
+```kotlin
+package com.example.jpa.clusteredcache
+
+import com.hazelcast.config.Config
+import com.hazelcast.config.JoinConfig
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+
+@Configuration
+class HazelcastConfig {
+
+    @Bean
+    fun hazelcastConfig(): Config {
+        val config = Config("jpa-cache-cluster")
+
+        val join: JoinConfig = config.networkConfig.join
+        join.multicastConfig.isEnabled = true
+        join.tcpIpConfig.isEnabled = false
+
+        config.getMapConfig("operationType")
+            .timeToLiveSeconds = 3600
+            .backupCount = 1
+
+        return config
+    }
+}
+```
+
+Здесь мы заводим кластер Hazelcast с простейшей multicast-конфигурацией и описываем карту `operationType`, которую Hibernate будет использовать как регион кеша. В боевых условиях вы дополняете это discovery через Kubernetes API, задаёте более аккуратные TTL и политику резервирования, следите за метриками Hazelcast и GC-профилем на каждом инстансе. Ключевая мысль — распределённый L2-кеш сам по себе сложная распределённая система, и её нужно проектировать и эксплуатировать не менее внимательно, чем сам Postgres/микросервисы.
+
+В итоге для продакшн-проекта здравый подход такой: по умолчанию вы живёте без L2-кеша, полагаясь на грамотные индексы и архитектуру запросов. Для нескольких узких сценариев вы включаете L2 (чаще всего локальный, иногда — кластерный) с `READ_ONLY` для справочников. Query cache включаете ещё более дозированно, только под реально тяжёлые и стабильные запросы. Вся конфигурация кешей сопровождается метриками, алертами и периодическим review. Тогда кеширование станет инструментом, а не миной замедленного действия.
 
 # 8. Чтение больших объёмов и стриминг
 
-*Цель этой подтемы — показать, как безопасно и экономно по памяти читать десятки/сотни тысяч строк через JPA/Hibernate и (при необходимости) через JDBC. Сфокусируемся на правильных транзакционных границах, `Stream<T>`, хинтах `fetchSize/readOnly`, курсорной передаче данных и выгрузке «мимо памяти».*
+Когда данных становится много — десятки и сотни тысяч строк, — наивный подход «считать всё в `List` и потом обрабатывать» превращается в проблему. Вы забиваете память, тратите время на аллокации, создаёте давление на GC и рискуете увидеть `OutOfMemoryError` в самый неподходящий момент. Причём проблема одинаково актуальна и для JPA, и для «чистого» JDBC: любая библиотека, которая пытается материализовать весь результат сразу, упирается в тот же предел.
 
-**Базовые зависимости для примеров (актуальны во всей подтеме)**
+Решение — перейти от модели «загрузить всё» к модели «стримить и обрабатывать по мере чтения». Вместо того чтобы держать в памяти весь набор, вы читаете по одной строке или по небольшим пачкам, сразу обрабатываете их (записываете в файл, отправляете в другой сервис, агрегируете) и отпускаете. Так нагрузка на память остаётся практически константной, а время жизни объектов становится коротким и дружелюбным к GC.
 
-**Gradle (Groovy DSL)**
+В JPA/hibernate для этого есть несколько механизмов: потоковый API Spring Data (`Stream<T>`), scrollable/cursor-результаты через Hibernate и прямой JDBC с управлением `fetchSize` и курсорами. Важно понимать, что каждый из этих подходов опирается на тот факт, что JDBC-драйвер и СУБД умеют отдавать результат порциями, а не одним гигантским блоком. Если драйвер всё равно буферизует весь результат у себя, никакой стриминг на уровне ORM уже не спасёт.
 
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
-```
+Ещё один важный аспект — связка стриминга с транзакциями и `PersistenceContext`. Поскольку большинство серверных курсоров живёт в рамках транзакции, вы не можете «протащить» стрим наружу из `@Transactional`-метода и спокойно итерироваться где-то в другом слое. К моменту, когда вы начнёте перебор, транзакция и соединение уже будут закрыты. Поэтому правильный дизайн — выполнять и получение, и обработку стрима внутри одной транзакции, аккуратно управляя временем её жизни.
 
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
-```
-
-**application.yml (настройки, помогающие стримингу)**
-
-```yaml
-spring:
-  jpa:
-    open-in-view: false
-    properties:
-      hibernate:
-        jdbc.fetch_size: 1000        # дефолтный fetch size для запросов Hibernate
-        generate_statistics: true
-  datasource:
-    url: jdbc:postgresql://localhost:5432/app?defaultRowFetchSize=1000
-    username: app
-    password: app
-    hikari:
-      auto-commit: false             # для серверных курсоров в PG автокоммит должен быть выключен
-logging:
-  level:
-    org.hibernate.SQL: warn
-```
+И, наконец, стриминг почти всегда сочетается с read-only сценариями: вы просто читаете много данных, но не планируете их изменять. Это означает, что вы можете дополнительно использовать `@Transactional(readOnly = true)`, хинты `setReadOnly(true)` и настройку `fetchSize`, чтобы минимизировать нагрузку и на ORM, и на БД. Запись и стриминг обычно лучше разделять: массовые обновления делаются небольшими батчами, а большие чтения — отдельными потоками/курсорами.
 
 ---
 
 ## Потоки из репозиториев (`Stream<T>`), требования к `@Transactional` и закрытию
 
-Spring Data JPA умеет отдавать результаты как `java.util.stream.Stream<T>`. Это позволяет обрабатывать строки **по мере поступления** (lazily), не материализуя весь результат в память. Но у стримов есть два условия: 1) необходима активная транзакция, чтобы держать соединение и курсор открытыми, 2) стрим **обязательно закрывать** (try-with-resources), иначе соединение «подвиснет».
+Spring Data JPA умеет возвращать не только `List<T>`, но и `Stream<T>` из методов репозитория. По сути это «ленивый» результат: пока вы не итерируетесь по стриму, JDBC-драйвер не вытягивает все строки. При переборе по стриму драйвер читает строки одна за другой, а Hibernate по мере надобности превращает их в сущности. В идеальном случае это позволяет обрабатывать большие выборки с постоянным потреблением памяти, а не собирать весь набор в `ArrayList`.
 
-Внутри транзакции Hibernate/JDBC создают курсор (в Postgres — server-side cursor при `fetchSize>0` и `autocommit=false`). Чтение идёт порциями. Если транзакция завершится раньше, чем вы дочитали поток, — получите `LazyInitializationException`/`SQLException`. Поэтому экспортирующие методы помечаем `@Transactional(readOnly = true)` и читаем поток **внутри** этого метода.
+Критический момент: стрим, возвращаемый Spring Data JPA, завязан на открытый `EntityManager` и JDBC-соединение. Пока вы итерируетесь внутри активной транзакции, всё хорошо. Как только транзакция завершена и `EntityManager` закрыт, курсор на стороне драйвера закрывается, и дальнейшая попытка читать из стрима приведёт к ошибкам или просто к преждевременному завершению. Поэтому нельзя просто «вернуть Stream из сервисного метода» наружу и ожидать, что его будут безопасно читать в контроллере после завершения транзакции.
 
-Ещё один важный хинт — помечать запрос и/или сущности как read-only: Hibernate перестанет делать снимки для dirty checking, что существенно экономит CPU и heap. В Spring Data это можно задать через `@QueryHints` с `HibernateHints.HINT_READ_ONLY = true`. Комбинация `readOnly TX + read-only Query + fetchSize` даёт оптимальный режим «чистого чтения».
+Ещё одна особенность: `Stream<T>` от Spring Data реализует `AutoCloseable`, и его нужно закрывать, чтобы освободить JDBC-ресурсы. Если проигнорировать это требование и не закрывать стрим явно или через try-with-resources, вы получаете утечки курсоров и соединений, особенно при многократных тяжелых чтениях. В простых тестах это не видно, а в продакшне вы упрётесь в пул соединений, которые будут «висеть» с открытыми курсорами.
 
-Не забывайте про `flush/clear` — если в рамках экспорта вы всё же **что-то пишете** (логируете в БД, помечаете прогресс), периодически сбрасывайте PC и очищайте его, иначе L1-кэш начнёт расти. Но в большинстве экспортов лучше не мешать чтение и запись в одну транзакцию.
+Правильный паттерн работы со стримом из репозитория выглядит так: сервисный метод помечен `@Transactional(readOnly = true)`, внутри него вы вызываете метод репозитория, который возвращает `Stream<T>`, тут же оборачиваете его в try-with-resources (в Kotlin — `use {}`), и внутри этого блока полностью обрабатываете данные. Как только блок заканчивается, стрим закрывается, курсор освобождается, транзакция завершается. Никакого выноса стрима наружу не происходит.
 
-При маппинге сущностей в плоские строки/DTO после использования можно делать `em.detach(entity)`, чтобы не держать граф в PC. Это особенно заметно, когда сущность тянет ленивые коллекции, которые вы не планируете использовать — `detach` исключит случайные обращения.
+Важно помнить, что даже при стриминге persistence context продолжает расти: каждое прочитанное через JPA сущностное состояние попадает в L1-кэш. Если вы просто итерируетесь по `Stream<Entity>` и ничего не делаете с контекстом, через десятки тысяч строк вы снова начинаете кушать много памяти. Для сценариев с большим количеством строк лучше либо ограничиться DTO-стримом (через `select new ...`), либо периодически очищать контекст (например, detach’ить сущности по мере обработки).
 
-На стороне Postgres не включайте `fetch join` огромных коллекций в таком запросе: объём строки кратно раздуется, а курсор потеряет смысл. Для «толстой карточки» лучше отдельный запрос с `JOIN FETCH` по конкретному id.
+Кроме того, стримы из репозиториев нельзя «параллелить» стандартными методами `stream.parallel()` или `parallelStream()`. Комбинация Hibernate + JDBC + параллельные стримы приведёт к тому, что вы будете пытаться читать из одного курсора сразу несколькими потоками, что ни ORM, ни драйверы не гарантируют как безопасное. Потоковый API Spring Data предполагает последовательную обработку в том потоке, где открыт `EntityManager`.
 
-И последнее: удачно использовать проекции (DTO / интерфейсные) прямо в стриме — это сокращает размер передаваемых данных и освобождает от PC (DTO не «managed»). Такой подход критичен, если в JSON/CSV вам нужны только 3–5 полей от сущности.
+При тестировании такого кода полезно включить SQL-логирование и убедиться, что запрос к БД выполняется один раз и чтение действительно идёт по мере итерирования. В профилировщике памяти вы должны видеть, что число одновременно живущих сущностей невелико (если вы их не сохраняете в коллекции), а GC не страдает от резких всплесков. Если вы вдруг наблюдаете рост heap и тормоза, значит, где-то в коде вы всё-таки накапливаете данные, вместо того чтобы сразу их обрабатывать и «отпускать».
 
-**Java — репозиторий со стримом + хинты и сервис-экспорт в CSV**
+Практически для стриминга часто делают отдельный сервисный метод, который либо записывает результаты в файл, либо гонит их в потоковую обработку (Kafka, HTTP-стрим и т.д.). Такой метод становится точкой, где чётко контролируется и транзакция, и время жизни стрима. Это лучше, чем завязывать стримы на обычные CRUD-методы, которые разработчики будут потом использовать как «ещё одну версию findAll».
+
+Ниже пример, показывающий потоковый метод репозитория и сервис, который корректно обрабатывает стрим в рамках транзакции. В примере мы читаем всех пользователей, помеченных как активные, и считаем общее количество записей с определённым признаком. Обратите внимание на `try (Stream<User> stream = ...)` в Java и `use {}` в Kotlin.
 
 ```java
-package com.example.streams;
+package com.example.jpa.streaming;
 
-import jakarta.persistence.*;
-import org.hibernate.jpa.HibernateHints;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
-import java.io.BufferedWriter;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.stream.Stream;
 
 @Entity
-@Table(name = "orders")
-class Order {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) Long customerId;
-    @Column(nullable = false) Long totalCents;
-    @Column(nullable = false) Instant createdAt = Instant.now();
-    protected Order() {}
+@Table(name = "app_user")
+public class User {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String email;
+
+    private boolean active;
+
+    private boolean flagged;
+
+    // getters/setters
 }
 
-interface OrderRow {
-    Long getId();
-    Long getCustomerId();
-    Long getTotalCents();
-    Instant getCreatedAt();
-}
+interface UserRepository extends JpaRepository<User, Long> {
 
-@Repository
-interface OrderRepository extends JpaRepository<Order, Long> {
-
-    @Query("""
-        select o.id as id, o.customerId as customerId, o.totalCents as totalCents, o.createdAt as createdAt
-        from Order o
-        where o.createdAt >= :from
-        order by o.id
-    """)
-    @QueryHints({
-        @QueryHint(name = HibernateHints.HINT_FETCH_SIZE, value = "1000"),
-        @QueryHint(name = HibernateHints.HINT_READ_ONLY, value = "true")
-    })
-    Stream<OrderRow> streamSince(@Param("from") Instant from);
+    @Query("select u from User u where u.active = true")
+    Stream<User> streamAllActive();
 }
+```
+
+```java
+package com.example.jpa.streaming;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 @Service
-class OrderExportService {
-    private final OrderRepository repo;
-    @PersistenceContext private EntityManager em;
+public class UserStreamingService {
 
-    OrderExportService(OrderRepository repo) { this.repo = repo; }
+    private final UserRepository userRepository;
+
+    public UserStreamingService(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
 
     @Transactional(readOnly = true)
-    public void exportSince(Instant from, OutputStream out) throws Exception {
-        try (Stream<OrderRow> s = repo.streamSince(from);
-             BufferedWriter w = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8))) {
-            w.write("id,customer_id,total_cents,created_at\n");
-            final int[] i = {0};
-            s.forEach(r -> {
-                try {
-                    w.write(r.getId() + "," + r.getCustomerId() + "," + r.getTotalCents() + "," + r.getCreatedAt() + "\n");
-                    if (++i[0] % 5000 == 0) w.flush(); // не копим большой буфер
-                } catch (Exception e) { throw new RuntimeException(e); }
+    public long countFlaggedActiveUsers() {
+        AtomicLong counter = new AtomicLong();
+
+        try (Stream<User> stream = userRepository.streamAllActive()) {
+            stream.forEach(user -> {
+                if (user.isFlagged()) {
+                    counter.incrementAndGet();
+                }
             });
-            w.flush();
         }
+
+        return counter.get();
     }
 }
 ```
 
-**Kotlin — аналогичный стрим + экспорт**
-
 ```kotlin
-package com.example.streams
+package com.example.jpa.streaming
 
-import jakarta.persistence.*
-import org.hibernate.jpa.HibernateHints
-import org.springframework.data.jpa.repository.*
-import org.springframework.data.repository.query.Param
-import org.springframework.stereotype.Repository
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import java.io.BufferedWriter
-import java.io.OutputStream
-import java.io.OutputStreamWriter
-import java.nio.charset.StandardCharsets
-import java.time.Instant
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.Id
+import jakarta.persistence.Table
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
 import java.util.stream.Stream
 
 @Entity
-@Table(name = "orders")
-class Order(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "app_user")
+class User(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false) var customerId: Long = 0,
-    @Column(nullable = false) var totalCents: Long = 0,
-    @Column(nullable = false) var createdAt: Instant = Instant.now()
+
+    var email: String = "",
+
+    var active: Boolean = true,
+
+    var flagged: Boolean = false
 )
 
-interface OrderRow {
-    fun getId(): Long
-    fun getCustomerId(): Long
-    fun getTotalCents(): Long
-    fun getCreatedAt(): Instant
-}
+interface UserRepository : JpaRepository<User, Long> {
 
-@Repository
-interface OrderRepository : JpaRepository<Order, Long> {
-
-    @Query(
-        """
-        select o.id as id, o.customerId as customerId, o.totalCents as totalCents, o.createdAt as createdAt
-        from Order o
-        where o.createdAt >= :from
-        order by o.id
-        """
-    )
-    @QueryHints(
-        value = [
-            QueryHint(name = HibernateHints.HINT_FETCH_SIZE, value = "1000"),
-            QueryHint(name = HibernateHints.HINT_READ_ONLY, value = "true")
-        ]
-    )
-    fun streamSince(@Param("from") from: Instant): Stream<OrderRow>
+    @Query("select u from User u where u.active = true")
+    fun streamAllActive(): Stream<User>
 }
+```
+
+```kotlin
+package com.example.jpa.streaming
+
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.util.concurrent.atomic.AtomicLong
 
 @Service
-class OrderExportService(private val repo: OrderRepository) {
+class UserStreamingService(
+    private val userRepository: UserRepository
+) {
 
     @Transactional(readOnly = true)
-    fun exportSince(from: Instant, out: OutputStream) {
-        repo.streamSince(from).use { s ->
-            BufferedWriter(OutputStreamWriter(out, StandardCharsets.UTF_8)).use { w ->
-                w.write("id,customer_id,total_cents,created_at\n")
-                var i = 0
-                s.forEach { r ->
-                    w.write("${r.id},${r.customerId},${r.totalCents},${r.createdAt}\n")
-                    i++
-                    if (i % 5000 == 0) w.flush()
+    fun countFlaggedActiveUsers(): Long {
+        val counter = AtomicLong()
+
+        userRepository.streamAllActive().use { stream ->
+            stream.forEach { user ->
+                if (user.flagged) {
+                    counter.incrementAndGet()
                 }
-                w.flush()
             }
         }
+
+        return counter.get()
     }
 }
 ```
+
+В этом шаблоне собраны ключевые принципы: стрим создаётся и обрабатывается внутри транзакции, закрывается автоматически, и ничто не пытается использовать его за пределами этого метода. Такой подход позволяет безопасно и предсказуемо работать с большими выборками через Spring Data JPA.
 
 ---
 
 ## Скролл/курсор: forward-only, `fetchSize`/`setFetchSize`, минимизация памяти
 
-Стримы — частный случай курсорного чтения. Базовая идея: держать курсор **forward-only** и забирать данные порциями у драйвера. В PostgreSQL курсоры включаются автоматически, когда **(а)** транзакция активна (autocommit=false) и **(б)** `fetchSize > 0`. В примерах выше мы задали и глобальное `hibernate.jdbc.fetch_size`, и хинт на сам запрос — так надёжнее.
+Помимо `Stream<T>`, Hibernate и JDBC предоставляют более низкоуровневые механизмы для курсорного чтения: scrollable-результаты и управление `fetchSize`. Идея в том, чтобы явно попросить драйвер отдавать данные не одним большим блоком, а небольшими порциями, подстраиваясь под размер батча обработки. Это особенно актуально для JDBC-драйверов, умеющих серверные курсоры (PostgreSQL, Oracle и др.), где `fetchSize` превращается в реальное управление сетевыми round-trip’ами.
 
-Если нужен полный контроль, можно использовать `JdbcTemplate` и настроить `fetchSize` напрямую на `PreparedStatement`. Это обходит ORM и гарантирует, что драйвер отдаёт не более N строк за раз. Также у PG есть параметр `defaultRowFetchSize` в JDBC URL — он выставляет значение по умолчанию для всех запросов.
+По умолчанию многие драйверы игнорируют `fetchSize` или реализуют его как «подсказку» для клиентского буфера. Например, старый PostgreSQL в режиме `autoCommit=true` сначала считывал весь результат в память. Но при `autoCommit=false` и `fetchSize > 0` он переходил в режим использования курсора и начинал реально подтягивать данные партиями. Поэтому первый шаг к эффективному стримингу через курсоры — убедиться, что у вас есть открытая транзакция и драйвер понимает `fetchSize` как сигнал к включению курсорного режима.
 
-Forward-only курсор означает, что нельзя «мотать» результат назад/вперёд и нельзя рассчитывать на `ResultSet.last()`. Это плата за низкое потребление памяти. В обмен вы можете обрабатывать миллионы строк при стабильном heap, если не копите большие структуры в коллекции.
+Hibernate позволяет управлять `fetchSize` и режимом курсора через API `Query` и `ScrollableResults`. Вы можете вызвать `query.setFetchSize(1000)` и получить либо обычный `List`, который будет загружаться батчами, либо `ScrollableResults`, который позволяет двигаться по результатам вперёд и, в некоторых драйверах, назад. В реальных задачах чаще всего достаточно простого forward-only курсора: читаем строки по очереди, без перемотки, и сразу обрабатываем.
 
-Важно фильтровать и сортировать по индексируемым полям: курсор не спасёт от full scan по горячей таблице, который будет «пережёвывать» тонны данных на стороне БД. Всегда начинайте с селективного `where` и `order by` по индексам, чтобы сервер быстро строил план.
+Главная цель `fetchSize` — баланс между числом round-trip’ов к базе и объёмом данных в памяти. Слишком маленький `fetchSize` (например, 1) приведёт к огромному числу сетевых запросов и заметному оверхеду на latency. Слишком большой (например, 10000) снова даст всплеск памяти и GC, особенно если каждая строка — это сложный граф сущностей. На практике для OLTP-систем часто выбирают размер в диапазоне 100–1000 строк, а дальше уже крутят под конкретный workload и характеристики сети/СУБД.
 
-Не забывайте про таймауты. Долгие курсоры — это долго удерживаемые соединения и транзакции. Выставляйте `statement_timeout`/`queryTimeout` и логируйте длительность выгрузок. Если выгрузка может длиться десятки минут, лучше её бить на **логические чанки** (по id/времени) и делать по одной транзакции на чанк.
+Наряду с `fetchSize` важно также выставлять forward-only режим курсора. В JDBC это делается через константы `ResultSet.TYPE_FORWARD_ONLY` и `ResultSet.CONCUR_READ_ONLY` при создании `PreparedStatement`. Hibernate под капотом чаще всего и так создаёт forward-only курсоры, но если вы используете чистый JDBC, имеет смысл задать это явно. Это позволяет драйверу оптимизировать использование памяти и не держать весь набор строк в клиентском буфере.
 
-И последнее — не «увлекайтесь» гигантским `fetchSize`. Сладкое место обычно 200–2000. Слишком маленький — много round-trip’ов; слишком большой — большие пакеты в сети и всплески памяти.
+С точки зрения памяти стриминг через курсор спасает только в том случае, если вы не накапливаете сущности/DTO в коллекциях. Любая попытка «сначала собрать всё, потом обработать» моментально нивелирует пользу `fetchSize`. Поэтому классический паттерн работы с курсором — цикл `while (rs.next()) { processRow(); }`, где `processRow` либо пишет данные в файл, либо сразу отправляет в другой сервис, либо агрегирует в небольшие структуры, а не в гигантские списки.
 
-**Java — курсорное чтение через `JdbcTemplate` с `fetchSize` и обработчиком строк**
+Hibernate-API `ScrollableResults` — ещё одна реализация курсорной модели. Вы получаете объект, который позволяет двигаться по результатам построчно через `scroll.next()` и доставать текущую сущность. Это удобно, если вы хотите использовать JPA-мэппинг, но при этом управлять чисткой `PersistenceContext`: после каждого шага можно делать `session.evict(entity)` или периодически звать `clear()`, чтобы контекст не разрастался. Такой подход часто используют в batch-джобах, где нужно пройтись по всей таблице и по каждой строке выполнить некоторую логику.
+
+Однако `ScrollableResults` — это уже чистый Hibernate API, а не JPA, и требует явного `unwrap(Session.class)` и более осторожной работы. Кроме того, на Web-уровне он вряд ли пригодится; его естественная среда — фоновые джобы, Spring Batch, миграции и прочие отчётные сценарии. В обычных сервисных методах при необходимости стриминга лучше использовать `Stream<T>` или чистый JDBC через `JdbcTemplate`, чтобы не смешивать слишком много абстракций в одном месте.
+
+Нельзя забывать и о том, что курсорные запросы держат транзакцию и соединение в открытом состоянии на всём протяжении обработки. Если вы будете стримить десятки миллионов строк и при этом держать одну длинную транзакцию, вы рискуете заблокировать ресурсы БД, мешать другим операциям и упираться в таймауты. В таких случаях лучше разбивать работу на несколько итераций, каждая из которых обрабатывает разумный диапазон ключей или страниц, и открывать/закрывать транзакцию на каждую порцию.
+
+В итоге `fetchSize` и курсоры — это инструмент для аккуратного балансирования между latency, пропускной способностью и потреблением памяти. Они хорошо сочетаются с read-only транзакциями, где вы просто читаете много данных, но требуют осторожного обращения с транзакциями, пулом соединений и `PersistenceContext`. «Включить и забыть» тут не получится — придётся измерять, настраивать и иногда отказываться от курсорного стриминга в пользу более простых batch-подходов.
+
+Ниже пример, который показывает использование `fetchSize` и forward-only курсора через Hibernate `Session` и напрямую через `JdbcTemplate`. В обоих случаях мы читаем таблицу `orders` большими объёмами и по мере чтения сразу же агрегируем данные, не накапливая их целиком в памяти.
 
 ```java
-package com.example.cursor;
+package com.example.jpa.cursor;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.hibernate.Session;
+import org.hibernate.query.Query;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.BufferedWriter;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
 @Service
-public class CursorExportService {
-    private final JdbcTemplate jdbc;
+public class OrderCursorService {
 
-    public CursorExportService(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-        this.jdbc.setFetchSize(1000); // дефолт для всех запросов через этот JdbcTemplate
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public OrderCursorService(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Transactional(readOnly = true)
-    public void export(OutputStream out) throws Exception {
-        try (BufferedWriter w = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8))) {
-            w.write("id,customer_id,total_cents,created_at\n");
-            RowCallbackHandler rch = new RowCallbackHandler() {
-                @Override public void processRow(ResultSet rs) throws SQLException {
-                    try {
-                        w.write(rs.getLong("id") + "," + rs.getLong("customer_id") + ","
-                                + rs.getLong("total_cents") + "," + rs.getTimestamp("created_at").toInstant() + "\n");
-                    } catch (Exception e) { throw new RuntimeException(e); }
-                }
-            };
-            jdbc.query(
-                "select id, customer_id, total_cents, created_at from orders where created_at >= now() - interval '30 days' order by id",
-                rch
-            );
-            w.flush();
+    public long sumAllOrderAmountsJpa() {
+        Session session = entityManager.unwrap(Session.class);
+
+        Query<Order> query = session.createQuery(
+                "select o from Order o",
+                Order.class
+        );
+
+        query.setFetchSize(500);
+
+        long sum = 0L;
+
+        try (var stream = query.stream()) {
+            for (Order order : (Iterable<Order>) stream::iterator) {
+                sum += order.getAmount();
+                session.detach(order);
+            }
         }
+
+        return sum;
+    }
+
+    @Transactional(readOnly = true)
+    public long sumAllOrderAmountsJdbc() {
+        return jdbcTemplate.query(
+                con -> {
+                    var ps = con.prepareStatement(
+                            "select amount from orders",
+                            ResultSet.TYPE_FORWARD_ONLY,
+                            ResultSet.CONCUR_READ_ONLY
+                    );
+                    ps.setFetchSize(500);
+                    return ps;
+                },
+                (ResultSet rs) -> {
+                    long sum = 0L;
+                    while (rs.next()) {
+                        sum += rs.getLong("amount");
+                    }
+                    return sum;
+                }
+        );
     }
 }
 ```
-
-**Kotlin — то же, курсорное чтение через `JdbcTemplate`**
 
 ```kotlin
-package com.example.cursor
+package com.example.jpa.cursor
 
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import org.hibernate.Session
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.jdbc.core.RowCallbackHandler
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.io.BufferedWriter
-import java.io.OutputStream
-import java.io.OutputStreamWriter
-import java.nio.charset.StandardCharsets
-import java.sql.ResultSet
 
 @Service
-class CursorExportService(private val jdbc: JdbcTemplate) {
+class OrderCursorService(
 
-    init { jdbc.fetchSize = 1000 }
+    @PersistenceContext
+    private val entityManager: EntityManager,
+
+    private val jdbcTemplate: JdbcTemplate
+) {
 
     @Transactional(readOnly = true)
-    fun export(out: OutputStream) {
-        BufferedWriter(OutputStreamWriter(out, StandardCharsets.UTF_8)).use { w ->
-            w.write("id,customer_id,total_cents,created_at\n")
-            val handler = RowCallbackHandler { rs: ResultSet ->
-                w.write("${rs.getLong("id")},${rs.getLong("customer_id")},${rs.getLong("total_cents")},${rs.getTimestamp("created_at").toInstant()}\n")
+    fun sumAllOrderAmountsJpa(): Long {
+        val session = entityManager.unwrap(Session::class.java)
+
+        val query = session.createQuery(
+            "select o from Order o",
+            Order::class.java
+        )
+        query.fetchSize = 500
+
+        var sum = 0L
+
+        query.stream().use { stream ->
+            stream.forEach { order ->
+                sum += order.amount
+                session.detach(order)
             }
-            jdbc.query(
-                "select id, customer_id, total_cents, created_at from orders where created_at >= now() - interval '30 days' order by id",
-                handler
-            )
-            w.flush()
         }
+
+        return sum
+    }
+
+    @Transactional(readOnly = true)
+    fun sumAllOrderAmountsJdbc(): Long {
+        return jdbcTemplate.query(
+            { con ->
+                val ps = con.prepareStatement(
+                    "select amount from orders",
+                    java.sql.ResultSet.TYPE_FORWARD_ONLY,
+                    java.sql.ResultSet.CONCUR_READ_ONLY
+                )
+                ps.fetchSize = 500
+                ps
+            },
+            { rs ->
+                var sum = 0L
+                while (rs.next()) {
+                    sum += rs.getLong("amount")
+                }
+                sum
+            }
+        )
     }
 }
 ```
+
+В этих примерах JPA-вариант использует `fetchSize` и detach для предотвращения раздувания контекста, а JDBC-вариант показывает классический forward-only курсор с `fetchSize`. Оба демонстрируют идею: результат не накапливается, а обрабатывается по мере чтения.
 
 ---
 
 ## Read-only транзакции + хинты драйвера; выгрузка в файлы/каналы без материализации всего списка
 
-`@Transactional(readOnly = true)` — необходимый контекст для долгого чтения: отключает `flush`, даёт драйверу оптимизационный хинт и держит соединение/курсор открытыми. Дополнительно на уровне запроса/сессии указывайте **read-only** хинты (HibernateHints.HINT_READ_ONLY, `Session.setDefaultReadOnly(true)`), чтобы Hibernate не занимался dirty checking.
+Большие выборки почти всегда живут в сценарии «прочитать и куда-то выгрузить»: сформировать CSV/Excel, отдать файл во внешнюю систему, отправить каждую запись в очередь, сделать снапшот для аналитики. Общий принцип здесь простой: чем меньше промежуточных структур вы создаёте, тем лучше. Оптимальный путь — читать строку, сразу записывать её в целевой канал (файл/стрим/сокет) и забывать. Тогда и нагрузка на память, и время жизни объектов минимальны.
 
-Выгрузку лучше писать **строго потоково**: читаете строку — сразу сериализуете/пишете в `OutputStream`/`WritableByteChannel`. Не формируйте `List<T>`/`StringBuilder` на миллионы элементов. Для CSV используйте буферизированные writer’ы и периодический `flush`; для JSON — стриминговые API (`JsonGenerator` Jackson’а) или хотя бы «по-строчному» NDJSON (один объект — одна строка).
+Read-only транзакции в этом контексте работают как дополнительный полезный сигнал. Когда вы помечаете метод `@Transactional(readOnly = true)`, Spring и Hibernate могут оптимизировать поведение: поменять `FlushMode` на `MANUAL` или `COMMIT`, передать драйверу хинт о том, что операция только чтение (для некоторых СУБД), не поднимать лишние блокировки. Для больших выгрузок это снижает риски конкуренции за ресурсы с обычными write-транзакциями и избавляет от ненужных flush.
 
-На уровне драйвера используйте параметры, ускоряющие «бестелесную» выгрузку. В Postgres можно задать `stringtype=unspecified` (снижает конвертации в некоторых сценариях), `defaultRowFetchSize`, а также `readOnly=true` на соединении (в некоторых базах меняет планы). Но главный выигрыш даёт именно `fetchSize` и отсутствие ненужных преобразований на стороне приложения.
+Хинты драйвера и СУБД — ещё один уровень оптимизации. Многие СУБД и JDBC-драйверы поддерживают флаги вроде `setReadOnly(true)` на `Connection`, которые позволяют базе выбирать более агрессивные планы или оптимизировать блокировки. В Spring `@Transactional(readOnly = true)` обычно автоматически ставит read-only флаг на соединение. Дополнительно можно настроить хинты для конкретного запроса: например, в Postgres — объявить запрос как `SELECT ...` с определённым планом, или в Oracle — использовать `/*+ */`-подсказки, если это действительно нужно.
 
-Если экспорт длится долго, добавьте **heartbeat-логи** (каждые N тысяч строк) и обработку отмены (проверка флага/Thread.interrupted). Так вы избежите 30-минутных «чёрных ящиков», когда непонятно, жив ли процесс.
+При выгрузке в файлы особенно важно помнить про потоковую модель I/O. Вместо того чтобы сначала собрать все записи в `List` и потом писать его `ObjectMapper`’ом в файл, вы можете использовать стриминг JSON/CSV: по мере чтения записи из БД сериализовывать её и писать в `BufferedWriter` или `OutputStream`. Многие JSON-библиотеки (Jackson) поддерживают `JsonGenerator`, позволяющий писать массив объектов по одному, не держа весь JSON в памяти. Потоковая модель БД прекрасно сочетается с потоковой моделью сериализации.
 
-При необходимости шифрования/компрессии не пишите сначала на диск, а потом в архив: используйте **каскад потоков** (`GZIPOutputStream` поверх исходного `OutputStream`) — это сохраняет потоковую природу и экономит диск/IO.
+То же самое относится к интеграции с внешними системами. Если вам нужно отправить большой объём данных в другую систему, вместо того чтобы сначала сформировать гигантскую коллекцию и затем разом отправить, вы можете работать батчами или по одной записи: прочитал строку — отправил в очередь / HTTP — перешёл к следующей. Это уменьшает не только потребление памяти, но и латентность: первые данные начинают потребляться получателем задолго до завершения всей выгрузки.
 
-Не забывайте про «чистоту» API: экспорт должен быть **идемпотентным** и воспроизводимым. Фиксируйте границы чтения (`from`/`to`/`asOf`) и версию схемы в заголовке файла. Это поможет повторять экспорт и отлаживать отчёты.
+Ещё одна важная деталь — управление размером транзакции. Если выгрузка действительно огромная и занимает десятки минут, держать одну транзакцию на всё время может быть плохой идеей: вы удерживаете ресурсы СУБД, рискуете упереться в таймауты и создаёте условия для блокировок. В таких случаях разумнее разбить выгрузку на части: например, идти по первичному ключу или времени создания батчами по 10–50 тысяч записей, открывать транзакцию на каждый батч, выгружать его и закрывать. При этом внешний файл или канал может быть общим, а логика просто «дописываться» кусками.
 
-И, наконец, измеряйте. Разница между «наивным» `findAll()` и курсорным `fetchSize=1000` — порядок величины по памяти и по времени GC. Добавьте метрики (скорость строк/сек, общее время, средний размер чанка) и алерты на деградацию.
+Утечки ресурсов при потоковой выгрузке — классическая проблема. Если вы забыли закрыть `ResultSet`, `PreparedStatement`, `Stream`, `Writer` или `OutputStream`, то при многократном запуске джобы или API вы будете терять дескрипторы и соединения до тех пор, пока не упадёте. Поэтому в коде, который занимается выгрузкой, должны быть аккуратные try-with-resources или `use {}`-блоки для всех элементов цепочки: и для БД, и для файлов, и для сетевых стримов.
 
-**Java — потоковая выгрузка в NDJSON через Jackson JsonGenerator**
+С точки зрения структуры приложения полезно выносить логику «и БД, и файл» в отдельный сервис/джобу, а контроллеру оставлять только запуск и, возможно, отдачу уже готового файла. Контроллер не должен сам итерироваться по стриму из JPA — это усложняет жизненный цикл транзакций и делает код менее предсказуемым. Гораздо проще и надёжнее, когда у вас есть отдельный компонент «exporter», который явно знает, что он делает долгую read-only операцию и управляет всем ресурсным циклом.
+
+Ниже пример, который показывает выгрузку большого набора заказов в CSV-файл с использованием Spring Data JPA `Stream<Order>` и потоковой записи через `BufferedWriter`. Мы открываем read-only транзакцию, создаём временный файл, по мере чтения записей пишем строки CSV и аккуратно закрываем и стрим, и writer. В Kotlin это делается через `use {}`, в Java — через вложенные try-with-resources.
 
 ```java
-package com.example.streamingjson;
+package com.example.jpa.export;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonGenerator;
-import jakarta.persistence.*;
-import org.hibernate.jpa.HibernateHints;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.stream.Stream;
 
 @Entity
-@Table(name = "events")
-class Event {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String type;
-    @Column(nullable = false) Instant createdAt = Instant.now();
-    protected Event() {}
+@Table(name = "orders")
+class Order {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String customerEmail;
+
+    private Long amount;
+
+    // getters/setters
 }
 
-interface EventView {
-    Long getId();
-    String getType();
-    Instant getCreatedAt();
-}
+interface OrderRepository extends JpaRepository<Order, Long> {
 
-@Repository
-interface EventRepository extends JpaRepository<Event, Long> {
-    @Query("""
-        select e.id as id, e.type as type, e.createdAt as createdAt
-        from Event e
-        where e.createdAt between :from and :to
-        order by e.id
-    """)
-    @QueryHints({
-        @QueryHint(name = HibernateHints.HINT_FETCH_SIZE, value = "1000"),
-        @QueryHint(name = HibernateHints.HINT_READ_ONLY, value = "true")
-    })
-    Stream<EventView> streamRange(@Param("from") Instant from, @Param("to") Instant to);
+    @Query("select o from Order o order by o.id")
+    Stream<Order> streamAll();
 }
 
 @Service
-class EventExportJsonService {
-    private final EventRepository repo;
-    EventExportJsonService(EventRepository repo) { this.repo = repo; }
+public class OrderExportService {
+
+    private final OrderRepository orderRepository;
+
+    public OrderExportService(OrderRepository orderRepository) {
+        this.orderRepository = orderRepository;
+    }
 
     @Transactional(readOnly = true)
-    public void exportNdjson(Instant from, Instant to, OutputStream out) throws Exception {
-        JsonFactory f = new JsonFactory();
-        try (Stream<EventView> s = repo.streamRange(from, to);
-             JsonGenerator g = f.createGenerator(out, com.fasterxml.jackson.core.JsonEncoding.UTF8)) {
-            s.forEach(ev -> {
+    public Path exportAllToCsv() throws IOException {
+        Path tempFile = Files.createTempFile("orders-", ".csv");
+
+        try (Stream<Order> stream = orderRepository.streamAll();
+             BufferedWriter writer = Files.newBufferedWriter(tempFile)) {
+
+            writer.write("id,customer_email,amount");
+            writer.newLine();
+
+            stream.forEach(order -> {
                 try {
-                    g.writeStartObject();
-                    g.writeNumberField("id", ev.getId());
-                    g.writeStringField("type", ev.getType());
-                    g.writeStringField("createdAt", ev.getCreatedAt().toString());
-                    g.writeEndObject();
-                    g.writeRaw('\n'); // NDJSON: один объект — одна строка
-                } catch (Exception e) { throw new RuntimeException(e); }
+                    writer.write(order.getId()
+                            + "," + order.getCustomerEmail()
+                            + "," + order.getAmount());
+                    writer.newLine();
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to write CSV line", e);
+                }
             });
-            g.flush();
         }
+
+        return tempFile;
     }
 }
 ```
 
-**Kotlin — потоковая NDJSON-выгрузка**
-
 ```kotlin
-package com.example.streamingjson
+package com.example.jpa.export
 
-import com.fasterxml.jackson.core.JsonEncoding
-import com.fasterxml.jackson.core.JsonFactory
-import com.fasterxml.jackson.core.JsonGenerator
-import jakarta.persistence.*
-import org.hibernate.jpa.HibernateHints
-import org.springframework.data.jpa.repository.*
-import org.springframework.data.repository.query.Param
-import org.springframework.stereotype.Repository
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.Id
+import jakarta.persistence.Table
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.io.OutputStream
-import java.time.Instant
+import java.io.BufferedWriter
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.stream.Stream
 
 @Entity
-@Table(name = "events")
-class Event(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "orders")
+class Order(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false) var type: String = "",
-    @Column(nullable = false) var createdAt: Instant = Instant.now()
+
+    var customerEmail: String = "",
+
+    var amount: Long = 0
 )
 
-interface EventView {
-    fun getId(): Long
-    fun getType(): String
-    fun getCreatedAt(): Instant
-}
+interface OrderRepository : JpaRepository<Order, Long> {
 
-@Repository
-interface EventRepository : JpaRepository<Event, Long> {
-    @Query(
-        """
-        select e.id as id, e.type as type, e.createdAt as createdAt
-        from Event e
-        where e.createdAt between :from and :to
-        order by e.id
-        """
-    )
-    @QueryHints(
-        value = [
-            QueryHint(name = HibernateHints.HINT_FETCH_SIZE, value = "1000"),
-            QueryHint(name = HibernateHints.HINT_READ_ONLY, value = "true")
-        ]
-    )
-    fun streamRange(@Param("from") from: Instant, @Param("to") to: Instant): Stream<EventView>
+    @Query("select o from Order o order by o.id")
+    fun streamAll(): Stream<Order>
 }
 
 @Service
-class EventExportJsonService(private val repo: EventRepository) {
+class OrderExportService(
+    private val orderRepository: OrderRepository
+) {
 
     @Transactional(readOnly = true)
-    fun exportNdjson(from: Instant, to: Instant, out: OutputStream) {
-        val factory = JsonFactory()
-        repo.streamRange(from, to).use { s ->
-            factory.createGenerator(out, JsonEncoding.UTF8).use { g: JsonGenerator ->
-                s.forEach { ev ->
-                    g.writeStartObject()
-                    g.writeNumberField("id", ev.id)
-                    g.writeStringField("type", ev.type)
-                    g.writeStringField("createdAt", ev.createdAt.toString())
-                    g.writeEndObject()
-                    g.writeRaw('\n')
+    @Throws(IOException::class)
+    fun exportAllToCsv(): Path {
+        val tempFile = Files.createTempFile("orders-", ".csv")
+
+        orderRepository.streamAll().use { stream ->
+            Files.newBufferedWriter(tempFile).use { writer ->
+                writer.write("id,customer_email,amount")
+                writer.newLine()
+
+                stream.forEach { order ->
+                    writer.write(
+                        "${order.id},${order.customerEmail},${order.amount}"
+                    )
+                    writer.newLine()
                 }
-                g.flush()
             }
+        }
+
+        return tempFile
+    }
+}
+```
+
+В этом примере соединение с БД, курсор, стрим и файловый writer живут ровно столько, сколько длится метод `exportAllToCsv`. Данные не накапливаются в памяти, а сразу пишутся в файл построчно. Такой шаблон легко адаптируется для выгрузки в HTTP-ответ (через `StreamingResponseBody`), Kafka, S3 и любые другие каналы, где естественен потоковый формат.
+
+# 9. DB-специфика и нестандартные типы
+
+## JSON/JSONB, массивы, диапазоны, `hstore`: `@Converter` vs Hibernate Types; индексы (например, GIN для JSONB)
+
+В реальных проектах вы довольно быстро выходите за рамки «скучных» типов `varchar/int/timestamp`. В PostgreSQL появляются `jsonb`, массивы (`text[]`, `bigint[]`), диапазоны (`tsrange`, `numrange`), `hstore` и прочие удобные расширения. JPA формально про эти типы ничего не знает: её модель — абстрактная, кросс-СУБД. Поэтому вам приходится решать, как именно отображать такие поля в доменную модель, не теряя при этом ни гибкости SQL, ни производительности. Ключевых инструментов два: собственные `@Converter` и сторонняя библиотека Hibernate Types (или современные хибер-типизации через `@JdbcTypeCode`), которая добавляет поддержку Postgres-спецтипов.
+
+Самый простой путь для `jsonb` — хранить его строкой: `@Column(columnDefinition = "jsonb") private String payload;`. Тогда приложение никак не вмешивается в структуру JSON, а всё, что умеет сделать ORM, — записать строку в колонку и прочитать её обратно. Это иногда приемлемо для «чужих» payload’ов (например, вы просто проксируете запросы), но для собственного домена такое решение неудобно: вы теряете типизацию на уровне Java/Kotlin, легко ошибаетесь в структуре JSON и вынуждены руками сериализовать/десериализовать данные в каждом месте использования.
+
+Более аккуратный подход — использовать `@Converter` и маппить JSON-колонку на нормальный value object. Вы описываете класс вроде `AddressDetails` или `ExtraAttributes`, а в конвертере превращаете его в `String` через `ObjectMapper` и обратно. Для Hibernate всё по-прежнему выглядит как `varchar/jsonb`, но в доменной модели вы работаете с полноценным типом, можете накладывать инварианты, валидировать структуру и не размазывать JSON-парсинг по всему коду. Это хороший базовый уровень, если вам не нужно писать сложные JSON-фильтры в SQL.
+
+Пример такой связки: отдельный `@Embeddable` или просто POJO/датакласс под содержимое JSON и `AttributeConverter`, который решает проблему сериализации. Важно, чтобы конвертер был детерминированным и не бросал checked-исключений, иначе интеграция с Hibernate будет болезненной. Чаще всего внутри используют Jackson и аккуратно оборачивают возможные ошибки в `IllegalArgumentException`.
+
+```java
+package com.example.jpa.json;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "customer_profile")
+public class CustomerProfile {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    @Column(name = "email", nullable = false, unique = true)
+    private String email;
+
+    @Convert(converter = PreferencesJsonConverter.class)
+    @Column(name = "preferences", columnDefinition = "jsonb")
+    private Preferences preferences;
+
+    // геттеры/сеттеры
+}
+
+@Embeddable
+class Preferences {
+
+    private boolean marketingAllowed;
+
+    private String theme;
+
+    // геттеры/сеттеры
+}
+
+@Converter(autoApply = false)
+class PreferencesJsonConverter implements AttributeConverter<Preferences, String> {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    @Override
+    public String convertToDatabaseColumn(Preferences attribute) {
+        if (attribute == null) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(attribute);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Failed to serialize preferences", e);
+        }
+    }
+
+    @Override
+    public Preferences convertToEntityAttribute(String dbData) {
+        if (dbData == null) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.readValue(dbData, Preferences.class);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Failed to deserialize preferences", e);
         }
     }
 }
 ```
 
-**Итоги практики для больших чтений**
+```kotlin
+package com.example.jpa.json
 
-* Держите **транзакцию read-only** и используйте `Stream<T>`/`RowCallbackHandler` для курсорного чтения.
-* Настраивайте `fetchSize` (1000±) на уровне Hibernate/запроса/`JdbcTemplate`.
-* Помечайте запросы **read-only**, избегайте материализации в память, пишите сразу в поток/файл.
-* Дробите выгрузку на **чанки** по диапазонам ключей/времени, логируйте прогресс и ставьте таймауты.
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import jakarta.persistence.AttributeConverter
+import jakarta.persistence.Column
+import jakarta.persistence.Convert
+import jakarta.persistence.Converter
+import jakarta.persistence.Embeddable
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 
+@Entity
+@Table(name = "customer_profile")
+class CustomerProfile(
 
-# 9. DB-специфика и нестандартные типы
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
 
-*В этой подтеме сосредоточимся на том, чего нет «в учебниках по чистому JPA»: типы и приёмы, специфичные для СУБД (на примере PostgreSQL), и как их безопасно и эффективно использовать в Spring Data JPA. Покажу варианты на «чистом» JPA через `@Converter` и через специализированные типы Hibernate (hibernate-types), а также практики индексации и «виртуальных» таблиц.*
+    @Column(nullable = false, unique = true)
+    var email: String = "",
 
-**Зависимости (общие для примеров подтемы)**
+    @Convert(converter = PreferencesJsonConverter::class)
+    @Column(name = "preferences", columnDefinition = "jsonb")
+    var preferences: Preferences? = null
+)
 
-**Gradle (Groovy DSL)**
+@Embeddable
+data class Preferences(
+    var marketingAllowed: Boolean = false,
+    var theme: String = "light"
+)
+
+@Converter(autoApply = false)
+class PreferencesJsonConverter : AttributeConverter<Preferences?, String?> {
+
+    private val mapper = jacksonObjectMapper()
+
+    override fun convertToDatabaseColumn(attribute: Preferences?): String? =
+        attribute?.let { mapper.writeValueAsString(it) }
+
+    override fun convertToEntityAttribute(dbData: String?): Preferences? =
+        dbData?.let { mapper.readValue<Preferences>(it) }
+}
+```
+
+Подход с `@Converter` удобен, но имеет важное ограничение: Hibernate не знает, что внутри строки JSON. Для него это просто `VARCHAR/JSONB`. Значит, вы не сможете использовать JSON-поля в критериях, сортировках и join’ах через JPQL. В SQL, конечно, вы можете написать `where preferences->>'theme' = 'dark'`, и Postgres с этим справится, но ORM такой запрос как типобезопасный строить не умеет. Кроме того, если вы захотите использовать GIN-индексы по JSON-полям, вам придётся писать DDL руками и помнить о синтаксисе при каждом запросе.
+
+Когда вам нужно именно «понимающее» отношение к JSON/массивам/диапазонам, на сцену выходит либо Hibernate 6 с его `@JdbcTypeCode(SqlTypes.JSON)`, либо библиотека Hibernate Types (Vlad Mihalcea), которая добавляет готовые типы для Postgres `jsonb`, массивов, диапазонов, `hstore` и т.д. Вместо того чтобы писать свои конвертеры, вы аннотируете поле специальным `@Type`, выбираете нужный тип (`JsonType`, `StringArrayType`, `JsonBinaryType` и т.п.) и получаете поддержку сериализации «из коробки», плюс возможность использовать эти поля в нативных и частично в JPQL-запросах.
+
+Чтобы использовать Hibernate Types, достаточно добавить зависимость и указать правильный dialect. Пример для Gradle Groovy и Kotlin DSL: добавляем библиотеку и потом аннотируем поле `@Type(JsonType.class)` (для Hibernate 6 — вариант с `@JdbcTypeCode`). Этот подход особенно удобен, когда вы активно используете Postgres-спецтипов и не хотите плодить десятки кастомных конвертеров.
 
 ```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
+// build.gradle (Groovy DSL)
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-
-    // Hibernate Types для JSON/массивов/диапазонов/hstore (под Hibernate 6)
+    implementation 'org.postgresql:postgresql'
     implementation 'com.vladmihalcea:hibernate-types-60:2.21.1'
-
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
-java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
 ```
-
-**Gradle (Kotlin DSL)**
 
 ```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
+// build.gradle.kts (Kotlin DSL)
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
+    implementation("org.postgresql:postgresql")
     implementation("com.vladmihalcea:hibernate-types-60:2.21.1")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
-java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
 ```
-
----
-
-## JSON/JSONB, массивы, диапазоны, `hstore`: `@Converter` vs Hibernate Types; индексы (например, GIN для JSONB)
-
-PostgreSQL даёт богатую палитру «нестандартных» типов: `jsonb` для полуструктурированных данных, массивы (`text[]`, `int[]`), диапазоны (`int4range`, `tstzrange`) и ключ-значение (`hstore`). На уровне JPA их можно представить двумя путями. Первый — «чистый» JPA через `@Converter`, где мы сами превращаем объект в строку (или `PGobject`) и обратно. Второй — воспользоваться библиотекой **Hibernate Types**, в которой уже реализованы маппинги и диалектные оптимизации под Hibernate 6. Оба пути валидны: конвертер — полностью под вашим контролем, Hibernate Types — быстрее стартует и богаче по фичам.
-
-Начнём с **JSONB**. Если данные полуструктурированные и меняются, `jsonb` удобен: он бинарно нормализует JSON, умеет операторы `@>`, `?`, `#>>`, поддерживает индексы GIN. В JPA через `@Converter` вы можете хранить поле как `String` и сериализовать объект Jackson’ом, но теряете типовую безопасность и часть операторов в критериях. Hibernate Types позволяет объявить поле типа `JsonNode`/`Map<String,Object>` и работать с ним прямо как с объектом, а в запросах использовать native SQL с операторными индексами.
-
-**Массивы** в PG (`text[]`, `uuid[]`) пригодятся, если нужна компактная коллекция скаляров без отдельной таблицы связей. Они хорошо индексируются GIN/GiST, подходят для «тегов»/«ролей»/«флагов». В Hibernate Types есть `StringArrayType`/`UUIDArrayType`, что снимает боль ручного парсинга. Но не путайте массивы с отношениями: если элементы — сущности, лучше нормализовать.
-
-**Диапазоны** (`int4range`, `numrange`, `tstzrange`) позволяют в БД выразить интервальные ограничения: проверки пересечений, включения, соседства. Для расписаний и бронирований это мощный инструмент. Hibernate Types предоставляет тип `Range` и `PostgreSQLRangeType`, что позволяет сохранять/читать интервалы как Java-объекты и проверять пересечения на стороне SQL.
-
-`hstore` — лёгкий кей-вэлью тип. Он экономичнее JSONB для «плоских» словарей строк→строк, также индексируется GIN, но лишён вложенности/типов. Подойдёт для «слабоструктурированных» атрибутов, которые нужно быстро фильтровать/искать по ключам.
-
-Ключ к производительности всех этих типов — **индексы**. Для `jsonb` почти всегда нужен `GIN` (обычный или `jsonb_path_ops`) по колонке, иначе запросы по операторам превращаются во full scan. Для массивов — `GIN` по `col` или `col gin__int_ops`. Для диапазонов — `GiST` по колонке диапазона. Для `hstore` — `GIN`. Индексы следует проектировать под ваши операторы (`@>`/`?`/`&&`), иначе выгоды не будет.
-
-Если вы выбираете `@Converter`, выигрываете в зависимости (нет внешней библиотеки), но платите ручным кодом сериализации/десериализации и отсутствием «нативных» типов на уровне ORM. Если берёте Hibernate Types, получаете много готового, но «привязываетесь» к конкретной библиотеке. На практике гибрид: «простые» поля — конвертером, сложные/массовые — Hibernate Types.
-
-При проектировании схемы оцените частоту изменений поля: `jsonb` удобен, но **не злоупотребляйте** «схемой в поле». Поведенческие/ключевые атрибуты лучше вынести в колонки — это упростит индексацию, миграции и тесты. JSONB оставьте для «редких»/«дополнительных» свойств и логов.
-
-Тестируйте операторные запросы интеграционно. H2 не понимает JSONB/массивы/диапазоны, даже «в PG-режиме». Для этой зоны используйте **Testcontainers** с реальным Postgres и накатывайте полноценные миграции Flyway/Liquibase, включая индексы и расширения (`CREATE EXTENSION`).
-
-Не забывайте про **валидацию** JSON. Если поле — `jsonb`, убедитесь, что сериализация в `@Converter`/сервисе не пишет «битые» документы. Jackson прекрасно валидирует структуру при десериализации, так что декодируйте хотя бы в `JsonNode`, прежде чем записать.
-
-**SQL (Flyway) — таблица с jsonb/массивами/диапазоном/hstore + индексы**
-
-```sql
--- V10__complex_types.sql
-create extension if not exists hstore;
-
-create table products_ext (
-    id           bigserial primary key,
-    sku          text not null unique,
-    attrs        jsonb not null default '{}'::jsonb,  -- произвольные атрибуты
-    tags         text[] not null default '{}',        -- массив тегов
-    active_range tstzrange,                           -- период активности
-    meta         hstore                               -- плоский словарь
-);
-
-create index if not exists products_ext_attrs_gin on products_ext using gin (attrs jsonb_path_ops);
-create index if not exists products_ext_tags_gin  on products_ext using gin (tags);
-create index if not exists products_ext_range_gist on products_ext using gist (active_range);
-create index if not exists products_ext_meta_gin  on products_ext using gin (meta);
-```
-
-**Java — маппинг через Hibernate Types и альтернативно через `@Converter`**
 
 ```java
-package com.example.pgtypes;
+package com.example.jpa.json;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.vladmihalcea.hibernate.type.array.StringArrayType;
 import com.vladmihalcea.hibernate.type.json.JsonType;
-import com.vladmihalcea.hibernate.type.range.Range;
-import com.vladmihalcea.hibernate.type.range.PostgreSQLRangeType;
-import com.vladmihalcea.hibernate.type.basic.PostgreSQLHStoreType;
 import jakarta.persistence.*;
 import org.hibernate.annotations.Type;
-import org.hibernate.annotations.TypeDef;
-import org.hibernate.annotations.TypeDefs;
 
-import java.io.IOException;
-import java.time.Instant;
 import java.util.Map;
 
 @Entity
-@Table(name = "products_ext")
-@TypeDefs({
-    @TypeDef(name = "json", typeClass = JsonType.class),
-    @TypeDef(name = "string-array", typeClass = StringArrayType.class),
-    @TypeDef(name = "tsrange", typeClass = PostgreSQLRangeType.class),
-    @TypeDef(name = "hstore", typeClass = PostgreSQLHStoreType.class)
-})
-public class ProductExt {
+@Table(name = "audit_log")
+public class AuditLogEntry {
 
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id
+    @GeneratedValue
     private Long id;
 
-    @Column(nullable = false, unique = true) private String sku;
+    private String eventType;
 
-    // JSONB через Hibernate Types
-    @Type(type = "json")
-    @Column(columnDefinition = "jsonb", nullable = false)
-    private JsonNode attrs;
+    @Type(JsonType.class)
+    @Column(columnDefinition = "jsonb")
+    private Map<String, Object> details;
 
-    // Массив строк
-    @Type(type = "string-array")
-    @Column(columnDefinition = "text[]", nullable = false)
-    private String[] tags = new String[0];
-
-    // Диапазон времени
-    @Type(type = "tsrange")
-    @Column(name = "active_range", columnDefinition = "tstzrange")
-    private Range<Instant> activeRange;
-
-    // hstore как Map<String,String>
-    @Type(type = "hstore")
-    @Column(columnDefinition = "hstore")
-    private Map<String, String> meta;
-
-    protected ProductExt() {}
-    public ProductExt(String sku, JsonNode attrs) { this.sku = sku; this.attrs = attrs; }
-
-    // getters/setters ...
-}
-
-/** Альтернатива: JSONB через @Converter (String <-> JsonNode) */
-@Converter(autoApply = false)
-class JsonNodeConverter implements AttributeConverter<JsonNode, String> {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-    @Override public String convertToDatabaseColumn(JsonNode attribute) {
-        return attribute == null ? "{}" : attribute.toString();
-    }
-    @Override public JsonNode convertToEntityAttribute(String dbData) {
-        try { return dbData == null ? MAPPER.nullNode() : MAPPER.readTree(dbData); }
-        catch (IOException e) { throw new IllegalArgumentException("Bad JSON", e); }
-    }
-}
-
-@Entity
-@Table(name = "products_ext_conv")
-class ProductExtConv {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false, unique = true) String sku;
-
-    @Convert(converter = JsonNodeConverter.class)
-    @Column(columnDefinition = "jsonb", nullable = false)
-    JsonNode attrs;
-
-    protected ProductExtConv() {}
-    public ProductExtConv(String sku, JsonNode attrs){ this.sku = sku; this.attrs = attrs; }
+    // геттеры/сеттеры
 }
 ```
-
-**Kotlin — те же маппинги**
 
 ```kotlin
-package com.example.pgtypes
+package com.example.jpa.json
 
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.vladmihalcea.hibernate.type.array.StringArrayType
 import com.vladmihalcea.hibernate.type.json.JsonType
-import com.vladmihalcea.hibernate.type.range.PostgreSQLRangeType
-import com.vladmihalcea.hibernate.type.range.Range
-import com.vladmihalcea.hibernate.type.basic.PostgreSQLHStoreType
-import jakarta.persistence.*
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 import org.hibernate.annotations.Type
-import org.hibernate.annotations.TypeDef
-import org.hibernate.annotations.TypeDefs
-import java.time.Instant
 
 @Entity
-@Table(name = "products_ext")
-@TypeDefs(
-    TypeDef(name = "json", typeClass = JsonType::class),
-    TypeDef(name = "string-array", typeClass = StringArrayType::class),
-    TypeDef(name = "tsrange", typeClass = PostgreSQLRangeType::class),
-    TypeDef(name = "hstore", typeClass = PostgreSQLHStoreType::class)
-)
-class ProductExt(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "audit_log")
+class AuditLogEntry(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
 
-    @Column(nullable = false, unique = true)
-    var sku: String = "",
+    var eventType: String = "",
 
-    @Type(type = "json")
-    @Column(columnDefinition = "jsonb", nullable = false)
-    var attrs: JsonNode? = null,
-
-    @Type(type = "string-array")
-    @Column(columnDefinition = "text[]", nullable = false)
-    var tags: Array<String> = emptyArray(),
-
-    @Type(type = "tsrange")
-    @Column(name = "active_range", columnDefinition = "tstzrange")
-    var activeRange: Range<Instant>? = null,
-
-    @Type(type = "hstore")
-    @Column(columnDefinition = "hstore")
-    var meta: Map<String, String>? = null
-)
-
-@Converter(autoApply = false)
-class JsonNodeConverter : AttributeConverter<JsonNode, String> {
-    private val mapper = ObjectMapper()
-    override fun convertToDatabaseColumn(attribute: JsonNode?): String =
-        attribute?.toString() ?: "{}"
-
-    override fun convertToEntityAttribute(dbData: String?): JsonNode =
-        if (dbData == null) mapper.nullNode() else mapper.readTree(dbData)
-}
-
-@Entity
-@Table(name = "products_ext_conv")
-class ProductExtConv(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false, unique = true)
-    var sku: String = "",
-    @Convert(converter = JsonNodeConverter::class)
-    @Column(columnDefinition = "jsonb", nullable = false)
-    var attrs: JsonNode? = null
+    @Type(JsonType::class)
+    @Column(columnDefinition = "jsonb")
+    var details: MutableMap<String, Any>? = null
 )
 ```
 
-**Пример выборок с операторами (native) и проекциями**
-— это показывает, зачем нам индексы GIN/GiST и как извлекать значения из JSONB/`hstore`.
+Аналогичным образом можно работать с массивами и диапазонами. Например, массив тегов `text[]` можно промапить на `List<String>` через Hibernate Types (`StringArrayType`) или через собственный `@Converter`, который использует `Connection.createArrayOf`. Диапазоны `tsrange`/`numrange` можно отображать на собственный `Range<T>`-класс или использовать готовые типы из библиотеки. Главное помнить, что эти типы — специфичны для Postgres: если вы когда-нибудь захотите сменить СУБД, такие поля станут источником миграционных проблем.
 
-```java
-package com.example.pgtypes;
+Индексирование JSON/массивов — обязательная часть истории. Без индексов `where details->>'userId' = ?` или `where tags @> ARRAY['vip']` будут медленно сканировать таблицу целиком. Для `jsonb` и массивов в Postgres стандартная практика — GIN-индексы. Например, вы можете сделать индекс `create index on audit_log using gin (details jsonb_path_ops);` или `create index on product using gin (tags);`. Тогда операции `@>`, `?`, `@?` и прочие JSON/array-операторы будут работать значительно быстрее, особенно на больших объёмах.
 
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
+Пример DDL с GIN-индексами для jsonb и массива может выглядеть так: в одном случае вы индексируете весь JSON, в другом — только конкретное поле через выражение. Второй вариант помогает уменьшить размер индекса и чётко привязать его к конкретному бизнес-запросу. Выносить такие индексы в миграции (Liquibase/Flyway) — обязательно: их нельзя создавать «по ходу» через JPA-аннотации, и контроль версий схемы по-прежнему живёт на уровне SQL.
 
-import java.time.Instant;
-import java.util.List;
+```sql
+-- JSONB: общий GIN-индекс по всему документу
+CREATE INDEX IF NOT EXISTS idx_audit_log_details_gin
+    ON audit_log
+    USING gin (details jsonb_path_ops);
 
-public interface ProductRow {
-    String getSku();
-    String getBrand();
-    String[] getTags();
-    Instant getFrom(); Instant getTo();
-}
+-- JSONB: индекс по конкретному полю userId
+CREATE INDEX IF NOT EXISTS idx_audit_log_user_id
+    ON audit_log
+    USING gin ((details ->> 'userId'));
 
-@Repository
-interface ProductExtRepository extends JpaRepository<ProductExt, Long> {
-
-    // JSONB: фильтр по бренду в attrs {"brand":"..."} и по ключу в hstore meta
-    @Query(value = """
-        select p.sku as sku,
-               p.attrs->>'brand' as brand,
-               p.tags as tags,
-               lower(p.active_range) as from,
-               upper(p.active_range) as to
-        from products_ext p
-        where (p.attrs @> cast(:attrs as jsonb))
-          and (p.meta ? :metaKey)
-        order by p.sku
-        """,
-        countQuery = "select count(*) from products_ext p where (p.attrs @> cast(:attrs as jsonb)) and (p.meta ? :metaKey)",
-        nativeQuery = true)
-    Page<ProductRow> findByAttrsAndMeta(@Param("attrs") String attrsJson,
-                                        @Param("metaKey") String metaKey,
-                                        Pageable pageable);
-
-    // Диапазоны: пересечение интервалов NOW..NOW+7d
-    @Query(value = """
-        select p.* from products_ext p
-        where p.active_range && tstzrange(now(), now() + interval '7 days')
-        """, nativeQuery = true)
-    List<ProductExt> activeInNextWeek();
-}
+-- Массив тегов text[]
+CREATE INDEX IF NOT EXISTS idx_product_tags_gin
+    ON product
+    USING gin (tags);
 ```
+
+Тип `hstore` логически похож на `jsonb`, но ограничен картой строка→строка. Его удобно использовать для компактных динамических атрибутов (например, «параметры товара»), где типы значений не важны и нет вложенных структур. Маппинг через Hibernate Types (`HstoreType`) позволяет отобразить колонку `hstore` на `Map<String, String>` и дальше с ней работать как с обычной картой. Но и здесь действует общий принцип: чем более активно вы используете специфичные типы БД, тем сильнее вы привязаны к ней архитектурно — и это нужно признать как осознанное решение.
+
+В итоге практическая рекомендация такая: если JSON/массив нужен лишь для хранения протокольных данных и редко участвует в запросах — можно обойтись простым `@Converter` и строкой. Если вы активно фильтруете/индексируете такие поля, используете Postgres-операторы, — лучше взять Hibernate Types или `@JdbcTypeCode` и работать через vendor-specific типы. Всегда добавляйте индексы под реальные запросы, документируйте, что это именно Postgres-фича, и не пытайтесь спрятать эту специфику за мнимой «абстрактностью» JPA.
 
 ---
 
 ## Денежные/точные типы: `BigDecimal` + scale/rounding; контроль сериализации в JSON
 
-Деньги — зона, где «плавающая точка» недопустима. В Java мы используем `BigDecimal` с фиксированной **масштабностью** (`scale`) и явным **округлением**. В Postgres — тип `numeric(precision, scale)` или, альтернативно, хранение суммы в **центах** как `bigint`. Первый вариант удобен для ад-хок SQL/агрегаций, второй — максимально быстрый и безошибочный при арифметике в приложении.
+Денежные значения и вообще любые «точные» числа — отдельная боль. Использовать `double` или `float` для денег категорически нельзя: двоичная плавающая точка не может точно представить десятичные дроби вроде 0.1, и со временем вы получаете накопление ошибок, «копейки из ниоткуда» и разъезды между суммами в БД и суммами в API. Правильный тип на стороне Java/Kotlin — `BigDecimal`, а на стороне Postgres — `numeric(p, s)` (или, в редких случаях, встроенный `money`, но он менее универсален).
 
-Если выбираете `numeric`, в JPA укажите `precision/scale` в `@Column`, а все операции производите через `BigDecimal` с контролируемым `RoundingMode`. Запрещено полагаться на дефолтное округление: оно может отличаться и породить копеечные рассогласования. Общая рекомендация: фиксируйте масштаб как **2** или **4** (валюта/измерения) и используйте `RoundingMode.HALF_UP` (или бизнес-правило).
+Первый шаг — правильное DDL. Для суммы денег в типичной банковской задаче часто используют `numeric(19, 4)` или похожую пару precision/scale. Precision — это общее количество цифр, scale — количество знаков после запятой. Например, `numeric(19,4)` позволяет хранить числа до ±999 999 999 999 9.9999. Выбирая precision, вы должны понимать максимальные реальные суммы в предметной области; scale зависит от требований: для RUB/EUR часто достаточно 2, но иногда выгоднее хранить 4 знака для внутренних расчётов и в UI показывать 2.
 
-Для сериализации в JSON важны два момента. Во-первых, не допускать **научной нотации** («1E+6»): включите `WRITE_BIGDECIMAL_AS_PLAIN` или используйте кастомный сериализатор, который форматирует число как строку. Во-вторых, избежать потери нулей масштаба при сериализации («10.00» vs «10»): задайте шаблон или свой сериализатор. Если вы храните суммы в **центах**, сериализуйте наружу как «деньги.две_десятичные» — и обратно в сущность принимайте строго две цифры.
-
-Альтернативный паттерн — **value object Money** с валютой и суммой. Его можно хранить как `numeric(19,4)` (или `bigint` центов) через `@Embeddable` и `@AttributeOverrides`. Это упрощает инварианты: конструктор `Money` валидирует знак, масштаб и округление, а сервисам отдаёт готовые методы `add/subtract/multiply`.
-
-В расчётах помните о **накоплении ошибок**: умножения/деления сначала выполняйте с «высоким» масштабом (например, 8), а результат **нормализуйте** к нужному масштабу в конце. Это снизит риск копеечной разницы на «длинных» формулах. В отчётах используйте SQL-агрегации по `numeric`, но финальный формат округляйте в приложении.
-
-Если ваш фронт принимает суммы строками, валидируйте локаль: десятичный разделитель — точка, не запятая. На уровне DTO используйте `@Pattern` для формата и `@JsonCreator` для явного парсинга. Никогда не доверяйте «свободной строке» — это проблемы в проде и инциденты.
-
-Для выгоды производительности и упрощения индексации многие команды выбирают **cents as BIGINT**. Тогда в БД на колонку «центов» ставятся обычные BTREE-индексы, а в приложении — тип `long`. Внешние API всё равно оперируют «денежными строками/BigDecimal» — а внутренняя запись выполняется без потерь и регрессов.
-
-Тестируйте деньги особенно строго: «золотые» кейсы на добавление/умножение/распределение, и сравнение сериализованных значений. В CI держите тесты, что `10.00` не превращается в `10` и не выводится «1E+1».
-
-**application.yml — контроль сериализации BigDecimal в Jackson**
-
-```yaml
-spring:
-  jackson:
-    serialization:
-      write-bigdecimal-as-plain: true
-```
-
-**Java — два подхода: `numeric(19,4)` и «центы как BIGINT», плюс сериализация**
+В JPA вы должны явно указать `precision` и `scale` в `@Column`, чтобы Hibernate корректно создавал столбец (если он генерирует схему) и правильно работал с типом. Если вы этого не сделаете, драйвер может создать `numeric` без явных ограничений, и поведение при вставке/обновлении будет менее предсказуемым. Кроме того, аннотация служит документацией: любой, кто читает entity, сразу видит, с какой точностью хранится поле.
 
 ```java
-package com.example.money;
+package com.example.jpa.money;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.SerializerProvider;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
-import com.fasterxml.jackson.databind.ser.std.StdScalarSerializer;
 import jakarta.persistence.*;
-import jakarta.validation.constraints.NotNull;
-import java.io.IOException;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.time.Instant;
 
 @Entity
-@Table(name = "invoices_money")
-class InvoiceMoney {
+@Table(name = "payment")
+public class Payment {
 
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
+    @Id
+    @GeneratedValue
+    private Long id;
 
-    @Column(name = "amount", nullable = false, precision = 19, scale = 4)
-    BigDecimal amount; // numeric(19,4)
+    @Column(name = "amount", precision = 19, scale = 4, nullable = false)
+    private BigDecimal amount;
 
-    @Column(nullable = false)
-    Instant createdAt = Instant.now();
+    @Column(name = "currency", length = 3, nullable = false)
+    private String currency;
 
-    protected InvoiceMoney() {}
-    public InvoiceMoney(BigDecimal amount) {
-        this.amount = normalize(amount);
-    }
-
-    public static BigDecimal normalize(BigDecimal src) {
-        if (src == null) throw new IllegalArgumentException("amount");
-        return src.setScale(4, RoundingMode.HALF_UP);
-    }
-}
-
-@Entity
-@Table(name = "invoices_cents")
-class InvoiceCents {
-
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-
-    @Column(name = "amount_cents", nullable = false)
-    Long amountCents; // BIGINT cents
-
-    @Column(nullable = false)
-    Instant createdAt = Instant.now();
-
-    protected InvoiceCents() {}
-    public InvoiceCents(long cents){ this.amountCents = cents; }
-}
-
-/** Value Object для API: деньги с сериализацией как строка фиксированного масштаба */
-class MoneyVO {
-    @NotNull
-    private final BigDecimal amount;
-
-    public MoneyVO(BigDecimal amount) {
-        this.amount = InvoiceMoney.normalize(amount);
-    }
-    @JsonSerialize(using = MoneySerializer.class)
-    public BigDecimal getAmount() { return amount; }
-}
-
-class MoneySerializer extends StdScalarSerializer<BigDecimal> {
-    protected MoneySerializer() { super(BigDecimal.class); }
-    @Override
-    public void serialize(BigDecimal value, JsonGenerator gen, SerializerProvider provider) throws IOException {
-        gen.writeString(value.setScale(2, RoundingMode.HALF_UP).toPlainString());
-    }
+    // геттеры/сеттеры
 }
 ```
-
-**Kotlin — аналогичные сущности и сериализация**
 
 ```kotlin
-package com.example.money
+package com.example.jpa.money
 
-import com.fasterxml.jackson.core.JsonGenerator
-import com.fasterxml.jackson.databind.SerializerProvider
-import com.fasterxml.jackson.databind.annotation.JsonSerialize
-import com.fasterxml.jackson.databind.ser.std.StdScalarSerializer
-import jakarta.persistence.*
-import jakarta.validation.constraints.NotNull
-import java.io.IOException
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 import java.math.BigDecimal
-import java.math.RoundingMode
-import java.time.Instant
 
 @Entity
-@Table(name = "invoices_money")
-class InvoiceMoney(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "payment")
+class Payment(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
 
-    @Column(name = "amount", nullable = false, precision = 19, scale = 4)
+    @Column(name = "amount", precision = 19, scale = 4, nullable = false)
     var amount: BigDecimal = BigDecimal.ZERO,
 
-    @Column(nullable = false)
-    var createdAt: Instant = Instant.now()
-) {
-    init { amount = amount.setScale(4, RoundingMode.HALF_UP) }
-}
-
-@Entity
-@Table(name = "invoices_cents")
-class InvoiceCents(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-
-    @Column(name = "amount_cents", nullable = false)
-    var amountCents: Long = 0L,
-
-    @Column(nullable = false)
-    var createdAt: Instant = Instant.now()
+    @Column(name = "currency", length = 3, nullable = false)
+    var currency: String = "RUB"
 )
-
-class MoneyVO(@field:NotNull private val amount: BigDecimal) {
-    @JsonSerialize(using = MoneySerializer::class)
-    fun getAmount(): BigDecimal = amount.setScale(4, RoundingMode.HALF_UP)
-}
-
-class MoneySerializer : StdScalarSerializer<BigDecimal>(BigDecimal::class.java) {
-    override fun serialize(value: BigDecimal, gen: JsonGenerator, provider: SerializerProvider) {
-        gen.writeString(value.setScale(2, RoundingMode.HALF_UP).toPlainString())
-    }
-}
 ```
 
-**SQL (Flyway) — варианты хранения денег**
+Следующий момент — стратегия округления. `BigDecimal` сам по себе не навязывает scale; вы можете получить значения с разным количеством знаков после запятой. Важно выработать соглашение: все суммы внутри системы нормализуем до фиксированного scale (например, 2 или 4 знака) и выбранного `RoundingMode`. Чаще всего используют `RoundingMode.HALF_UP` или `HALF_EVEN`, но выбор зависит от требований регулятора и доменных правил. Критично, чтобы одно и то же действие в разных местах кода округлялось одинаково.
 
-```sql
--- V11__money.sql
-create table invoices_money (
-    id bigserial primary key,
-    amount numeric(19,4) not null,
-    created_at timestamptz not null default now()
-);
+Хорошая практика — инкапсулировать округление в одном месте: либо в value object «Money», либо в сервисе, который отвечает за расчёты. В этом случае вместо того, чтобы по всему коду писать `amount.setScale(2, RoundingMode.HALF_UP)`, вы вызываете один метод, а логику легко менять централизованно. Дополнительно можно на уровне БД повесить `CHECK`-ограничения, например что число знаков после запятой не превышает заданный scale. В Postgres это делается автоматически через тип `numeric(19,4)`, но для более замысловатых случаев можно написать явный `CHECK`.
 
-create table invoices_cents (
-    id bigserial primary key,
-    amount_cents bigint not null,
-    created_at timestamptz not null default now()
-);
-create index on invoices_cents (amount_cents);
-```
+Тонкий момент — сериализация денег в JSON. Если вы используете Jackson, то по умолчанию `BigDecimal` сериализуется в числовой литерал, что удобно, но может вызывать проблемы на стороне JavaScript-клиентов: JS по факту оперирует `Number` (двойная точность), и очень большие числа/очень точные дроби будут искажаться. В ряде систем на клиент выводят суммы как строки (`"123.45"`) и уже в UI приводят их к нужному виду. В этом случае Jackson можно настроить через модули или кастомный сериализатор.
+
+К тому же при парсинге JSON Jackson может по умолчанию превращать числа в `Double`, если вы не явно указали тип `BigDecimal` в DTO. Хорошая практика — в DTO/record’ах иметь поля типа `BigDecimal` и включать опцию `DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS`, чтобы все числа, которые должны быть точными, приходили без промежуточного `Double`. Это уменьшает риск накопления ошибок в цепочке «клиент → API → БД».
+
+Немаловажен и вопрос валюты. Самый простой вариант — хранить сумму и трёхбуквенный код ISO (RUB, USD, EUR). Для более строгих доменов используют специализированные библиотеки (Joda-Money и др.), которые инкапсулируют не только число, но и операции с учётом currency. В JPA это можно маппить либо как `@Embeddable` (колонки `amount` и `currency`), либо через `@Converter`, который превращает объект Money в парочку примитивов. Главное — не разрывать сумму и валюту, храня их в разных местах, иначе вы легко получите несогласованные данные.
+
+Ещё один слой защиты — ограничения на уровне БД: отрицательные суммы там, где их быть не должно; минимальные/максимальные лимиты; запрет на «лишние» дробные части. В Postgres это делается через простые `check (amount >= 0)` или более сложные выражения. Они не заменяют бизнес-валидацию в коде, но создают дополнительный барьер, который не позволит случайному багу записать явно неправильные деньги.
+
+Наконец, важно помнить про агрегацию и отчёты. Если вы суммируете миллионы строк с `numeric`, производительность может страдать. Иногда в таких сценариях создают отдельные агрегатные таблицы, где хранят предварительно посчитанные суммы по интервалам, а затем обновляют их батчами или через триггеры. Но даже в этом случае ядром хранения остаётся `numeric + BigDecimal`: выбор «приблизительных» типов для денег почти всегда оборачивается большими проблемами позже, чем экономией сегодня.
 
 ---
 
 ## Частичные/функциональные индексы, `UNIQUE` под soft-delete, «виртуальные» столбцы/представления (`@Immutable`, `@Subselect`)
 
-Частичные индексы — мощная фича PostgreSQL: индекс строится **по условию**, а не по всей таблице. Это идеальный инструмент для **soft-delete** и «активных» записей. Например, уникальность email только среди «живых» пользователей: `unique (lower(email)) where deleted_at is null`. Такой индекс меньше по размеру и не мешает создавать «дубликаты» среди удалённых записей.
+Даже если ваша модель на уровне JPA выглядит аккуратно, настоящая мощь производительности обычно прячется в индексах. Обычные B-tree индексы по колонкам, которые вы фильтруете в `where`, — это база. Но в реальном мире вы начинаете использовать частичные индексы (только для подмножества строк), функциональные индексы (по выражениям), специальные `UNIQUE`-индексы для soft-delete и даже «виртуальные» сущности поверх представлений. Всё это JPA не генерирует сама, но прекрасно с этим работает, если вы грамотно напишете миграции.
 
-Функциональные индексы позволяют индексировать результат функции: `lower(email)`, `coalesce(phone,'')`, выражения из JSONB (`(attrs->>'brand')`). Это снимает потребность в «служебных» колонках для сортировки/поиска без учёта регистра и ускоряет фильтры в `where`.
+Частичный индекс — это индекс, который покрывает только строки, удовлетворяющие условию, например `where deleted_at is null`. Это удобно, когда у вас есть soft-delete: в таблице куча «мёртвых» записей, но 99% запросов работают только с активными. Вместо одного большого индекса по всей таблице вы создаёте компактный индекс по активной части. JPA про это ничего не знает — вы по-прежнему пишете `where deletedAt is null` в JPQL — но Postgres использует нужный индекс и экономит и время, и диск.
 
-Под soft-delete на уровне ORM удобно использовать `@SQLDelete` (перехватывает `DELETE` и делает `UPDATE ... set deleted_at=now()`) и `@Where(clause = "deleted_at is null")` — чтобы все чтения по умолчанию скрывали удалённые записи. Но тогда уникальные ограничения через обычный `unique` не подойдут — нужен именно **частичный уникальный индекс**.
-
-«Виртуальные» табличные представления через Hibernate — это `@Subselect`: сущность маппится не на таблицу, а на подзапрос/представление. Сочетайте с `@Immutable` (Hibernate) и, при необходимости, `@Synchronize` (список таблиц, от которых зависит подзапрос). Это удобный способ «собрать» материализованный отчетный вид без отдельного ETL, но помнить нужно: запись через такую сущность **нельзя** выполнять (только чтение).
-
-Для стабильной работы `@Subselect` важно, чтобы подзапрос возвращал **уникальный первичный ключ**. Часто это агрегированные данные с `row_number()` или «готовый id» из базовой таблицы. Добавляйте индексы на опорные таблицы — `@Subselect` не делает SQL быстрее, он лишь меняет точку входа.
-
-Частичные индексы и `@Where` требуют внимательности на миграциях. Если вы меняете условие «живости» (`deleted_at is null` → `deleted=false`), синхронизируйте и аннотации, и индексы. Иначе оптимизатор перестанет использовать индекс и производительность просядет.
-
-В запросах учитывайте, что `@Where` автоматически дописывается к JPQL/Criteria. Если вам **нужно** прочитать удалённые, пишите **native** и указывайте условие сами или заводите отдельный репозиторий/метод без `@Where` (на отдельной сущности-проекции).
-
-Функциональные индексы удобны и с JSONB: часто обращаемые атрибуты (например, `attrs->>'brand'`) можно вынести в функциональный индекс, не дублируя колонку. Но помните: такие индексы «ломаются» при смене ключа/структуры JSON — это технический долг, который надо осознанно обслуживать.
-
-`@Immutable` на отчётных сущностях защищает от случайных модификаций в коде и уменьшает накладные расходы ORM, исключая dirty checking. Для стабильных представлений это бесплатная надёжность.
-
-И, наконец, проверяйте планы (`explain analyze`) под частичные/функциональные индексы. Оптимизатор использует их, только если условие и функция **эквивалентны** объявлению индекса (например, `where lower(email)=?` — идеально; `where email ilike ?` — может уже понадобиться другой индекс или выражение).
-
-**SQL (Flyway) — soft-delete, частичный UNIQUE, функциональные индексы и представление**
+Пример миграции для частичного индекса под активных клиентов: вы создаёте обычный столбец `deleted_at` для soft-delete, а затем определяете индекс `create index ... where deleted_at is null;`. При выборках `where deleted_at is null and email = ?` СУБД пойдёт именно по этому индексу. В Liquibase/Flyway такой DDL складывают в версионируемые скрипты; JPA-аннотации вроде `@Index` для такого кейса не подходят, потому что не умеют выражать `where`-условия.
 
 ```sql
--- V12__indexes_and_views.sql
-create table users_soft (
-    id bigserial primary key,
-    email text not null,
-    name text not null,
-    deleted_at timestamptz
-);
-
--- Уникальность только среди «живых» (email сравниваем без регистра)
-create unique index ux_users_soft_email_alive
-    on users_soft (lower(email))
-    where deleted_at is null;
-
--- Функциональный индекс по JSONB-ключу brand в products_ext.attrs
-create index if not exists products_ext_brand_idx
-    on products_ext ((attrs->>'brand'));
-
--- Виртуальный отчёт: суммы по sku, только активные
-create or replace view v_sku_totals as
-select p.sku,
-       count(*) as cnt,
-       sum( (p.attrs->>'price_cents')::bigint ) as total_cents
-from products_ext p
-where p.active_range @> now()
-group by p.sku;
+-- soft-delete: только живые клиенты
+CREATE INDEX IF NOT EXISTS idx_customer_email_active
+    ON customer (email)
+    WHERE deleted_at IS NULL;
 ```
 
-**Java — soft-delete через `@SQLDelete/@Where` и чтение `@Subselect`-представления**
+Функциональные индексы позволяют индексировать выражения: `lower(email)`, `coalesce(phone, '')`, `substring(code, 1, 3)` и т.д. Это особенно полезно для case-insensitive поисков: вместо того чтобы каждый раз делать `where lower(email) = lower(:email)`, вы можете в БД создать индекс `create index ... on customer (lower(email));` и в запросах использовать ровно такое же выражение. Здесь важен инвариант: выражение в SQL-запросе должно совпадать с выражением в индексе, иначе оптимизатор не сможет его использовать.
+
+Soft-delete сам по себе часто требует нестандартного `UNIQUE`. Если вы просто добавите колонку `deleted_at` и оставите старый уникальный индекс по `email`, то удаление (установка `deleted_at`) не освободит место для новой записи с тем же `email`: БД по-прежнему видит две строки с одинаковым значением в уникальном индексе, только одна из них «помечена». Правильный паттерн — создать частичный уникальный индекс только по живым записям: `create unique index ... on customer(email) where deleted_at is null;`. Тогда вы сможете создавать новые записи после soft-delete старых, не ломая уникальность среди активных.
+
+Пример миграции для такого уникального индекса: вы удаляете старый `unique constraint`, если он был, и создаёте новый partial unique index. Затем JPA продолжает думать, что `email` просто `unique`, но на уровне схемы вы фактически говорите: «у активного клиента email уникален, у удалённых может дублироваться». Это отлично сочетается с глобальными фильтрами (`@Where` или Hibernate Filter), которые скрывают soft-deleted записи от большинства запросов.
+
+```sql
+-- уникальность e-mail только среди не удалённых
+CREATE UNIQUE INDEX IF NOT EXISTS uk_customer_email_active
+    ON customer(email)
+    WHERE deleted_at IS NULL;
+```
+
+«Виртуальные» столбцы и представления — ещё один мощный инструмент. Иногда у вас есть сложный SQL (join нескольких таблиц, агрегаты, CASE-выражения), который вы хотите использовать в разных местах. Вместо того чтобы лепить его в каждый JPQL/SQL, можно создать представление (`CREATE VIEW`), а в Hibernate промаппить его на read-only сущность через `@Subselect`. Такая сущность не соответствует реальной таблице, но выглядит для ORM как обычный entity, который можно читать (но не писать). Это удобно для отчётных форм, витрин, аналитических таблиц.
+
+Hibernate для этого предоставляет аннотации `@Subselect` и `@Immutable`. Первая говорит: «эта сущность читается из такого-то SQL», вторая — «её нельзя изменять через ORM». Дополнительно можно указать `@Synchronize`, чтобы Hibernate понимал, какие реальные таблицы влияют на это представление. Тогда при flush и некоторых видах кэша он сможет лучше понимать, когда данные потенциально устарели. Важно дать сущности натуральный первичный ключ (либо взять из представления, либо сгенерировать), иначе ORM не сможет корректно трекать экземпляры.
 
 ```java
-package com.example.indexes;
+package com.example.jpa.view;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import org.hibernate.annotations.Immutable;
-import org.hibernate.annotations.SQLDelete;
-import org.hibernate.annotations.Where;
-
-@Entity
-@Table(name = "users_soft")
-@SQLDelete(sql = "update users_soft set deleted_at = now() where id = ?")
-@Where(clause = "deleted_at is null")
-public class UserSoft {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-
-    @Column(nullable = false) String email;
-    @Column(nullable = false) String name;
-
-    protected UserSoft() {}
-    public UserSoft(String email, String name){ this.email=email; this.name=name; }
-}
+import org.hibernate.annotations.Subselect;
+import org.hibernate.annotations.Synchronize;
 
 @Entity
 @Immutable
-@org.hibernate.annotations.Subselect("""
-    select row_number() over ()::bigint as id, v.sku, v.cnt, v.total_cents
-    from v_sku_totals v
-""")
-@org.hibernate.annotations.Synchronize({"products_ext"})
-class SkuTotalsView {
-    @Id Long id; // искусственный PK на основе row_number() — только чтение
-    String sku;
-    Long cnt;
-    Long totalCents;
-}
+@Subselect("""
+    select
+        o.id as id,
+        c.email as customer_email,
+        o.amount as amount,
+        o.created_at as created_at
+    from orders o
+    join customer c on c.id = o.customer_id
+    where o.status = 'COMPLETED'
+    """)
+@Synchronize({"orders", "customer"})
+@Table(name = "order_report_view")
+public class OrderReportView {
 
-interface UserSoftRepository extends org.springframework.data.jpa.repository.JpaRepository<UserSoft, Long> {
-    // Поиск «живых» пользователей — @Where добавится автоматически
-    java.util.Optional<UserSoft> findByEmailIgnoreCase(String email);
-}
+    @Id
+    private Long id;
 
-interface SkuTotalsRepository extends org.springframework.data.jpa.repository.JpaRepository<SkuTotalsView, Long> {
-    java.util.List<SkuTotalsView> findTop10ByOrderByTotalCentsDesc();
+    private String customerEmail;
+
+    private Long amount;
+
+    private java.time.Instant createdAt;
+
+    // только геттеры
 }
 ```
-
-**Kotlin — те же приёмы**
 
 ```kotlin
-package com.example.indexes
+package com.example.jpa.view
 
-import jakarta.persistence.*
+import jakarta.persistence.Entity
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 import org.hibernate.annotations.Immutable
-import org.hibernate.annotations.SQLDelete
-import org.hibernate.annotations.Where
-
-@Entity
-@Table(name = "users_soft")
-@SQLDelete(sql = "update users_soft set deleted_at = now() where id = ?")
-@Where(clause = "deleted_at is null")
-class UserSoft(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var email: String = "",
-    @Column(nullable = false) var name: String = ""
-)
+import org.hibernate.annotations.Subselect
+import org.hibernate.annotations.Synchronize
+import java.time.Instant
 
 @Entity
 @Immutable
-@org.hibernate.annotations.Subselect(
+@Subselect(
     """
-    select row_number() over ()::bigint as id, v.sku, v.cnt, v.total_cents
-    from v_sku_totals v
+    select
+        o.id as id,
+        c.email as customer_email,
+        o.amount as amount,
+        o.created_at as created_at
+    from orders o
+    join customer c on c.id = o.customer_id
+    where o.status = 'COMPLETED'
     """
 )
-@org.hibernate.annotations.Synchronize("products_ext")
-class SkuTotalsView(
-    @Id var id: Long? = null,
-    var sku: String? = null,
-    var cnt: Long? = null,
-    var totalCents: Long? = null
+@Synchronize("orders", "customer")
+@Table(name = "order_report_view")
+class OrderReportView(
+
+    @Id
+    val id: Long? = null,
+
+    val customerEmail: String? = null,
+
+    val amount: Long? = null,
+
+    val createdAt: Instant? = null
 )
-
-interface UserSoftRepository : org.springframework.data.jpa.repository.JpaRepository<UserSoft, Long> {
-    fun findByEmailIgnoreCase(email: String): java.util.Optional<UserSoft>
-}
-
-interface SkuTotalsRepository : org.springframework.data.jpa.repository.JpaRepository<SkuTotalsView, Long> {
-    fun findTop10ByOrderByTotalCentsDesc(): List<SkuTotalsView>
-}
 ```
 
-**Советы эксплуатации и тестирования (короткое резюме)**
-Держите миграции с расширениями/индексами рядом с маппингами; покрывайте интеграционными тестами (Testcontainers) операторы и индексы; не злоупотребляйте JSONB — выносите «горячие» поля в колонки; для денег фиксируйте масштаб/округление и формат JSON; для soft-delete используйте частичный UNIQUE и не забывайте, что `@Where` скрывает записи — отдельные методы читайте native, если нужно «видеть всё».
+Такие сущности отлично подходят под read-only сценарии: отчёты, панели мониторинга, выгрузки в BI. Вы можете использовать их в Spring Data репозиториях, делать пагинацию, сортировку и даже простые фильтры, при этом всю реальную «магическую» SQL спрятать в представлении. Единственное — нужно дисциплинированно поддерживать миграции: любые изменения в схемах таблиц, от которых зависит view, должны сопровождаться изменением определения представления и, возможно, сущности.
+
+Функциональные индексы и представления иногда комбинируют. Например, если у вас есть представление со сложным выражением `coalesce(phone, email)` для колонки «контакт», к которому часто обращаются, можно построить индекс по этому выражению в основной таблице и использовать его в view. Но это уже довольно продвинутая оптимизация — важно не увлечься и не превратить схему в лабиринт взаимозависимых представлений и индексов, который никто не может поддерживать.
+
+Итог: JPA сама по себе ничего не знает про частичные и функциональные индексы, soft-delete-инварианты и представления. Это зона ответственности схемы БД и миграций. Но при правильном дизайне вы легко совмещаете «чистую» доменную модель на уровне ORM с «умной» схемой Postgres: обеспечиваете уникальность только для нужных строк, ускоряете самые частые запросы и строите отчётные сущности поверх представлений. Главное — держать это под контролем: все такие решения должны быть задокументированы, покрыты тестами и понятны команде, а не быть «магией, которая где-то в миграциях».
+
 
 # 10. Аудит и «мягкое удаление»
 
+Аудит и мягкое удаление — это про то, чтобы не терять данные и уметь ответить на вопрос «кто, когда и что сделал», а также «почему в таблице нет этой записи». Простое `DELETE FROM table` удобно с точки зрения кода, но в продакшене почти всегда оказывается слишком радикальным: бизнесу нужны следы операций, регуляторы требуют истории, а разработчикам нужны данные для расследований инцидентов и отладки. Поэтому вокруг Spring Data JPA и Hibernate сложился набор типовых практик: аудиторные поля, soft-delete и схемы хранения истории изменений.
+
+Если смотреть на задачу сверху, то есть несколько уровней. На самом базовом — «кто создал / когда создал / кто изменил / когда изменил». Это решается стандартным механизмом Spring Data Auditing: аннотации `@CreatedDate`, `@LastModifiedDate`, `@CreatedBy`, `@LastModifiedBy` и слушатель `AuditingEntityListener`. Следующий уровень — soft-delete: вместо удаления строки вы ставите флаг или дату удаления и скрываете такие записи фильтрами. И третий уровень — полноценная история изменений: версии записей или отдельные аудит-таблицы, куда для каждой операции пишется старое/новое состояние.
+
+Важный момент: эти уровни не взаимоисключающие. Почти всегда вы комбинируете все три подхода. Сущности имеют аудиторные поля, сами записи мягко удаляются, а операции поверх критичных таблиц пишутся в отдельный лог или версионируются. В итоге архитектура persistence-слоя становится чуть сложнее, но взамен вы получаете объяснимое поведение: всегда можно понять, почему данные выглядят так, а не иначе.
+
+Нельзя забывать и про цену вопроса. Аудит и soft-delete увеличивают размер таблиц, утяжеляют индексы и влияют на планы запросов. История изменений и отдельные аудит-таблицы удваивают или утраивают объём хранимых данных. Поэтому эти механизмы нужно проектировать сознательно: чётко понимать, что именно вам нужно хранить, сколько времени и с какой точностью. «Всё и навсегда» почти всегда приводит к проблемам с производительностью и обслуживанием.
+
+Ниже разберём три аспекта: как реализовать базовый аудит через `AuditingEntityListener`, как корректно делать soft-delete в связке с JPA/Hibernate, и какие есть варианты построения истории изменений — от версионирования записей до отдельного аудит-лога.
+
+---
+
 ## Auditing: `@CreatedDate/@LastModifiedDate`, `AuditingEntityListener`, пользователи/тенанты
 
-Аудит — это системный слой, который фиксирует «кто и когда» создал/изменил запись. Он не про бизнес-логику как таковую, а про трассируемость и соответствие организационным требованиям. В Spring Data JPA аудит реализуется почти «из коробки» через аннотации `@CreatedDate`, `@LastModifiedDate`, а также `@CreatedBy` и `@LastModifiedBy`. Эти поля заполняются инфраструктурой автоматически, но для этого нам нужно включить аудит и предоставить **источники текущего пользователя и (если нужно) текущего тенанта**.
+Spring Data JPA предлагает готовый механизм для автоматического заполнения полей «кто и когда создал / изменил запись». Это Spring Data Auditing. Он работает довольно просто: вы включаете `@EnableJpaAuditing`, регистрируете бин `AuditorAware<T>`, который умеет сказать, кто сейчас «текущий пользователь», и помечаете поля сущностей аннотациями `@CreatedDate`, `@LastModifiedDate`, `@CreatedBy`, `@LastModifiedBy`. Дальше, при `persist`/`merge`, слушатель `AuditingEntityListener` сам проставит значения.
 
-Ключевая деталь: аннотации сами по себе ничего не сделают без слушателя жизненного цикла `AuditingEntityListener`. Он подписывается на `@PrePersist` и `@PreUpdate` и перед коммитом расставляет метки времени и пользователей. Spring включает этот слушатель через `@EnableJpaAuditing`; под капотом регистрируется `AuditingHandler`, который использует `AuditorAware<T>` — наш боб, возвращающий «кто сейчас действует». Тип `T` — ваш выбор: имя пользователя (`String`), id (`Long`) или доменный объект.
+Первое, о чём нужно подумать, — формат времени. Если вы храните даты/время, почти всегда имеет смысл использовать UTC и тип `Instant` или `OffsetDateTime`. Локальное время (`LocalDateTime`) удобно в UI, но в БД и домене лучше хранить однозначные значения без привязки к смене часового пояса и переходам на летнее время. Spring Data Auditing нормально работает с `Instant`, нужно лишь убедиться, что вы настроили конвертеры JPA для маппинга в `timestamp with time zone` или аналогичный тип.
 
-Источником «кто» часто выступает `SecurityContextHolder`. Но в микросервисах не всегда используется Spring Security; иногда контекст приходит в заголовках (например, `X-User-Id`, `X-Tenant-Id`) и складывается в ThreadLocal. Важно, чтобы `AuditorAware` был **детерминированным**: для фоновых задач и миграций возвращайте «system»/`0`, чтобы отличать машинные операции от пользовательских.
+Второй вопрос — откуда брать пользователя. В типичном Spring Security-приложении вы вытаскиваете `Authentication` из `SecurityContext` и берёте имя пользователя или его id. Но нужно помнить, что аудит должен работать не только в HTTP-запросах, но и в фоновых задачах, batch-джобах, миграциях. Поэтому интерфейс `AuditorAware` удобно делать универсальным: в веб-контексте он смотрит в `SecurityContext`, в фоновых задачах — может отдавать системного пользователя вроде `"system"` или `null`, а в тестах — фиксированное значение или заглушку.
 
-Тенант — это «логическая организация» данных: в многотенантных системах мы храним `tenantId` в каждой строке. Аудит и тенант переплетены: одни компании хотят видеть «кто из их пользователей» изменил запись, другие — только сервисные аккаунты. Хорошая практика — хранить оба: `createdBy`, `lastModifiedBy`, `tenantId`. Причём `tenantId` — это **часть инварианта**: он должен выставляться всегда и не меняться. Для него не используются `@CreatedBy`, а обычная колонка + код на входе транзакции (фильтр, интерцептор).
+Ещё один уровень усложнения — мультитенантность. Часто аудиторная информация включает не только пользователя, но и tenant-id: условный идентификатор клиента, на чьи данные сейчас идёт операция. Вы можете добавить отдельное поле `tenantId` в базовый класс сущностей и заполнять его в том же `AuditorAware` или в отдельном фильтре/слушателе. Важно, чтобы источник tenant-id был чётко определён (например, заголовок HTTP, параметр подключения, переменная контекста) и одинаково работал для всех типов загрузки (HTTP, очереди, фоновые задачи).
 
-Бонус аудита — **обратимость**: мы можем быстро разобраться, почему запись в таком состоянии. Когда инцидент уже случился, поля аудита сужают круг поиска (какой сервис, чья авторизация, из какой зоны). Это особенно важно в распределённых системах, где одно изменение может пройти через несколько слоёв.
+С точки зрения схемы данных удобно завести базовый класс для всех «аудируемых» сущностей, который будет содержать поля аудита. В Java это может быть `@MappedSuperclass` с аннотациями `@CreatedDate` и т.д., а в Kotlin — класс с открытыми свойствами и теми же аннотациями. Это избавляет от дублирования полей и позволяет централизованно управлять форматами и типами. Важно не забыть повесить `@EntityListeners(AuditingEntityListener.class)` на этот базовый класс, чтобы слушатель отрабатывал для всех наследников.
 
-Рассинхронизация дат — типичная ловушка. Если приложение не работает в UTC, а база — да, вы получите «плавающие» таймстемпы. Вывод прост: придерживайтесь **UTC-везде**, а форматирование в локальное время — ответственность UI. В Spring укажите `spring.jpa.properties.hibernate.jdbc.time_zone: UTC`.
+Нужно понимать и ограничения. Аудит отрабатывает только при операциях через JPA: если вы напрямую обновляете таблицу через чистый JDBC или в миграциях, `AuditingEntityListener` не включится. Для таких случаев логика заполнения дат/пользователя должна быть либо продублирована на уровне триггеров, либо ваши процессы должны идти через сервисный слой, который работает через ORM. Полностью закрыть все пути модификации только одним механизмом, как правило, не удаётся.
 
-Стоит обсудить и «вставки с прошлой датой». Иногда нужно импортировать исторические данные; `@CreatedDate` перезапишет их «сейчас». Решение — либо временно отключать аудит на этот импорт (отдельный профиль), либо явно задавать поле и запретить слушателю затирать не-null значения. Такой «опт-аут» можно реализовать через маркеры в `AuditorAware` или флаги в `TransactionSynchronizationManager`.
+Ещё один момент — тестируемость. В тестах без безопасности `AuditorAware` должен возвращать предсказуемое значение, иначе вы получите нестабильные данные в БД. Можно сделать простой `TestAuditorAware`, где текущий пользователь задаётся через ThreadLocal в самих тестах. Либо в unit-тестах не полагаться на значения аудиторных полей, а проверять только то, что они не `null`, если это важно.
 
-Где хранить аудитные поля? В каждой сущности, где важна трассируемость. Не обязательно везде. Для справочников «страны/валюты» часто достаточно `@Immutable` и одной даты создания; для операций денег — полный набор. Подумайте о производительности индексов: `createdAt` — хороший кандидат для сортировки и TTL-архивирования (партционирование по дате).
+Отдельно подумайте про сериализацию в API. Аудиторные поля полезно выдавать наружу в административных и служебных API, но в обычных публичных ответах они могут быть лишними. Часто делают отдельные DTO для админских экранов, где показывают «кто создал / когда изменил», а в публичных DTO этих полей нет. Это упрощает backward compatibility: меняется только внутренняя структура, а внешние контракты остаются стабильными.
 
-И наконец: **тестируйте аудит**. В slice-тестах `@DataJpaTest` задайте фейковый `AuditorAware`, создайте/обновите сущность и убедитесь, что поля расставлены. Это дешёво и даёт уверенность, что прод-инцидент «кто поменял сумму» вы разберёте по полям, а не по логам.
-
-**Gradle (Groovy DSL)**
-
-```groovy
-plugins {
-  id 'org.springframework.boot' version '3.3.4'
-  id 'io.spring.dependency-management' version '1.1.6'
-  id 'java'
-}
-dependencies {
-  implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-  implementation 'org.springframework.boot:spring-boot-starter-security' // если берете из SecurityContext
-  runtimeOnly 'org.postgresql:postgresql:42.7.3'
-  testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-  id("org.springframework.boot") version "3.3.4"
-  id("io.spring.dependency-management") version "1.1.6"
-  java
-}
-dependencies {
-  implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-  implementation("org.springframework.boot:spring-boot-starter-security")
-  runtimeOnly("org.postgresql:postgresql:42.7.3")
-  testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-```
-
-**application.yml — единая тайм-зона и выключенный OSIV**
-
-```yaml
-spring:
-  jpa:
-    open-in-view: false
-    properties:
-      hibernate:
-        jdbc.time_zone: UTC
-```
-
-**Java — включение аудита, текущий пользователь/тенант и сущность с полями аудита**
+Ниже пример минимальной конфигурации Spring Data Auditing и базового класса аудируемой сущности для Java и Kotlin. В конфигурации мы включаем аудит и регистрируем `AuditorAware<String>`, который в проде забирает пользователя из `SecurityContext`, а в отсутствие аутентификации отдаёт `"system"`.
 
 ```java
-package com.example.audit;
+package com.example.jpa.audit;
 
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.AuditorAware;
-import org.springframework.context.annotation.Bean;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.Optional;
 
 @Configuration
-@EnableJpaAuditing
-public class AuditConfig {
+@EnableJpaAuditing(auditorAwareRef = "auditorProvider")
+public class JpaAuditConfig {
 
     @Bean
-    AuditorAware<String> auditorAware() {
+    public AuditorAware<String> auditorProvider() {
         return () -> {
-            var ctx = SecurityContextHolder.getContext();
-            if (ctx != null && ctx.getAuthentication() != null && ctx.getAuthentication().isAuthenticated()) {
-                return Optional.ofNullable(ctx.getAuthentication().getName());
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth == null || !auth.isAuthenticated()) {
+                return Optional.of("system");
             }
-            return Optional.of("system");
+            return Optional.ofNullable(auth.getName());
         };
     }
 }
 ```
 
 ```java
-package com.example.audit;
+package com.example.jpa.audit;
 
-import jakarta.persistence.*;
-import org.springframework.data.annotation.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.MappedSuperclass;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.annotation.CreatedBy;
+import org.springframework.data.annotation.LastModifiedBy;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.Instant;
 
-@Entity
+@MappedSuperclass
 @EntityListeners(AuditingEntityListener.class)
-@Table(name = "orders_aud")
-public class OrderAud {
-
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(nullable = false) private Long customerId;
-    @Column(nullable = false) private Long totalCents;
+public abstract class AuditableEntity {
 
     @CreatedDate
-    @Column(nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @LastModifiedDate
-    @Column(nullable = false)
+    @Column(name = "updated_at")
     private Instant updatedAt;
 
     @CreatedBy
-    @Column(nullable = false, updatable = false, length = 120)
+    @Column(name = "created_by", length = 100, updatable = false)
     private String createdBy;
 
     @LastModifiedBy
-    @Column(nullable = false, length = 120)
-    private String lastModifiedBy;
+    @Column(name = "updated_by", length = 100)
+    private String updatedBy;
 
-    @Column(nullable = false, length = 64)
-    private String tenantId; // выставляйте через сервис/фильтр
-
-    protected OrderAud() {}
-    public OrderAud(Long customerId, Long totalCents, String tenantId) {
-        this.customerId = customerId; this.totalCents = totalCents; this.tenantId = tenantId;
-    }
-    // getters/setters …
+    // геттеры/сеттеры
 }
 ```
 
-**Kotlin — включение аудита и сущность**
-
 ```kotlin
-package com.example.audit
+package com.example.jpa.audit
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.data.domain.AuditorAware
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing
 import org.springframework.security.core.context.SecurityContextHolder
-import java.util.*
+import java.util.Optional
 
 @Configuration
-@EnableJpaAuditing
-class AuditConfig {
+@EnableJpaAuditing(auditorAwareRef = "auditorProvider")
+class JpaAuditConfig {
 
     @Bean
-    fun auditorAware(): AuditorAware<String> = AuditorAware {
-        val auth = SecurityContextHolder.getContext()?.authentication
-        Optional.ofNullable(if (auth != null && auth.isAuthenticated) auth.name else "system")
+    fun auditorProvider(): AuditorAware<String> = AuditorAware {
+        val auth = SecurityContextHolder.getContext().authentication
+        if (auth == null || !auth.isAuthenticated) {
+            Optional.of("system")
+        } else {
+            Optional.ofNullable(auth.name)
+        }
     }
 }
 ```
 
 ```kotlin
-package com.example.audit
+package com.example.jpa.audit
 
-import jakarta.persistence.*
+import jakarta.persistence.Column
+import jakarta.persistence.EntityListeners
+import jakarta.persistence.MappedSuperclass
 import org.springframework.data.annotation.CreatedBy
 import org.springframework.data.annotation.CreatedDate
 import org.springframework.data.annotation.LastModifiedBy
@@ -5103,239 +4824,194 @@ import org.springframework.data.annotation.LastModifiedDate
 import org.springframework.data.jpa.domain.support.AuditingEntityListener
 import java.time.Instant
 
-@Entity
-@Table(name = "orders_aud")
+@MappedSuperclass
 @EntityListeners(AuditingEntityListener::class)
-class OrderAud(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
+abstract class AuditableEntity(
 
-    @Column(nullable = false) var customerId: Long = 0,
-    @Column(nullable = false) var totalCents: Long = 0,
-
-    @CreatedDate @Column(nullable = false, updatable = false)
+    @CreatedDate
+    @Column(name = "created_at", nullable = false, updatable = false)
     var createdAt: Instant? = null,
 
-    @LastModifiedDate @Column(nullable = false)
+    @LastModifiedDate
+    @Column(name = "updated_at")
     var updatedAt: Instant? = null,
 
-    @CreatedBy @Column(nullable = false, updatable = false, length = 120)
+    @CreatedBy
+    @Column(name = "created_by", length = 100, updatable = false)
     var createdBy: String? = null,
 
-    @LastModifiedBy @Column(nullable = false, length = 120)
-    var lastModifiedBy: String? = null,
-
-    @Column(nullable = false, length = 64)
-    var tenantId: String = ""
+    @LastModifiedBy
+    @Column(name = "updated_by", length = 100)
+    var updatedBy: String? = null
 )
 ```
+
+Любая сущность, которая наследуется от `AuditableEntity`, автоматически получает заполнение полей при сохранении и обновлении. Это простая, но очень полезная основа для аудита.
 
 ---
 
 ## Soft-delete: флаг + глобальные фильтры (`@Where/@SQLDelete` или фильтры Hibernate), последствия для уникальных ключей/джойнов
 
-«Мягкое удаление» — это практика не удалять строки физически, а помечать их признаком «удалено» (флагом `deleted` или `deleted_at`). Плюсы: можно восстановить, можно хранить историю ссылок и не получать «висячие» FK. Минусы: усложняется уникальность и запросы «видеть всё». В JPA самый удобный приём — комбинация `@SQLDelete` (перехватывает `DELETE` и делает `UPDATE ...`) и `@Where` (по умолчанию прячет удалённые строки из всех запросов ORM).
+Мягкое удаление (soft-delete) — это практика, при которой запись логически удаляется, но физически остаётся в таблице. Обычно это реализуется через флаг `deleted` или колонку `deleted_at` с датой удаления. Основной мотив — не терять данные окончательно: вы можете восстановить запись, проверить историю, избежать проблем с внешними ключами, когда другие сущности ссылаются на «удалённую» запись. Физическое удаление при этом может делаться отдельной джобой по старым данным.
 
-`@SQLDelete` гарантирует, что даже вызов `repo.delete(entity)` не приведёт к физическому удалению: Hibernate выполнит SQL, который вы указали. Часто это `update table set deleted_at = now() where id = ?`. Вместо флага времени можно использовать boolean-колонку `deleted = true`, но временная метка удобнее для аудита и TTL-архивирования.
+Наивный вариант soft-delete — просто добавить колонку `deleted` и везде в запросах писать `where deleted = false`. Это работает до тех пор, пока все разработчики дисциплинированно помнят о флагe. На практике всегда найдётся запрос, который забудет про `deleted`, и в UI вы увидите «призраков», а в отчётах — странные дубли. Поэтому в мире Hibernate принято прятать логику soft-delete в слой ORM: использовать глобальные фильтры `@Where` и `@SQLDelete` или хибер-фильтры.
 
-`@Where(clause = "deleted_at is null")` добавляет условие во все JPQL/Criteria-запросы к сущности и её коллекциям. Это «глобальный фильтр»: никто в команде не забудет дописать `where ... is null`, ORM сделает это сам. Цена — помнить, что иногда вам **нужно** увидеть удалённые; тогда используйте native SQL или отдельную сущность-проекцию без `@Where`.
+Аннотация `@SQLDelete` позволяет переопределить SQL, который Hibernate выполняет при удалении сущности. Вместо `delete from customer where id = ?` вы можете сказать «обнови флаг»: `update customer set deleted = true, deleted_at = now() where id = ?`. Аннотация `@Where` добавляет условие ко всем запросам по этой сущности: Hibernate автоматически подставит `where deleted = false` к любому `select`. В итоге обычные операции `repository.delete(entity)` и `findAll()` начинают работать с учётом soft-delete без дополнительного кода в репозиториях.
 
-Проблема уникальности: обычный `UNIQUE(email)` не позволит создать «такого же» пользователя после удаления, потому что старая строка всё ещё лежит в таблице. Решение на стороне Postgres — **частичный уникальный индекс**: `unique (lower(email)) where deleted_at is null`. Он обеспечивает уникальность только среди «живых» записей. Этот паттерн критичен для e-mail/логинов/код-значений.
+Надо понимать, что `@Where` — это глобальный фильтр. Он применяется и к простым запросам, и к связям. Например, если у вас `@OneToMany` коллекция и вы повесите `@Where` на дочернюю сущность, то в коллекции не будет soft-deleted элементов. Это удобно в большинстве сценариев, но иногда вам нужно, наоборот, увидеть всё, включая удалённые. Тогда придётся либо писать нативный запрос, либо завести отдельный репозиторий/метод без `@Where` (например, через view или через `Session` с отключением фильтра).
 
-Джойны и `@Where` — источник неожиданных эффектов. В `INNER JOIN` на «правую» сущность `@Where` исчезающе прозрачно «съест» удалённые строки — и это, как правило, хорошо. Но в `LEFT JOIN` вы тоже не увидите «удалённого» правого края, хотя логически могли ожидать `NULL`-колонки. Документируйте это поведение для аналитиков и отчётов.
+С soft-delete тесно связаны уникальные ключи. Если вы просто добавите колонку `deleted` в таблицу, где есть `unique (email)`, то удаление не освободит возможность создать новую строку с тем же `email`: старая запись всё ещё нарушает уникальность. Правильный паттерн — использовать частичный уникальный индекс только для живых строк: `unique (email) where deleted = false`. Тогда soft-delete логически убирает запись из множества, по которому проверяется уникальность, и вы спокойно создаёте новую запись с тем же ключом.
 
-Альтернатива `@Where` — **фильтры Hibernate** (`@FilterDef` + `@Filter`). Преимущество фильтра — его можно включать/выключать на сессии: `session.enableFilter("alive")`. Это гибко, если вам нужны разные политики видимости в разных частях системы («оператор видит всё», «клиент — только живое»). Недостаток — надо не забыть включить фильтр каждой транзакции (или сделать перехватчик, который включит его автоматически).
+Выбор типа флага тоже важен. Фиксированное `boolean deleted` удобно для логики, но не хранит информации о времени удаления. Обычно лучше использовать `deleted_at timestamp` и считать «живыми» строки, где `deleted_at is null`. Это позволяет легко найти, что удалилось за период, построить отчёты, реализовать политику «окно восстановления» (например, можно восстанавливать только в течение 30 дней после удаления). В коде JPA это отображается как `Instant deletedAt` и условие `@Where(clause = "deleted_at is null")`.
 
-Учтите каскады. Если у вас `@OneToMany` на «детей» с `orphanRemoval = true`, вызов `parent.getChildren().remove(x)` вызовет удаление **строки детей**. При soft-delete это может быть не то, что вы хотели. Используйте отдельные методы `trash()` на детях и избегайте «неявной» семантики orphan removal для soft-удалений.
+Есть и более гибкий механизм — Hibernate filters (`@FilterDef` и `@Filter`). В отличие от `@Where`, фильтры можно включать/выключать на уровне `Session`/`EntityManager`. Это полезно, когда у вас есть сценарии «обычно скрывать удалённые записи, но в админском разделе иногда показывать всё». Однако фильтры требуют чуть более сложной интеграции: нужно помнить, где их включать, и не забывать про них в новых местах. Для базового soft-delete `@Where` + `@SQLDelete` обычно достаточно.
 
-И ещё про FK: если вы оставляете FK «как есть», soft-delete родителя будет блокироваться из-за детей (если ON DELETE не настроен). Правильно — либо запретить удаление (требуется ручная очистка), либо перевести FK в `ON DELETE SET NULL` (когда бизнес это допускает), либо каскадно «мягко удалять» детей.
+Не забывайте про каскады. Если вы используете `orphanRemoval = true` или `CascadeType.REMOVE` на связях, Hibernate при удалении родителя попытается удалять и дочерние сущности. При soft-delete это может привести к каскадному обновлению большого числа строк (установка флага на все дочерние записи), что иногда нормально, а иногда нет. В сложных моделях лучше явно определять, какие сущности подлежат soft-delete, а какие всё-таки удаляются физически или остаются жить.
 
-Наконец, мониторинг. Мягко удалённые записи — это «грязь», растущая бесконечно. Нужны фоновый TTL-процесс (псевдоархив) и метрики: сколько процентов таблицы «мёртвое». Если вы используете партиции по дате — переносите партиции в холодное хранилище и физически очищайте по SLA.
-
-**SQL (Flyway) — схема soft-delete и частичный UNIQUE**
+Ниже простой пример сущности `Customer` с soft-delete через `deleted_at`, глобальный фильтр `@Where` и переопределённый `@SQLDelete`. В миграции мы добавляем колонку `deleted_at` и частичный уникальный индекс по email. Java и Kotlin варианты эквивалентны.
 
 ```sql
--- V20__users_soft.sql
-create table users_soft (
-  id bigserial primary key,
-  email text not null,
-  name text not null,
-  deleted_at timestamptz
-);
+ALTER TABLE customer
+    ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 
--- Уникальность среди «живых»
-create unique index ux_users_soft_email_alive
-  on users_soft (lower(email))
-  where deleted_at is null;
+CREATE UNIQUE INDEX IF NOT EXISTS uk_customer_email_active
+    ON customer (email)
+    WHERE deleted_at IS NULL;
 ```
 
-**Java — сущность с `@SQLDelete/@Where` и опциональным фильтром**
-
 ```java
-package com.example.soft;
+package com.example.jpa.softdelete;
 
 import jakarta.persistence.*;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.Where;
-import org.hibernate.annotations.FilterDef;
-import org.hibernate.annotations.Filter;
+
+import java.time.Instant;
 
 @Entity
-@Table(name = "users_soft")
-@SQLDelete(sql = "update users_soft set deleted_at = now() where id = ?")
-@Where(clause = "deleted_at is null")
-@FilterDef(name = "alive") // без параметров
-@Filter(name = "alive", condition = "deleted_at is null")
-public class UserSoft {
+@Table(name = "customer")
+@SQLDelete(sql = "UPDATE customer SET deleted_at = now() WHERE id = ?")
+@Where(clause = "deleted_at IS NULL")
+public class Customer {
 
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id
+    @GeneratedValue
     private Long id;
 
-    @Column(nullable = false) private String name;
+    @Column(nullable = false, unique = true)
+    private String email;
 
-    @Column(nullable = false) private String email;
+    private String fullName;
 
-    @Column private java.time.Instant deleted_at;
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
-    protected UserSoft() {}
-    public UserSoft(String name, String email){ this.name = name; this.email = email; }
-    // getters/setters …
+    // геттеры/сеттеры
 }
 ```
-
-```java
-package com.example.soft;
-
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
-import org.hibernate.Session;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-@Service
-public class UserSoftService {
-    @PersistenceContext private EntityManager em;
-
-    @Transactional
-    public void removeSoft(Long id) {
-        UserSoft u = em.find(UserSoft.class, id);
-        em.remove(u); // выполнится UPDATE через @SQLDelete
-    }
-
-    @Transactional(readOnly = true)
-    public java.util.List<UserSoft> findAliveWithFilter() {
-        Session session = em.unwrap(Session.class);
-        session.enableFilter("alive");
-        try {
-            return em.createQuery("select u from UserSoft u order by u.id", UserSoft.class)
-                     .getResultList();
-        } finally {
-            session.disableFilter("alive");
-        }
-    }
-}
-```
-
-**Kotlin — тот же приём**
 
 ```kotlin
-package com.example.soft
+package com.example.jpa.softdelete
 
 import jakarta.persistence.*
-import org.hibernate.annotations.Filter
-import org.hibernate.annotations.FilterDef
 import org.hibernate.annotations.SQLDelete
 import org.hibernate.annotations.Where
-import org.hibernate.Session
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
 
 @Entity
-@Table(name = "users_soft")
-@SQLDelete(sql = "update users_soft set deleted_at = now() where id = ?")
-@Where(clause = "deleted_at is null")
-@FilterDef(name = "alive")
-@Filter(name = "alive", condition = "deleted_at is null")
-class UserSoft(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "customer")
+@SQLDelete(sql = "UPDATE customer SET deleted_at = now() WHERE id = ?")
+@Where(clause = "deleted_at IS NULL")
+class Customer(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false) var name: String = "",
-    @Column(nullable = false) var email: String = "",
-    var deleted_at: java.time.Instant? = null
+
+    @Column(nullable = false, unique = true)
+    var email: String = "",
+
+    var fullName: String? = null,
+
+    @Column(name = "deleted_at")
+    var deletedAt: Instant? = null
 )
-
-@Service
-class UserSoftService(
-    @PersistenceContext private val em: EntityManager
-) {
-    @Transactional
-    fun removeSoft(id: Long) {
-        val u = em.find(UserSoft::class.java, id)
-        em.remove(u)
-    }
-
-    @Transactional(readOnly = true)
-    fun findAliveWithFilter(): List<UserSoft> {
-        val session = em.unwrap(Session::class.java)
-        session.enableFilter("alive")
-        return try {
-            em.createQuery("select u from UserSoft u order by u.id", UserSoft::class.java).resultList
-        } finally {
-            session.disableFilter("alive")
-        }
-    }
-}
 ```
+
+С таким подходом все обычные запросы (`findById`, `findAll`, репозиторные методы) будут работать только с живыми записями. Удаление через `delete` поставит флаг, но не тронет строку физически, и уникальный email освободится. Для периодической физической чистки можно завести отдельный SQL-скрипт или джобу, которая удаляет «старые» удалённые записи, например `where deleted_at < now() - interval '90 days'`.
 
 ---
 
 ## История изменений: версионирование записей vs отдельные audit-таблицы; компромисс сложность/польза
 
-Аудитные поля отвечают на вопросы «кто/когда», но не показывают «что именно поменялось». Для этого есть два направления: **версионирование** (храним все версии записи) и **аудит-журнал** (отдельная таблица событий изменений). Версионирование удобно для «срезов на момент времени» («покажи состояние заказа на вчера 12:00»), а журнал — для лаконичного ответа «старое значение → новое значение» и последующего анализа.
+Аудит «кто/когда создал/изменил» и soft-delete решают только часть задач. Часто бизнесу нужно знать, как именно менялись данные во времени: какую ставку кредита установили вначале, как она менялась, кто правил адрес клиента, какие статусы проходила заявка. Для этого нужен полноценный журнал изменений. В JPA/Hibernate есть два базовых подхода: версионирование записей в самой таблице (multi-version records) и отдельные аудит-таблицы, куда пишутся «снимки» сущности при каждом изменении.
 
-На стороне Hibernate готовое решение — **Envers**. Он перехватывает INSERT/UPDATE/DELETE и записывает снимки сущности в таблицы `*_AUD` вместе с номером «ревизии» и метаданными (время, пользователь, тип операции). Достоинства: минимум кода, поддержка сложных графов, запросы по «состоянию на ревизии». Недостатки: объём данных растёт быстро, сложнее выборки для специфических отчётов.
+Версионирование записей в основной таблице — это когда вместо одной строки на сущность вы храните несколько, по одной на каждую версию. Часто это реализуется через поля `valid_from` / `valid_to` или через номер версии и флаг «активный». При чтении «текущего» состояния вы фильтруете по `valid_to is null` или по максимальному `version`. Такой подход популярен в финансовых системах, где важно видеть полную историю параметров договора или тарифного плана. Преимущество — вся история в одной таблице, удобно делать аналитические запросы. Недостаток — «текущая» выборка должна всегда помнить о критерии активной версии, а таблица растёт быстрее.
 
-Альтернатива — **свой журнал**: отдельная таблица `audit_log` с полями `entity_name`, `entity_id`, `event`, `old_data`, `new_data`, `actor`, `at`. Заполняется слушателем или сервисом. Плюс — полный контроль (например, можно логировать только ключевые поля, а не всю сущность). Минус — больше кода и риск «забыть» залогировать.
+Отдельные аудит-таблицы — другой вариант. Вы создаёте таблицу `customer_audit` или используете Hibernate Envers (`_AUD`-таблицы), где на каждую операцию (INSERT, UPDATE, DELETE/soft-delete) сохраняется отдельная запись со старым/новым состоянием. Основная таблица остаётся компактной и содержит только актуальное состояние, а аудит-таблица становится «историческим журналом». Это удобно, когда оперативные запросы не должны страдать от увеличения объёма, а история нужна главным образом для расследований, compliance и отчётности.
 
-Компромисс в реальных системах часто такой: для «критичных» сущностей (деньги, заказы) — Envers или «снимки», для остальных — только поля аудита или компактный журнал «изменённые ключевые поля». Ещё один критерий — «воспроизводимость»: если вам нужен отчёт «как видел клиент в тот день», храните версии. Если нужен «кто поменял поле X» — хватит журнала.
+Готовое решение для аудит-таблиц в мире Hibernate — Envers. Вы ставите зависимость, аннотируете сущность `@Audited`, и Hibernate начинает автоматически писать изменения в отдельную таблицу `<entity>_AUD` с колонками `REV`, `REVTYPE`, полями сущности и метаданными. Это сильно экономит время: не нужно придумывать свой формат аудит-логов, писать триггеры, руками логировать каждое изменение. Но цена — зависимость от Envers, дополнительная сложность схемы и необходимость учитывать аудит-таблицы при миграциях и изменении модели.
 
-Учитывайте GDPR/retention. История изменений — это тоже персональные данные. Нужны политики хранения: сколько времени держим, как анонимизируем. Envers поддерживает «очистку ревизий», но чаще это реализуют фоновыми задачами/архивами.
+Если вы не хотите тянуть Envers, можно сделать ручной аудит через отдельную сущность `AuditLog` и слушатели событий JPA (`@PrePersist`, `@PreUpdate`, `@PreRemove`) или через доменный сервис. При каждом изменении важной сущности вы пишете запись в `audit_log` с типом события, идентификатором сущности, пользователем и сериализованным состоянием (часто JSON). Это более гибко: вы сами решаете, что и как писать, но и больше кода и ответственности ложится на вас.
 
-С производительности стороны любой аудит добавляет I/O на запись. Envers вешает триггеры на ORM-уровне; если вы делаете `bulk update` (см. предыдущие подтемы), Envers его **не увидит** — придётся логировать вручную или через триггеры БД. Это важный нюанс при массовых операциях.
+Выбор между версионированием в основной таблице и отдельными аудит-таблицами зависит от профиля нагрузки. Если основная работа — аналитика и отчёты по истории, версия в основной таблице (SCD2-подобная схема) удобнее: все данные в одном месте, можно использовать оконные функции, агрегаты, легко строить временные срезы. Но тогда «обычные» запросы должны быть аккуратными и всегда фильтровать по активной версии. Если же основной сценарий — оперативное чтение актуальных данных, а истории нужны эпизодически, отдельные аудит-таблицы предпочтительнее: производительность everyday-запросов не страдает.
 
-Тестируйте историю. Заводите интеграционный тест, который делает: create → update → delete, а затем читает ревизии и проверяет ожидаемые состояния. Так вы зафиксируете контракт «какие поля аудируются» и убережётесь от регрессов после миграций.
+Ещё один компромисс — хранить только агрегированную историю. Например, вместо полной копии сущности на каждое изменение вы храните только ключевые поля или только изменения по определённым атрибутам. Это сокращает объём аудит-данных, но и уменьшает их ценность. Такой подход оправдан, когда полная история слишком тяжёлая, а задач «восстановить полный снимок на дату» нет.
 
-Наконец, не путайте версионирование для аудита и `@Version` для оптимистической блокировки. Это разные механизмы: первое — хранение прошлых состояний, второе — защита от конфликтов записи. Они могут жить вместе: Envers создаёт свои `_AUD`, а `@Version` остаётся в основной таблице.
+С точки зрения архитектуры важно отнести аудит в отдельный слой. Сущности не должны быть завалены логикой «куда и что писать», а сервисы — вручную дергать `auditService.log(...)` на каждую операцию. Лучше сделать централизованный механизм: или Envers, или один общий `AuditService`, который подписан на доменные события, или JPA-слушатели. Тогда изменение схемы аудита (например, добавление новых полей) не потребует массовых правок в бизнес-коде.
 
-**Gradle — добавить Hibernate Envers**
-
-*Groovy DSL*
+Ниже пример использования Hibernate Envers: мы аннотируем сущность `Account` как `@Audited`, а затем читаем историю через Envers API. Java и Kotlin варианты показывают базовую идею. В реальном проекте Envers будет создавать таблицу `account_AUD` с версиями записи, а вы сможете строить отчёты и расследования, используя эту таблицу.
 
 ```groovy
+// build.gradle (Groovy DSL) – добавляем Envers
 dependencies {
-  implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-  implementation 'org.hibernate.orm:hibernate-envers' // версия подтянется из BOM Spring Boot
-  runtimeOnly 'org.postgresql:postgresql:42.7.3'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    runtimeOnly 'org.postgresql:postgresql'
+    implementation 'org.hibernate.orm:hibernate-envers'
 }
 ```
-
-*Kotlin DSL*
 
 ```kotlin
+// build.gradle.kts (Kotlin DSL)
 dependencies {
-  implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-  implementation("org.hibernate.orm:hibernate-envers")
-  runtimeOnly("org.postgresql:postgresql:42.7.3")
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    runtimeOnly("org.postgresql:postgresql")
+    implementation("org.hibernate.orm:hibernate-envers")
 }
 ```
 
-**Java — сущность с `@Audited` и чтение ревизий через Envers**
-
 ```java
-package com.example.envers;
+package com.example.jpa.envers;
 
 import jakarta.persistence.*;
 import org.hibernate.envers.Audited;
+
+import java.math.BigDecimal;
+
+@Entity
+@Table(name = "account")
+@Audited
+public class Account {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String number;
+
+    @Column(nullable = false, precision = 19, scale = 4)
+    private BigDecimal balance;
+
+    // геттеры/сеттеры
+}
+```
+
+```java
+package com.example.jpa.envers;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.hibernate.envers.AuditReader;
 import org.hibernate.envers.AuditReaderFactory;
 import org.springframework.stereotype.Service;
@@ -5343,379 +5019,311 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
-@Entity
-@Table(name = "products_a")
-@Audited
-public class ProductA {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    @Column(nullable = false) private String sku;
-    @Column(nullable = false) private Long priceCents;
-    protected ProductA() {}
-    public ProductA(String sku, Long priceCents){ this.sku=sku; this.priceCents=priceCents; }
-    // getters/setters …
-}
-
-interface ProductARepository extends org.springframework.data.jpa.repository.JpaRepository<ProductA, Long> {}
-
 @Service
-public class ProductAuditService {
-    private final ProductARepository repo;
-    @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager em;
-    public ProductAuditService(ProductARepository repo){ this.repo = repo; }
+public class AccountHistoryService {
 
-    @Transactional
-    public ProductA changePrice(Long id, long newPrice) {
-        ProductA p = repo.findById(id).orElseThrow();
-        p.setPriceCents(newPrice);
-        return p;
-    }
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Transactional(readOnly = true)
-    public List<Number> revisions(Long id) {
-        AuditReader reader = AuditReaderFactory.get(em);
-        return reader.getRevisions(ProductA.class, id);
-    }
+    public List<Account> getAccountHistory(Long accountId) {
+        AuditReader reader = AuditReaderFactory.get(entityManager);
+        List<Number> revisions = reader.getRevisions(Account.class, accountId);
 
-    @Transactional(readOnly = true)
-    public ProductA stateAtRevision(Long id, Number rev) {
-        AuditReader reader = AuditReaderFactory.get(em);
-        return reader.find(ProductA.class, id, rev);
+        return revisions.stream()
+                .map(rev -> reader.find(Account.class, accountId, rev))
+                .toList();
     }
 }
 ```
 
-**Kotlin — `@Audited` и чтение ревизий**
+```kotlin
+package com.example.jpa.envers
+
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.Id
+import jakarta.persistence.Table
+import org.hibernate.envers.Audited
+import java.math.BigDecimal
+
+@Entity
+@Table(name = "account")
+@Audited
+class Account(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var number: String = "",
+
+    var balance: BigDecimal = BigDecimal.ZERO
+)
+```
 
 ```kotlin
-package com.example.envers
+package com.example.jpa.envers
 
-import jakarta.persistence.*
-import org.hibernate.envers.Audited
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import org.hibernate.envers.AuditReaderFactory
-import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
-@Entity
-@Table(name = "products_a")
-@Audited
-class ProductA(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var sku: String = "",
-    @Column(nullable = false) var priceCents: Long = 0
-)
-
-interface ProductARepository : JpaRepository<ProductA, Long>
-
 @Service
-class ProductAuditService(
-    private val repo: ProductARepository,
-    @PersistenceContext private val em: EntityManager
+class AccountHistoryService(
+
+    @PersistenceContext
+    private val entityManager: EntityManager
 ) {
 
-    @Transactional
-    fun changePrice(id: Long, newPrice: Long): ProductA {
-        val p = repo.findById(id).orElseThrow()
-        p.priceCents = newPrice
-        return p
-    }
-
     @Transactional(readOnly = true)
-    fun revisions(id: Long): List<Number> =
-        AuditReaderFactory.get(em).getRevisions(ProductA::class.java, id)
-
-    @Transactional(readOnly = true)
-    fun stateAtRevision(id: Long, rev: Number): ProductA? =
-        AuditReaderFactory.get(em).find(ProductA::class.java, id, rev)
-}
-```
-
-**Альтернатива — простой «ручной» журнал изменений (идея)**
-
-```java
-package com.example.auditlog;
-
-import jakarta.persistence.*;
-import java.time.Instant;
-
-@Entity
-@Table(name = "audit_log")
-public class AuditLog {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String entityName;
-    @Column(nullable = false) String entityId;
-    @Column(nullable = false) String event;   // CREATED/UPDATED/DELETED
-    @Column(columnDefinition = "jsonb") String oldData;
-    @Column(columnDefinition = "jsonb") String newData;
-    @Column(nullable = false) String actor;
-    @Column(nullable = false) Instant at = Instant.now();
-    protected AuditLog() {}
-    public AuditLog(String e, String id, String ev, String o, String n, String a){
-        this.entityName=e; this.entityId=id; this.event=ev; this.oldData=o; this.newData=n; this.actor=a;
+    fun getAccountHistory(accountId: Long): List<Account> {
+        val reader = AuditReaderFactory.get(entityManager)
+        val revisions = reader.getRevisions(Account::class.java, accountId)
+        return revisions.map { rev -> reader.find(Account::class.java, accountId, rev) }
     }
 }
 ```
 
-Этот «ручной» журнал можно заполнять в сервисе перед изменением: сериализовать «до/после» ключевых полей и сохранить `AuditLog`. Простоты ради здесь JSON хранится как текст; с Postgres разумно задать `jsonb` и индекс GIN, если вы планируете сложные отчёты.
+Если вы по каким-то причинам не хотите зависеть от Envers, можно сделать упрощённый аудит-лог: отдельная сущность `AuditLogEntry` с полями `entityType`, `entityId`, `action`, `payloadJson`, `createdAt`, `createdBy`, а писать в неё данные через `@PreUpdate/@PrePersist/@PreRemove` или через сервис. При этом стоит использовать `jsonb` для хранения сериализованного состояния и индексы по `entityType/entityId`, чтобы запросы по истории не сканировали всю таблицу. Такой подход проще контролировать, но больше ручной работы.
 
-**Вывод по аудиту/soft-delete/истории изменений**
-
-1. «Кто/когда» — включайте Spring Data Auditing с `AuditingEntityListener` и дисциплинированным `AuditorAware`.
-2. Soft-delete — делайте через `@SQLDelete + @Where` или через фильтры Hibernate; для уникальности — частичный UNIQUE. Проговаривайте поведение джойнов.
-3. История изменений — Envers для «срезов состояний», кастомный журнал для лаконичных событий. Обязательно учтите retention, массовые операции и тесты «create→update→delete→read history».
+Главный вывод — история изменений всегда стоит ресурсов, и чем более подробную и долгоживущую историю вы хотите, тем дороже она обходится. Важно заранее определить границы: какие сущности действительно требуют версионирования, сколько времени вы обязаны хранить истории по закону/контрактам, какие СЛА по скорости запросов к истории приемлемы. Тогда вы сможете выбрать подходящий компромисс между «видеть всё» и «жить с нормальной производительностью и платой за хранение».
 
 # 11. Спецификации, Criteria и QueryDSL
 
 ## `Specification<T>`: динамические фильтры, композиция условий, пагинация+сортировка
 
-Подход на базе `Specification<T>` хорош там, где количество фильтров и их комбинаций растёт вместе с бизнес-требованиями. В отличие от строкового JPQL, вы собираете запрос из маленьких, переиспользуемых «кирпичиков»: каждый `Specification` отвечает за одно условие, а композиция через `and/or/where` даёт итоговый предикат. Такой стиль делает код декларативным: сервис говорит «хочу заказы статуса X, от даты Y, с суммой больше Z», а детали выразятся в отдельном наборе функций.
+Спецификации в Spring Data JPA появляются там, где обычные метод-неймы репозиториев перестают масштабироваться. Пока у вас два-три поля фильтрации, `findByStatusAndCreatedAtBetween` ещё терпим. Но как только фильтр превращается в формочку с десятком параметров, размножение методов становится неконтролируемым, а поддерживать их — боль. `Specification<T>` решает именно эту проблему: позволяет собирать запросы из простых условий в рантайме, а не кодировать все комбинации в сигнатуры методов.
 
-Важная особенность `Specification` — она знает о JPA-модели: в лямбде вы получаете `Root<T>` (корень запроса), `CriteriaQuery<?>` и `CriteriaBuilder`. Это позволяет не только строить `where`, но и добавлять `fetch`/`join` или менять `distinct`. Использовать fetch в спеках нужно осторожно: при пагинации (`Pageable`) коллекционные `fetch join` ломают подсчёт `count` и стабилизацию строк; для «карточек» конкретной сущности fetch уместен, а для списков лучше обойтись проекциями.
+Технически `Specification<T>` — это функциональный интерфейс с методом `toPredicate(Root<T> root, CriteriaQuery<?> query, CriteriaBuilder cb)`. Внутри него вы работаете с Criteria API (тем же, на котором основан Hibernate) и строите `Predicate`, описывающий часть `where`. Такой предикат можно комбинировать с другими через `cb.and`/`cb.or` или через удобные методы `Specification.and()` / `Specification.or()`. В итоге весь динамический запрос становится композицией маленьких «атомарных» спецификаций, каждая из которых отвечает за одно логическое условие.
 
-Композиция условий — сильная сторона Specification. Пусть у вас 10 опциональных полей фильтра. Вместо сложных `if` в одном запросе вы создаёте 10 мини-спеков: «по статусу», «по дате от», «по сумме», «по текстовому поиску» и т.д. Затем складываете их в цепочку `where(spec1).and(spec2)...`. Спеки легко тестируются по отдельности; ошибки локализуются быстрее.
+Практический шаблон выглядит так: вы определяете DTO фильтра (например, `CustomerFilter`), где все поля — опциональные. Затем создаёте набор статических методов `Specification<Customer> hasEmail(...)`, `registeredAfter(...)`, `withStatus(...)` и т.д. В сервисе вы берёте входной фильтр, проверяете, какие поля заполнены, и собираете итоговую спецификацию через цепочку `Specification.where(...).and(...).or(...)`. Пустые условия просто пропускаете. Такой подход хорошо читается и легко расширяется: добавился новый фильтр — добавили одну спецификацию и одно условие в сборку.
 
-Пагинация и сортировка в Spring Data сочетаются с спеками «из коробки»: метод `findAll(Specification, Pageable)` вернёт `Page<T>` и корректно применит `Sort`. Важно помнить о стабильной сортировке: если сортируете по полю, где возможны дубликаты (например, `createdAt`), добавьте вторичный ключ (обычно `id`) — иначе строки с одинаковыми значениями могут «прыгать» между страницами.
+Сильная сторона спецификаций — композиция. Одно и то же условие можно использовать в разных сервисах и репозиториях, при этом логика фильтрации живёт в одном месте. Например, спецификация «клиенты этого тенанта» может использоваться в десятке сценариев и не копироваться. Кроме того, спецификации легко тестировать отдельно: вы можете навесить их на in-memory БД или Testcontainers и проверить, что задаются именно те условия, которые вы ожидаете.
 
-Списки лучше отдавать **тонкими DTO** — это снижает нагрузку на ORM и БД. Спеки используют сущности как исходные данные, но наружу вы маппите только нужные поля. Для больших страниц это ключ к производительности: нет N+1, нет массивных графов, меньше JSON. Если нужен подсчёт «итого», делайте отдельный агрегатный запрос (спека тоже может помочь), не пытайтесь «как-нибудь» прикрутить его к списку.
+Пагинация и сортировка в мире спецификаций устраиваются естественно: Spring Data JPA предоставляет метод `findAll(Specification<T> spec, Pageable pageable)`, который соединяет ваш `where` с `order by`, `limit` и `offset` из `Pageable`. Всё, что вам нужно — создать `PageRequest` с нужным `Sort`. Здесь важный нюанс: если внутри спецификации вы делаете `join fetch` коллекций, то пагинация через `Pageable` с коллекциями может выстрелить себе в ногу (дубли строк, некорректные лимиты). Для списков с `fetch`-коллекциями лучше выбирать два запроса: сначала ID’шники, потом — отдельный select с `in (...)` и `join fetch`.
 
-Взаимодействие со связями легко выражается в спеках через `join`. Типично: фильтровать заказы по городу покупателя или тегам товара. Но не забывайте индексы: любое условие по «правой» таблице будет эффективным только при наличии селективных индексов (например, `customer.city`, `order.customer_id`). Спека — это не волшебство; она лишь декларация для Criteria.
+Спецификации умеют фильтровать не только по полям самой сущности, но и по связям. Через `root.join("orders")` вы можете добавлять условия на связанные сущности (`order.status = ...`). Аналогично можно строить условия через `root.get("embedded").get("field")` для встраиваемых типов. Здесь легко поймать N+1, если в UI вы потом будете лениво тянуть коллекции; поэтому при сложных запросах полезно заранее платить за нужные join’ы, а не надеяться на ленивую загрузку.
 
-Ещё один совет — делайте «чистые» спеки. Пусть каждая возвращает только `Predicate`, не трогая `select`, `groupBy` и `orderBy`. Тогда вы свободно комбинируете их в любых сценариях. Если всё же нужен `fetch` (например, для карточки), вынесите его в отдельную спеку «для карточки», и не используйте её вместе с пагинацией.
+На стороне репозитория всё просто: вы расширяете интерфейс `JpaRepository<T, ID>` интерфейсом `JpaSpecificationExecutor<T>`. Это добавляет вам методы вроде `findAll(Specification<T>)`, `findAll(Specification<T>, Pageable)`, `count(Specification<T>)`. Основная логика остаётся в спецификациях, а репозиторий можно считать тонкой обёрткой над `EntityManager`, умеющей понимать эти объекты.
 
-Обрабатывайте пустые значения входного фильтра. Хорошая спека возвращает `cb.conjunction()` (истину) или `null`, когда критерий не задан. Так композиция не «ломается», а итоговый запрос остаётся корректным. Но следите, чтобы вы не возвращали `null` из всего билдера — используйте `Specification.where(...)`.
+Когда выбирать спецификации, а когда нет? Если фильтр статический и прост — обычный метод-нейм или JPQL будет проще и читабельнее. Если фильтр сложный, но спецификаций стало столько, что их поддержка превратилась в лабиринт, — имеет смысл посмотреть в сторону QueryDSL или отдельных SQL-репозиториев: там выразительность выше, а IDE лучше помогает. Спецификации хороши как middle-ground: динамичность плюс более-менее компактный код.
 
-С точки зрения тестов удобно проверять содержание SQL (через логгер) и корректность результатов на маленьких фикстурах. Для сложных предикатов (например, поиск по нескольким словам в `LIKE`) заведите уголковые кейсы: пустая строка, спецсимволы, регистр.
+Есть и подводные камни. Легко сделать «монструозную» спецификацию с кучей ветвлений и условий внутри, которую потом никто не сможет читать. Хорошая практика — держать каждую спецификацию маленькой и чистой, без внешних зависимостей, и собирать их в сервисе. Также важно не забывать про `distinct(true)` в CriteriaQuery, если вы делаете join’ы и ожидаете уникальные сущности.
 
-И, наконец, помните про «границы ПК» (`Persistence Context`). Если вы собираете крупные страницы сущностей, не комбинируйте это с записью в той же транзакции: PC раздуется. Для листингов лучше `readOnly`-транзакции и проекции; для команд — отдельные методы.
+Тестирование спецификаций в продакшн-коде обязательно. Вы делаете несколько комбинаций фильтра, вызываете `findAll(spec)` и смотрите, что в результате корректный набор записей. Параллельно можно включать SQL-логирование и проверять, что получившийся запрос соответствует ожиданиям и использует нужные индексы. Это поможет поймать ситуации, когда спецификации неожиданно генерируют не тот `where` или `join`.
 
-**Gradle (Groovy DSL) — зависимости для спецификаций**
-
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
-```
-
-**Java — сущности, репозиторий со спеками и билдер условий**
+Ниже пример: сущность `Customer`, DTO фильтра и набор спецификаций, плюс сервис, который собирает их и использует с пагинацией. Java и Kotlin варианты делают одно и то же — динамический поиск клиентов по email, статусу и диапазону дат регистрации.
 
 ```java
-package com.example.spec;
+package com.example.jpa.spec;
 
 import jakarta.persistence.*;
+import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.*;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.data.domain.*;
+
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 
 @Entity
-@Table(name = "customers")
-class Customer {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String name;
-    @Column(nullable = false) String city;
-    protected Customer() {}
-    Customer(String name, String city){ this.name=name; this.city=city; }
+@Table(name = "customer")
+public class Customer {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String email;
+
+    @Enumerated(EnumType.STRING)
+    private Status status;
+
+    @Column(name = "registered_at", nullable = false)
+    private Instant registeredAt;
+
+    public enum Status {
+        ACTIVE, INACTIVE, BLOCKED
+    }
+
+    // getters/setters
 }
 
-@Entity
-@Table(name = "orders")
-class Order {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "customer_id", nullable = false)
-    Customer customer;
-    @Column(nullable = false) String status;          // NEW, PAID, SHIPPED...
-    @Column(nullable = false) Long totalCents;
-    @Column(nullable = false) Instant createdAt = Instant.now();
-    protected Order() {}
-    Order(Customer c, String status, long total){ this.customer=c; this.status=status; this.totalCents=total; }
+class CustomerFilter {
+
+    private String emailLike;
+    private Customer.Status status;
+    private Instant registeredFrom;
+    private Instant registeredTo;
+
+    // getters/setters
 }
 
-interface OrderRepository extends JpaRepository<Order, Long>, JpaSpecificationExecutor<Order> { }
+interface CustomerRepository extends JpaRepository<Customer, Long>,
+        JpaSpecificationExecutor<Customer> {
+}
 
-record OrderFilter(String status, String city, Instant from, Instant to, Long minTotal, String q) {}
+final class CustomerSpecifications {
 
-final class OrderSpecs {
-    static Specification<Order> hasStatus(String status) {
-        return (root, cq, cb) -> status == null ? cb.conjunction() : cb.equal(root.get("status"), status);
+    private CustomerSpecifications() {
     }
-    static Specification<Order> customerCity(String city) {
-        return (root, cq, cb) -> {
-            if (city == null || city.isBlank()) return cb.conjunction();
-            var join = root.join("customer");
-            return cb.equal(cb.lower(join.get("city")), city.toLowerCase());
+
+    public static Specification<Customer> emailContains(String emailPart) {
+        return (root, query, cb) -> {
+            if (emailPart == null || emailPart.isBlank()) {
+                return cb.conjunction();
+            }
+            return cb.like(cb.lower(root.get("email")), "%" + emailPart.toLowerCase() + "%");
         };
     }
-    static Specification<Order> createdFrom(Instant from) {
-        return (root, cq, cb) -> from == null ? cb.conjunction() : cb.greaterThanOrEqualTo(root.get("createdAt"), from);
-    }
-    static Specification<Order> createdTo(Instant to) {
-        return (root, cq, cb) -> to == null ? cb.conjunction() : cb.lessThan(root.get("createdAt"), to);
-    }
-    static Specification<Order> minTotal(Long minTotal) {
-        return (root, cq, cb) -> minTotal == null ? cb.conjunction() : cb.ge(root.get("totalCents"), minTotal);
-    }
-    static Specification<Order> query(String q) {
-        return (root, cq, cb) -> {
-            if (q == null || q.isBlank()) return cb.conjunction();
-            var like = "%" + q.toLowerCase().trim() + "%";
-            var join = root.join("customer");
-            return cb.or(
-                cb.like(cb.lower(join.get("name")), like),
-                cb.like(cb.lower(root.get("status")), like)
-            );
+
+    public static Specification<Customer> hasStatus(Customer.Status status) {
+        return (root, query, cb) -> {
+            if (status == null) {
+                return cb.conjunction();
+            }
+            return cb.equal(root.get("status"), status);
         };
     }
-    static Specification<Order> fromFilter(OrderFilter f) {
-        return Specification.where(hasStatus(f.status()))
-                .and(customerCity(f.city()))
-                .and(createdFrom(f.from()))
-                .and(createdTo(f.to()))
-                .and(minTotal(f.minTotal()))
-                .and(query(f.q()));
+
+    public static Specification<Customer> registeredBetween(Instant from, Instant to) {
+        return (root, query, cb) -> {
+            if (from == null && to == null) {
+                return cb.conjunction();
+            }
+            if (from != null && to != null) {
+                return cb.between(root.get("registeredAt"), from, to);
+            }
+            if (from != null) {
+                return cb.greaterThanOrEqualTo(root.get("registeredAt"), from);
+            }
+            return cb.lessThanOrEqualTo(root.get("registeredAt"), to);
+        };
+    }
+
+    public static Specification<Customer> fromFilter(CustomerFilter filter) {
+        Objects.requireNonNull(filter, "filter must not be null");
+        return Specification
+                .where(emailContains(filter.getEmailLike()))
+                .and(hasStatus(filter.getStatus()))
+                .and(registeredBetween(filter.getRegisteredFrom(), filter.getRegisteredTo()));
     }
 }
 
 @Service
-class OrderService {
-    private final OrderRepository repo;
-    OrderService(OrderRepository repo){ this.repo = repo; }
+class CustomerSearchService {
 
-    @Transactional(readOnly = true)
-    public Page<Order> find(OrderFilter f, int page, int size) {
-        Sort sort = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
-        Pageable pageable = PageRequest.of(page, size, sort);
-        return repo.findAll(OrderSpecs.fromFilter(f), pageable);
+    private final CustomerRepository customerRepository;
+
+    CustomerSearchService(CustomerRepository customerRepository) {
+        this.customerRepository = customerRepository;
+    }
+
+    public Page<Customer> search(CustomerFilter filter, int page, int size) {
+        Specification<Customer> spec = CustomerSpecifications.fromFilter(filter);
+        Pageable pageable = PageRequest.of(page, size, Sort.by("registeredAt").descending());
+        return customerRepository.findAll(spec, pageable);
     }
 }
 ```
 
-**Kotlin — те же сущности/спеки и сервис**
-
 ```kotlin
-package com.example.spec
+package com.example.jpa.spec
 
 import jakarta.persistence.*
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
 import org.springframework.data.jpa.domain.Specification
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor
-import org.springframework.data.domain.Page
-import org.springframework.data.domain.PageRequest
-import org.springframework.data.domain.Pageable
-import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
 
 @Entity
-@Table(name = "customers")
+@Table(name = "customer")
 class Customer(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false) var name: String = "",
-    @Column(nullable = false) var city: String = ""
+
+    var email: String = "",
+
+    @Enumerated(EnumType.STRING)
+    var status: Status = Status.ACTIVE,
+
+    @Column(name = "registered_at", nullable = false)
+    var registeredAt: Instant = Instant.now()
+) {
+    enum class Status {
+        ACTIVE, INACTIVE, BLOCKED
+    }
+}
+
+data class CustomerFilter(
+    val emailLike: String? = null,
+    val status: Customer.Status? = null,
+    val registeredFrom: Instant? = null,
+    val registeredTo: Instant? = null
 )
 
-@Entity
-@Table(name = "orders")
-class Order(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "customer_id", nullable = false)
-    var customer: Customer? = null,
-    @Column(nullable = false) var status: String = "",
-    @Column(nullable = false) var totalCents: Long = 0,
-    @Column(nullable = false) var createdAt: Instant = Instant.now()
-)
+interface CustomerRepository : JpaRepository<Customer, Long>,
+    JpaSpecificationExecutor<Customer>
 
-interface OrderRepository : JpaRepository<Order, Long>, JpaSpecificationExecutor<Order>
+object CustomerSpecifications {
 
-data class OrderFilter(
-    val status: String? = null,
-    val city: String? = null,
-    val from: Instant? = null,
-    val to: Instant? = null,
-    val minTotal: Long? = null,
-    val q: String? = null
-)
-
-object OrderSpecs {
-    fun hasStatus(status: String?) = Specification<Order> { root, _, cb ->
-        if (status.isNullOrBlank()) cb.conjunction() else cb.equal(root.get<String>("status"), status)
-    }
-    fun customerCity(city: String?) = Specification<Order> { root, _, cb ->
-        if (city.isNullOrBlank()) cb.conjunction()
-        else cb.equal(cb.lower(root.join<Any, Any>("customer").get("city")), city.lowercase())
-    }
-    fun createdFrom(from: Instant?) = Specification<Order> { root, _, cb ->
-        if (from == null) cb.conjunction() else cb.greaterThanOrEqualTo(root.get("createdAt"), from)
-    }
-    fun createdTo(to: Instant?) = Specification<Order> { root, _, cb ->
-        if (to == null) cb.conjunction() else cb.lessThan(root.get("createdAt"), to)
-    }
-    fun minTotal(min: Long?) = Specification<Order> { root, _, cb ->
-        if (min == null) cb.conjunction() else cb.ge(root.get("totalCents"), min)
-    }
-    fun query(q: String?) = Specification<Order> { root, _, cb ->
-        if (q.isNullOrBlank()) cb.conjunction() else run {
-            val like = "%${q.trim().lowercase()}%"
-            val c = root.join<Any, Any>("customer")
-            cb.or(
-                cb.like(cb.lower(c.get("name")), like),
-                cb.like(cb.lower(root.get("status")), like)
-            )
+    fun emailContains(emailPart: String?): Specification<Customer> =
+        Specification { root, _, cb ->
+            if (emailPart.isNullOrBlank()) {
+                cb.conjunction()
+            } else {
+                cb.like(
+                    cb.lower(root.get("email")),
+                    "%${emailPart.lowercase()}%"
+                )
+            }
         }
-    }
-    fun fromFilter(f: OrderFilter) =
-        Specification.where(hasStatus(f.status))
-            ?.and(customerCity(f.city))
-            ?.and(createdFrom(f.from))
-            ?.and(createdTo(f.to))
-            ?.and(minTotal(f.minTotal))
-            ?.and(query(f.q))
+
+    fun hasStatus(status: Customer.Status?): Specification<Customer> =
+        Specification { root, _, cb ->
+            if (status == null) cb.conjunction()
+            else cb.equal(root.get<Customer.Status>("status"), status)
+        }
+
+    fun registeredBetween(from: Instant?, to: Instant?): Specification<Customer> =
+        Specification { root, _, cb ->
+            when {
+                from == null && to == null -> cb.conjunction()
+                from != null && to != null ->
+                    cb.between(root.get("registeredAt"), from, to)
+
+                from != null ->
+                    cb.greaterThanOrEqualTo(root.get("registeredAt"), from)
+
+                else ->
+                    cb.lessThanOrEqualTo(root.get("registeredAt"), to)
+            }
+        }
+
+    fun fromFilter(filter: CustomerFilter): Specification<Customer> =
+        Specification.where(emailContains(filter.emailLike))
+            ?.and(hasStatus(filter.status))
+            ?.and(registeredBetween(filter.registeredFrom, filter.registeredTo))
+            ?: Specification.where(null)
 }
 
 @Service
-class OrderService(private val repo: OrderRepository) {
+class CustomerSearchService(
+    private val customerRepository: CustomerRepository
+) {
 
-    @Transactional(readOnly = true)
-    fun find(f: OrderFilter, page: Int, size: Int): Page<Order> {
-        val sort = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"))
-        val pageable: Pageable = PageRequest.of(page, size, sort)
-        return repo.findAll(OrderSpecs.fromFilter(f)!!, pageable)
+    fun search(filter: CustomerFilter, page: Int, size: Int): Page<Customer> {
+        val spec = CustomerSpecifications.fromFilter(filter)
+        val pageable = PageRequest.of(page, size, Sort.by("registeredAt").descending())
+        return customerRepository.findAll(spec, pageable)
     }
 }
 ```
@@ -5724,197 +5332,291 @@ class OrderService(private val repo: OrderRepository) {
 
 ## Criteria API: типобезопасность vs шум кода — где помогает
 
-Criteria API — низкоуровневый, но мощный способ формировать запросы программно. В отличие от `Specification`, вы управляете *всем* запросом: `select`, `where`, `order by`, `group by`, конструктор-проекции, `distinct`. Это полезно для отчётных запросов, агрегатов, сложных вычислений и тех мест, где хочется типобезопасности без строкового JPQL. Цена — «шум кода» и бойлерплейт: билдер, корни, джоины, список предикатов, отдельный `count` для пагинации.
+JPA Criteria API — это базовый строитель запросов, на котором, по сути, живут и `Specification<T>`, и часть Hibernate-магии. Его цель — дать вам возможность конструировать запросы динамически, но при этом с типобезопасностью: вместо строковых имён полей вы работаете с типизированными путями и методами `cb.equal`, `cb.greaterThan`, `cb.and`, `cb.or` и т.п. Цена за это — очень многословный код: простое условие превращается в несколько строк с `Root`, `CriteriaQuery`, `Predicate`. Поэтому Criteria редко используют прямо в сервисах — чаще его прячут в спецификации или infrastructural-код.
 
-С типобезопасностью всё неоднозначно. «Из коробки» вы пишете `root.get("status")` — строка, не типобезопасно. Чтобы получить настоящую типобезопасность, используйте **статический метамодел** (классы `Order_`, `Customer_`) — их генерирует аннотационный процессор `hibernate-jpamodelgen`. Тогда вы пишете `root.get(Order_.status)` и компилятор ловит опечатки. Минус — нужно настроить `annotationProcessor` и держать генерацию в сборке.
+Базовая схема работы с Criteria такова: вы берёте `CriteriaBuilder` из `EntityManager`, создаёте `CriteriaQuery<T>`, объявляете корень `Root<T> root = query.from(T.class)` и затем собираете список предикатов. После этого говорите `query.select(root).where(cb.and(predicates...))`, создаёте `TypedQuery<T>` через `entityManager.createQuery(query)` и уже на нём настраиваете пагинацию и выполняете запрос. Всё довольно механистично, но даёт полный контроль: вы можете делать join’ы, подзапросы, группировки и т.д.
 
-Criteria удобен для **проекций**: `cb.construct(Dto.class, ...)` позволяет вернуть DTO без промежуточной сущности. Это экономит PC и делает список «тонким». Часто это лучший выбор для страниц-таблиц с десятками тысяч строк/час: вы не тянете графы, не держите сущности управляемыми, формируете JSON мгновенно.
+Типобезопасность Criteria заключается в том, что вы оперируете типами: `root.get("amount")` возвращает `Path<BigDecimal>`, и IDE/компилятор сразу скажут, если вы попытаетесь сравнить его с `String`. Но имена полей всё равно указываются строкой, и переименование поля в entity без корректного рефакторинга приведёт к runtime-ошибке. Для полной типобезопасности нужны метамодели (`Static Metamodel`) или QueryDSL; Criteria-метамодель в JPA есть, но на практике ею пользуются немногие, как раз из-за сложности и объёма кода.
 
-Пагинация требует двух запросов: основной и `count`. Если у вас `distinct` или `join` на «многие», важно аккуратно считать `count` — либо по подзапросу, либо с `countDistinct`. В Hibernate 6 лучше явно строить отдельный `CriteriaQuery<Long>` для счётчика, повторяя `where`-часть.
+Criteria API особенно полезна, когда вам нужно строить сложные динамические запросы на уровне инфраструктуры: например, в кастомном репозитории, который умеет читать фильтры в виде DTO и превращать их в запрос, или в generic-слое, который работает с разными сущностями одинаково. Там, где заранее неизвестно, какие именно поля будут участвовать в фильтрации или сортировке, Criteria позволяет программно собрать нужные условия, не пиша руками JPQL.
 
-Критерии легко выражают условные фильтры: набираете `List<Predicate>`, добавляете по мере наличия параметров, потом `query.where(cb.and(preds...))`. Это удобнее, чем «склеивать» строки JPQL. При этом сохраняется контроль над `order by`: можно применять сортировку из `Pageable` вручную, преобразовав `Sort.Order` в `Order` (Criteria).
+Пример типичного сценария: поиск заказов по нескольким опциональным параметрам — email клиента, диапазон дат, минимальная сумма и список статусов. В Criteria это реализуется как список `Predicate`, который вы постепенно наполняете в зависимости от заполненности фильтра. Для связей (`Order` → `Customer`) вы создаёте `Join` и добавляете условия уже на него. Код получается длиннее, чем JPQL, но легко расширяется, если фильтр вырос.
 
-Если нужны агрегаты — `cb.sum`, `cb.count`, `cb.avg` и `groupBy`/`having`. Критерии становятся особенно полезными, когда отчёт меняется «по кнопке» (добавился новый столбец, разрез) — вы программно собираете разные формы запросов без риска SQL-инъекций и опечаток.
+С join’ами Criteria работает напрямую: `Join<Order, Customer> customerJoin = root.join("customer", JoinType.INNER)`. Вы можете строить сложные цепочки join’ов, добавлять условия на них, использовать `fetch` для подгрузки коллекций. Это очень мощный инструмент, особенно для отчётных запросов и агрегатов, но требует дисциплины: легко написать запрос, который будет красиво выглядеть в Java, но плохо работать в SQL (лишние join’ы, отсутствие индексов, фильтры «не там»).
 
-Но не всё стоит делать Criteria. Для простых `findBy...` репозитории Spring Data и спеки короче и читаемее. Для действительно сложных фильтров и подзапросов QueryDSL (см. следующий пункт) нередко даёт более чистый код. Считайте Criteria «интермедиатным» инструментом: мощно, но шумно.
+Пагинация и сортировка в Criteria делаются вручную: `query.orderBy(cb.desc(root.get("createdAt")))`, а затем на `TypedQuery` — `setFirstResult(page * size)` и `setMaxResults(size)`. В связке со Spring Boot вы можете обернуть это в сервисный метод, принимающий `Pageable`, и маппить `Sort.Order` на `Order` Criteria: для каждого `Sort.Order` добавляете в `orderBy` либо `cb.asc(path)`, либо `cb.desc(path)`. Здесь нужно аккуратно относиться к имёнам полей, чтобы не допустить SQL-инъекцию: лучше жёстко ограничивать список колонок, по которым разрешена сортировка.
 
-Производительность определяется не критерием, а качеством SQL. Проверяйте планы, ставьте индексы, следите за `distinct`. Не используйте коллекционные fetch-join в страницах: либо «карточка по id», либо проекции.
+Где Criteria реально побеждает строковый JPQL — это там, где запрос сильно динамический: например, гибкая фильтрация по набору настроек пользователя, где количество условий зависит от конфигурации, или generic-поисковые репозитории, которые позволяют выбирать поля фильтрации на лету. Писать такой код на JPQL практически невозможно без адского конкатенирования строк и ручного контроля параметров.
 
-И ещё — транзакции. Критерии — просто запрос; все правила (readOnly, fetchSize, L1-кэш) применимы. Возвращайте DTO, а не сущности, если это таблица.
+Но есть и обратная сторона. Код на Criteria API тяжело читать и ревьюить, особенно если нет чёткого стиля. В команде лучше принять правило: Criteria используется только в инфраструктурном слое (спеки, кастомные репозитории), а на уровне бизнес-логики мы оперируем понятными методами сервисов и репозиториев. Тогда большинство разработчиков не будут вынуждены регулярно погружаться в дебри `CriteriaBuilder`, а сосредоточатся на доменных задачах.
 
-**Gradle — добавить генерацию метамодели (по желанию)**
+Отладка Criteria-запросов сводится к включению SQL-логов и анализу сгенерированного запроса. Hibernate сам генерирует JPQL → SQL, и иногда результат отличается от того, что вы ожидали. Поэтому при первых внедрениях Criteria обязательно проверяйте SQL глазами, смотрите планы выполнения (EXPLAIN ANALYZE) и убеждайтесь, что используются нужные индексы, нет лишних join’ов и сортировок по неиндексированным колонкам.
 
-*Groovy DSL*
-
-```groovy
-dependencies {
-    annotationProcessor 'org.hibernate.orm:hibernate-jpamodelgen:6.5.2.Final'
-}
-```
-
-*Kotlin DSL*
-
-```kotlin
-dependencies {
-    annotationProcessor("org.hibernate.orm:hibernate-jpamodelgen:6.5.2.Final")
-}
-```
-
-**Java — Criteria с динамическими фильтрами, проекцией и отдельным count**
+Ниже пример: кастомный репозиторий для сущности `Order`, где мы вручную используем Criteria API для динамического поиска по фильтру `OrderFilter`. Java-вариант показывает работу с `CriteriaBuilder` и встроенной пагинацией, Kotlin-вариант — то же самое в более компактном виде.
 
 ```java
-package com.example.criteria;
+package com.example.jpa.criteria;
 
 import jakarta.persistence.*;
 import jakarta.persistence.criteria.*;
-import org.springframework.stereotype.Repository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.*;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "orders_c")
-class OrderC {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String status;
-    @Column(nullable = false) Long totalCents;
-    @Column(nullable = false) Instant createdAt = Instant.now();
-    protected OrderC() {}
-    OrderC(String status, long total){ this.status=status; this.totalCents=total; }
+@Table(name = "orders")
+public class Order {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String number;
+
+    @Column(nullable = false)
+    private BigDecimal amount;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    private Customer customer;
+
+    // getters/setters
 }
 
-record OrderRow(Long id, String status, Long totalCents, Instant createdAt){}
+class OrderFilter {
+
+    private String customerEmail;
+    private Instant createdFrom;
+    private Instant createdTo;
+    private BigDecimal minAmount;
+
+    // getters/setters
+}
 
 @Repository
-class OrderCriteriaRepo {
-    @PersistenceContext EntityManager em;
+@Transactional(readOnly = true)
+public class OrderCriteriaRepository {
 
-    public Page<OrderRow> search(String status, Instant from, Instant to, Pageable pageable) {
+    @PersistenceContext
+    private EntityManager em;
+
+    public Page<Order> findByFilter(OrderFilter filter, Pageable pageable) {
         CriteriaBuilder cb = em.getCriteriaBuilder();
 
-        // Основной запрос на DTO
-        CriteriaQuery<OrderRow> cq = cb.createQuery(OrderRow.class);
-        Root<OrderC> root = cq.from(OrderC.class);
-        List<Predicate> preds = new ArrayList<>();
-        if (status != null) preds.add(cb.equal(root.get("status"), status));
-        if (from != null) preds.add(cb.greaterThanOrEqualTo(root.get("createdAt"), from));
-        if (to != null) preds.add(cb.lessThan(root.get("createdAt"), to));
+        CriteriaQuery<Order> cq = cb.createQuery(Order.class);
+        Root<Order> root = cq.from(Order.class);
+        Join<Order, Customer> customerJoin = root.join("customer", JoinType.INNER);
 
-        cq.select(cb.construct(OrderRow.class,
-                root.get("id"), root.get("status"), root.get("totalCents"), root.get("createdAt")))
-          .where(cb.and(preds.toArray(Predicate[]::new)));
+        List<Predicate> predicates = new ArrayList<>();
 
-        // Сортировка из Pageable
-        List<jakarta.persistence.criteria.Order> orders = new ArrayList<>();
-        for (Sort.Order o : pageable.getSort()) {
-            Path<?> p = root.get(o.getProperty());
-            orders.add(o.isAscending() ? cb.asc(p) : cb.desc(p));
+        if (filter.getCustomerEmail() != null && !filter.getCustomerEmail().isBlank()) {
+            predicates.add(
+                    cb.like(
+                            cb.lower(customerJoin.get("email")),
+                            "%" + filter.getCustomerEmail().toLowerCase() + "%"
+                    )
+            );
         }
-        if (!orders.isEmpty()) cq.orderBy(orders);
 
-        TypedQuery<OrderRow> q = em.createQuery(cq)
-            .setFirstResult((int) pageable.getOffset())
-            .setMaxResults(pageable.getPageSize());
-        List<OrderRow> content = q.getResultList();
+        if (filter.getCreatedFrom() != null) {
+            predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), filter.getCreatedFrom()));
+        }
 
-        // Отдельный count
-        CriteriaQuery<Long> countQ = cb.createQuery(Long.class);
-        Root<OrderC> countRoot = countQ.from(OrderC.class);
-        countQ.select(cb.count(countRoot))
-              .where(cb.and(preds.stream().map(p -> p)  // пересоздать на countRoot
-                      .toArray(Predicate[]::new))); // для краткости демонстрации оставим упрощённо
-        long total = em.createQuery(countQ).getSingleResult();
+        if (filter.getCreatedTo() != null) {
+            predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), filter.getCreatedTo()));
+        }
+
+        if (filter.getMinAmount() != null) {
+            predicates.add(cb.greaterThanOrEqualTo(root.get("amount"), filter.getMinAmount()));
+        }
+
+        cq.select(root).where(cb.and(predicates.toArray(Predicate[]::new)));
+
+        if (pageable.getSort().isSorted()) {
+            List<Order> orders = new ArrayList<>();
+            pageable.getSort().forEach(order -> {
+                Path<?> path = root.get(order.getProperty());
+                orders.add(order.isAscending() ? cb.asc(path) : cb.desc(path));
+            });
+            cq.orderBy(orders);
+        }
+
+        TypedQuery<Order> query = em.createQuery(cq);
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+
+        List<Order> content = query.getResultList();
+
+        CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
+        Root<Order> countRoot = countQuery.from(Order.class);
+        Join<Order, Customer> countCustomerJoin = countRoot.join("customer", JoinType.INNER);
+
+        List<Predicate> countPredicates = new ArrayList<>();
+
+        if (filter.getCustomerEmail() != null && !filter.getCustomerEmail().isBlank()) {
+            countPredicates.add(
+                    cb.like(
+                            cb.lower(countCustomerJoin.get("email")),
+                            "%" + filter.getCustomerEmail().toLowerCase() + "%"
+                    )
+            );
+        }
+        if (filter.getCreatedFrom() != null) {
+            countPredicates.add(cb.greaterThanOrEqualTo(countRoot.get("createdAt"), filter.getCreatedFrom()));
+        }
+        if (filter.getCreatedTo() != null) {
+            countPredicates.add(cb.lessThanOrEqualTo(countRoot.get("createdAt"), filter.getCreatedTo()));
+        }
+        if (filter.getMinAmount() != null) {
+            countPredicates.add(cb.greaterThanOrEqualTo(countRoot.get("amount"), filter.getMinAmount()));
+        }
+
+        countQuery.select(cb.countDistinct(countRoot))
+                .where(cb.and(countPredicates.toArray(Predicate[]::new)));
+
+        Long total = em.createQuery(countQuery).getSingleResult();
 
         return new PageImpl<>(content, pageable, total);
     }
 }
-
-@Service
-class OrderCriteriaService {
-    private final OrderCriteriaRepo repo;
-    OrderCriteriaService(OrderCriteriaRepo repo){ this.repo = repo; }
-
-    @Transactional(readOnly = true)
-    public Page<OrderRow> find(String status, Instant from, Instant to, int page, int size) {
-        return repo.search(status, from, to, PageRequest.of(page, size, Sort.by("createdAt").descending().and(Sort.by("id").descending())));
-    }
-}
 ```
 
-**Kotlin — Criteria с DTO-проекцией**
-
 ```kotlin
-package com.example.criteria
+package com.example.jpa.criteria
 
 import jakarta.persistence.*
-import jakarta.persistence.criteria.*
-import org.springframework.data.domain.*
+import jakarta.persistence.criteria.JoinType
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.PageImpl
+import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Repository
-import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 import java.time.Instant
 
 @Entity
-@Table(name = "orders_c")
-class OrderC(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "orders")
+class Order(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false) var status: String = "",
-    @Column(nullable = false) var totalCents: Long = 0,
-    @Column(nullable = false) var createdAt: Instant = Instant.now()
+
+    var number: String = "",
+
+    @Column(nullable = false)
+    var amount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "created_at", nullable = false)
+    var createdAt: Instant = Instant.now(),
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    var customer: Customer? = null
 )
 
-data class OrderRow(val id: Long, val status: String, val totalCents: Long, val createdAt: Instant)
+data class OrderFilter(
+    val customerEmail: String? = null,
+    val createdFrom: Instant? = null,
+    val createdTo: Instant? = null,
+    val minAmount: BigDecimal? = null
+)
 
 @Repository
-class OrderCriteriaRepo(@PersistenceContext private val em: EntityManager) {
+@Transactional(readOnly = true)
+class OrderCriteriaRepository(
 
-    fun search(status: String?, from: Instant?, to: Instant?, pageable: Pageable): Page<OrderRow> {
+    @PersistenceContext
+    private val em: EntityManager
+) {
+
+    fun findByFilter(filter: OrderFilter, pageable: Pageable): Page<Order> {
         val cb = em.criteriaBuilder
 
-        val cq: CriteriaQuery<OrderRow> = cb.createQuery(OrderRow::class.java)
-        val root: Root<OrderC> = cq.from(OrderC::class.java)
-        val preds = mutableListOf<Predicate>()
-        if (status != null) preds += cb.equal(root.get<String>("status"), status)
-        if (from != null) preds += cb.greaterThanOrEqualTo(root.get("createdAt"), from)
-        if (to != null) preds += cb.lessThan(root.get("createdAt"), to)
+        val cq = cb.createQuery(Order::class.java)
+        val root = cq.from(Order::class.java)
+        val customerJoin = root.join<Order, Customer>("customer", JoinType.INNER)
 
-        cq.select(cb.construct(OrderRow::class.java,
-            root.get<Long>("id"), root.get<String>("status"),
-            root.get<Long>("totalCents"), root.get<Instant>("createdAt")
-        )).where(cb.and(*preds.toTypedArray()))
+        val predicates = mutableListOf<jakarta.persistence.criteria.Predicate>()
 
-        val orders = pageable.sort.map { o ->
-            val path = root.get<Any>(o.property)
-            if (o.isAscending) cb.asc(path) else cb.desc(path)
-        }.toList()
-        if (orders.isNotEmpty()) cq.orderBy(orders)
+        filter.customerEmail
+            ?.takeIf { it.isNotBlank() }
+            ?.let {
+                predicates += cb.like(
+                    cb.lower(customerJoin.get("email")),
+                    "%${it.lowercase()}%"
+                )
+            }
 
-        val content = em.createQuery(cq)
-            .setFirstResult(pageable.offset.toInt())
-            .setMaxResults(pageable.pageSize)
-            .resultList
+        filter.createdFrom?.let {
+            predicates += cb.greaterThanOrEqualTo(root.get("createdAt"), it)
+        }
 
-        val countQ: CriteriaQuery<Long> = cb.createQuery(Long::class.java)
-        val countRoot = countQ.from(OrderC::class.java)
-        // Для краткости: в реальном коде пересоберите предикаты на countRoot
-        countQ.select(cb.count(countRoot)).where(cb.and(*preds.toTypedArray()))
-        val total = em.createQuery(countQ).singleResult
+        filter.createdTo?.let {
+            predicates += cb.lessThanOrEqualTo(root.get("createdAt"), it)
+        }
+
+        filter.minAmount?.let {
+            predicates += cb.greaterThanOrEqualTo(root.get("amount"), it)
+        }
+
+        cq.select(root).where(*predicates.toTypedArray())
+
+        if (pageable.sort.isSorted) {
+            val orders = pageable.sort.map { order ->
+                val path = root.get<Any>(order.property)
+                if (order.isAscending) cb.asc(path) else cb.desc(path)
+            }
+            cq.orderBy(orders)
+        }
+
+        val query = em.createQuery(cq)
+        query.firstResult = pageable.offset.toInt()
+        query.maxResults = pageable.pageSize
+        val content = query.resultList
+
+        val countCq = cb.createQuery(Long::class.java)
+        val countRoot = countCq.from(Order::class.java)
+        val countCustomerJoin = countRoot.join<Order, Customer>("customer", JoinType.INNER)
+
+        val countPredicates = mutableListOf<jakarta.persistence.criteria.Predicate>()
+
+        filter.customerEmail
+            ?.takeIf { it.isNotBlank() }
+            ?.let {
+                countPredicates += cb.like(
+                    cb.lower(countCustomerJoin.get("email")),
+                    "%${it.lowercase()}%"
+                )
+            }
+
+        filter.createdFrom?.let {
+            countPredicates += cb.greaterThanOrEqualTo(countRoot.get("createdAt"), it)
+        }
+
+        filter.createdTo?.let {
+            countPredicates += cb.lessThanOrEqualTo(countRoot.get("createdAt"), it)
+        }
+
+        filter.minAmount?.let {
+            countPredicates += cb.greaterThanOrEqualTo(countRoot.get("amount"), it)
+        }
+
+        countCq.select(cb.countDistinct(countRoot))
+            .where(*countPredicates.toTypedArray())
+
+        val total = em.createQuery(countCq).singleResult
 
         return PageImpl(content, pageable, total)
     }
-}
-
-@Service
-class OrderCriteriaService(private val repo: OrderCriteriaRepo) {
-    @Transactional(readOnly = true)
-    fun find(status: String?, from: Instant?, to: Instant?, page: Int, size: Int): Page<OrderRow> =
-        repo.search(status, from, to, PageRequest.of(page, size, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"))))
 }
 ```
 
@@ -5922,1749 +5624,1807 @@ class OrderCriteriaService(private val repo: OrderCriteriaRepo) {
 
 ## QueryDSL: предикаты, join-ы, подзапросы, «тяжёлые» фильтры — когда лучше, чем строковый JPQL
 
-QueryDSL даёт типобезопасный DSL-язык поверх JPA с генерацией `Q`-классов по вашим сущностям. В коде вы оперируете полями как свойствами (`QOrder.order.status.eq("PAID")`), собираете сложные предикаты через `BooleanBuilder`, пишете подзапросы и join-ы с минимальным шумом. В итоге получается компактнее и безопаснее, чем Criteria, и выразительнее, чем строковый JPQL — особенно для «тяжёлых» поисков, где динамики много.
+QueryDSL решает ту же задачу, что и Criteria API, но делает это в куда более приятной форме. Вместо того чтобы писать многословный код с `CriteriaBuilder`, вы работаете с сгенерированными классами `QEntity` и fluent-DSL: `QOrder.order.amount.gt(...)`, `order.customer.email.eq(...)`, `query.select(order).from(order).where(...)`. В результате запросы остаются типобезопасными, но читаются почти как SQL/JPQL. Цена — необходимость генерировать `Q`-классы на этапе сборки и тянуть дополнительную зависимость.
 
-Сильная сторона QueryDSL — **композиция предикатов**. Вы легко добавляете условия при наличии параметра (`if (p != null) builder.and(...);`) и переиспользуете их в разных запросах. Для страниц — отдельный плюс: есть готовые `offset/limit`, быстрое сопоставление со `Sort` (можно написать адаптер), проекции в DTO через `Projections.constructor/fields`.
+Чтобы использовать QueryDSL с JPA, вам нужны две зависимости: сама библиотека `querydsl-jpa` и APT-модуль `querydsl-apt` с профилем `jpa` для генерации метамодели. В Gradle Groovy-проекте вы добавляете `annotationProcessor 'com.querydsl:querydsl-apt:5.0.0:jpa'`, в Kotlin-проекте — `kapt("com.querydsl:querydsl-apt:5.0.0:jpa")`. После сборки у вас появляются классы `QOrder`, `QCustomer` и т.д. в `build/generated`. Они содержат типизированные поля (`StringPath`, `NumberPath`, `DateTimePath`), через которые вы строите выражения.
 
-Подзапросы и агрегации выглядят естественно: создаёте `JPAExpressions.select(...)`, вкладываете в `where` или используете в `select`. Для кейсов «покажи заказы с максимальной суммой клиента», «все клиенты с количеством заказов > N» QueryDSL пишет читаемо, без строковых конкатенаций и без длинных билдеров Criteria.
+Основные строительные блоки QueryDSL — это `JPAQueryFactory` и предикаты. `JPAQueryFactory` оборачивает `EntityManager` и даёт удобный API `select`, `from`, `join`, `where`, `orderBy`, `offset`, `limit`. Предикаты — это выражения вроде `qOrder.amount.gt(BigDecimal.TEN)`, которые можно комбинировать через `.and` / `.or`. Всё типобезопасно: вы не сможете сравнить поле `amount` с `String`, компилятор не пропустит. Отдельный плюс — автокомплит IDE по полям сущностей: вы не пишете имена строками, а выбираете их из подсказки.
 
-С fetch join тоже приятно: `join(order.customer, customer).fetchJoin()` — и всё. Но действуют те же правила, что и в JPA: коллекционные fetch-join и пагинация не дружат; выполняйте их только для «карточек» или применяйте проекции. Для листингов предпочитайте `select(...)` на DTO/интерфейс — это «тонко» и быстро.
+С Spring Data JPA QueryDSL интегрируется через `QuerydslPredicateExecutor` или через кастомные репозитории с внедрением `JPAQueryFactory`. Первый вариант («предикаты как аргументы методов репозитория») удобен, если вы хотите экспонировать QueryDSL наверх: сервисы строят `Predicate` и отдают его в `findAll(predicate, pageable)`. Второй — когда вы хотите скрыть QueryDSL внутри репозитория и наружу отдавать только высокоуровневые методы `findOrdersByFilter(...)`.
 
-Интеграция со Spring удобна: регистрируете `JPAQueryFactory` как бин (на основе `EntityManager`), пишете кастомный репозиторий или компонент-DAO. Есть и `QuerydslPredicateExecutor` у Spring Data, но в проде чаще берут «ручной» `JPAQueryFactory`: он гибче и не навязывает глобальную схему фильтров.
+QueryDSL особенно выигрывает там, где запросы сложные: join нескольких таблиц, подзапросы, агрегации, фильтрация по вычисляемым выражениям. В строковом JPQL такие запросы быстро превращаются в нечитаемую простыню, Criteria — в лес вызовов `cb.something`, а QueryDSL позволяет аккуратно разбить их на части и даже вынести повторяющиеся фрагменты в методы, возвращающие `BooleanExpression`. Это делает код не только короче, но и сильно понятнее для ревью.
 
-Про версии: с Hibernate 6 и Spring Boot 3 нужны артефакты `:jakarta`. Генерация `Q`-классов — через `annotationProcessor` (Java) или `kapt` (Kotlin). Не забудьте добавить `jakarta.annotation-api` и `jakarta.persistence-api` как `annotationProcessor`/`kapt`, иначе процессор не увидит аннотаций.
+Предикаты QueryDSL легко комбинировать. Вы можете начать с `BooleanExpression expr = Expressions.asBoolean(true).isTrue();` и затем наращивать: `expr = expr.and(qOrder.createdAt.goe(from))`, `expr = expr.and(qOrder.status.in(statuses))` и т.д. В Kotlin это ещё приятнее благодаря extension-функциям и `null`-безопасности: можно собирать `BooleanBuilder` или писать маленькие функции `fun hasStatus(status: Status?) = status?.let { qOrder.status.eq(it) }`.
 
-Пагинация в QueryDSL 5+ делается «вручную»: сначала `fetch()` содержимое с `offset/limit`, затем отдельный `count()` (или оптимизированный подсчёт, если фильтр «несложный»). Это честнее и прозрачнее, чем единый «fetchResults» из старых версий, и даёт шанс оптимизировать count (например, не делать его, если страница не полная).
+Пагинация и сортировка в QueryDSL делаются довольно естественно: `query.offset(pageable.offset).limit(pageable.pageSize).orderBy(...)`. Есть утилиты вроде `Querydsl` и `QuerydslRepositorySupport`, которые умеют маппить `Pageable` на `orderBy`, но во многих случаях проще написать маппинг вручную или ограничиться несколькими фиксированными полями сортировки. Главное — не забыть о `orderBy` при сложных запросах, иначе у вас будут плавающие результаты на разных страницах.
 
-Наблюдаемость и тесты: логируйте SQL Hibernate’ом, проверяйте планы и следите за N+1. QueryDSL легко подталкивает к fetch join «на всякий случай» — не делайте так в списках. Помните правило: списки — проекции; карточки — fetch join. И держите интеграционные тесты на самые тяжёлые фильтры.
+По сравнению с Criteria API QueryDSL почти всегда выигрывает по читабельности. Код короче, вложенность меньше, и IDE лучше помогает. Поэтому если в проекте есть серьёзные запросы, которые сложно выразить через Spring Data или JPQL, QueryDSL часто становится стандартным инструментом. Недостаток — дополнительный шаг генерации и зависимость от конкретной библиотеки: если вы когда-нибудь решите уйти с QueryDSL, придётся переписать немало кода.
 
-Наконец, типизация — это не только удобство, но и защита от регрессов. Переименование поля в сущности сломает сборку, а не прод. Для больших команд это ценно: меньше «тихих» падений в рантайме.
+Подводные камни у QueryDSL те же, что и у любого ORM-кода: N+1 на ленивых связях, неоптимальные join’ы, отсутствие нужных индексов. QueryDSL не делает запрос «хорошим» автоматически, он лишь делает его легче читаемым и типобезопасным. Поэтому всё равно нужно смотреть SQL, анализировать планы, следить за размером выборок. Отдельно стоит упомянуть, что старые методы вроде `fetchResults()` в последних версиях помечены deprecated, и лучше делать `fetch()` плюс отдельный count-запрос для пагинации.
 
-**Gradle — зависимости для QueryDSL (Hibernate 6 / Jakarta)**
+Ещё одна тонкость — генерация `Q`-классов при сложных схемах. Если вы злоупотребляете `@ManyToMany`, «комбинаторными» связями и наследованием, `Q`-модель может получиться громоздкой и шумной. Но это скорее индикатор проблем модели, чем QueryDSL. В здоровой доменной модели `Q`-классы выглядят вполне разумно, и работа с ними не вызывает боли.
 
-*Groovy DSL*
+Архитектурно разумно ограничить использование QueryDSL инфраструктурным слоем. Обычно это кастомные репозитории и, максимум, сервисы уровня «поиска» или «отчётности». Вы не хотите, чтобы весь бизнес-слой оперировал `Q`-классами — это сильно привязывает его к конкретному ORM/библиотеке. Лучше наружу отдавать уже понятные методы `searchOrders(filter)` и DTO, а QueryDSL оставлять в реализации.
+
+Ниже пример конфигурации Gradle для QueryDSL и простого репозитория, который использует `JPAQueryFactory` для поиска заказов по фильтру. В коде показаны Java и Kotlin варианты; логика одна: динамический фильтр по email клиента, диапазону дат и минимальной сумме.
 
 ```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
+// build.gradle (Groovy DSL) – зависимости QueryDSL
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'com.querydsl:querydsl-jpa:5.0.0:jakarta'
-    annotationProcessor 'com.querydsl:querydsl-apt:5.0.0:jakarta'
-    annotationProcessor 'jakarta.annotation:jakarta.annotation-api:2.1.1'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    implementation 'com.querydsl:querydsl-jpa:5.0.0'
     annotationProcessor 'jakarta.persistence:jakarta.persistence-api:3.1.0'
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
+    annotationProcessor 'com.querydsl:querydsl-apt:5.0.0:jpa'
 }
 ```
-
-*Kotlin DSL*
 
 ```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    kotlin("kapt") version "1.9.24"
-    java
-}
+// build.gradle.kts (Kotlin DSL)
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    implementation("com.querydsl:querydsl-jpa:5.0.0:jakarta")
-    kapt("com.querydsl:querydsl-apt:5.0.0:jakarta")
-    kapt("jakarta.annotation:jakarta.annotation-api:2.1.1")
+    runtimeOnly("org.postgresql:postgresql")
+
+    implementation("com.querydsl:querydsl-jpa:5.0.0")
     kapt("jakarta.persistence:jakarta.persistence-api:3.1.0")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
+    kapt("com.querydsl:querydsl-apt:5.0.0:jpa")
 }
 ```
 
-**Java — JPAQueryFactory бин, запрос c динамическими предикатами, DTO-проекция и отдельный count**
-
 ```java
-package com.example.qdsl;
+package com.example.jpa.querydsl;
 
-import com.querydsl.core.BooleanBuilder;
-import com.querydsl.core.types.Order;
-import com.querydsl.core.types.OrderSpecifier;
-import com.querydsl.core.types.Projections;
+import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import jakarta.persistence.*;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.*;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
 
 @Entity
-@Table(name = "customers_q")
-class CustomerQ {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @Column(nullable = false) String name;
-    @Column(nullable = false) String city;
+@Table(name = "orders")
+public class Order {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String number;
+
+    private BigDecimal amount;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    private Customer customer;
+
+    // getters/setters
 }
 
-@Entity
-@Table(name = "orders_q")
-class OrderQ {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    Long id;
-    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "customer_id", nullable = false)
-    CustomerQ customer;
-    @Column(nullable = false) String status;
-    @Column(nullable = false) Long totalCents;
-    @Column(nullable = false) Instant createdAt = Instant.now();
-}
+class OrderFilter {
 
-record OrderView(Long id, String customerName, String status, Long totalCents, Instant createdAt) {}
+    private String customerEmail;
+    private Instant createdFrom;
+    private Instant createdTo;
+    private BigDecimal minAmount;
 
-@Configuration
-class QuerydslConfig {
-    @PersistenceContext EntityManager em;
-    @Bean JPAQueryFactory jpaQueryFactory() { return new JPAQueryFactory(em); }
+    // getters/setters
 }
 
 @Repository
-class OrderQdslRepo {
-    private final JPAQueryFactory qf;
-    OrderQdslRepo(JPAQueryFactory qf){ this.qf = qf; }
+@Transactional(readOnly = true)
+public class OrderQuerydslRepository {
 
-    @Transactional(readOnly = true)
-    public Page<OrderView> search(String status, String city, Instant from, Instant to, Pageable pageable) {
-        QOrderQ o = QOrderQ.orderQ;
-        QCustomerQ c = QCustomerQ.customerQ;
+    private final JPAQueryFactory queryFactory;
 
-        BooleanBuilder where = new BooleanBuilder();
-        if (status != null) where.and(o.status.eq(status));
-        if (city != null && !city.isBlank()) where.and(c.city.equalsIgnoreCase(city));
-        if (from != null) where.and(o.createdAt.goe(from));
-        if (to != null) where.and(o.createdAt.lt(to));
+    public OrderQuerydslRepository(EntityManager em) {
+        this.queryFactory = new JPAQueryFactory(em);
+    }
 
-        List<OrderSpecifier<?>> orders = pageable.getSort().stream().map(s -> {
-            var path = switch (s.getProperty()) {
-                case "createdAt" -> o.createdAt;
-                case "id" -> o.id;
-                case "totalCents" -> o.totalCents;
-                case "customerName" -> c.name;
-                default -> o.id;
-            };
-            return new OrderSpecifier<>(s.isAscending() ? Order.ASC : Order.DESC, path);
-        }).toList();
+    public Page<Order> findByFilter(OrderFilter filter, Pageable pageable) {
+        QOrder qOrder = QOrder.order;
+        QCustomer qCustomer = QCustomer.customer;
 
-        var content = qf.select(Projections.constructor(OrderView.class,
-                            o.id, c.name, o.status, o.totalCents, o.createdAt))
-                .from(o)
-                .join(o.customer, c)
-                .where(where)
-                .orderBy(orders.toArray(OrderSpecifier[]::new))
+        BooleanExpression predicate = buildPredicate(filter, qOrder, qCustomer);
+
+        var baseQuery = queryFactory
+                .selectFrom(qOrder)
+                .join(qOrder.customer, qCustomer).fetchJoin()
+                .where(predicate);
+
+        if (pageable.getSort().isSorted()) {
+            for (Sort.Order order : pageable.getSort()) {
+                if ("createdAt".equals(order.getProperty())) {
+                    baseQuery.orderBy(
+                            order.isAscending() ? qOrder.createdAt.asc() : qOrder.createdAt.desc()
+                    );
+                }
+            }
+        }
+
+        long total = baseQuery.clone().fetch().size();
+
+        var content = baseQuery
                 .offset(pageable.getOffset())
                 .limit(pageable.getPageSize())
                 .fetch();
 
-        long total = qf.select(o.id.count())
-                .from(o).join(o.customer, c)
-                .where(where)
-                .fetchOne();
-
-        return new PageImpl<>(content, pageable, total == null ? 0 : total);
+        return new PageImpl<>(content, pageable, total);
     }
 
-    @Transactional(readOnly = true)
-    public OrderView showCard(Long id) {
-        QOrderQ o = QOrderQ.orderQ;
-        QCustomerQ c = QCustomerQ.customerQ;
-        return qf.select(Projections.constructor(OrderView.class,
-                        o.id, c.name, o.status, o.totalCents, o.createdAt))
-                .from(o)
-                .join(o.customer, c).fetchJoin() // карточка — fetch join уместен
-                .where(o.id.eq(id))
-                .fetchOne();
+    private BooleanExpression buildPredicate(OrderFilter filter,
+                                             QOrder qOrder,
+                                             QCustomer qCustomer) {
+        BooleanExpression predicate = qOrder.isNotNull();
+
+        if (filter.getCustomerEmail() != null && !filter.getCustomerEmail().isBlank()) {
+            predicate = predicate.and(
+                    qCustomer.email.containsIgnoreCase(filter.getCustomerEmail())
+            );
+        }
+
+        if (filter.getCreatedFrom() != null) {
+            predicate = predicate.and(qOrder.createdAt.goe(filter.getCreatedFrom()));
+        }
+
+        if (filter.getCreatedTo() != null) {
+            predicate = predicate.and(qOrder.createdAt.loe(filter.getCreatedTo()));
+        }
+
+        if (filter.getMinAmount() != null) {
+            predicate = predicate.and(qOrder.amount.goe(filter.getMinAmount()));
+        }
+
+        return predicate;
     }
 }
 ```
 
-**Kotlin — тот же запрос на QueryDSL с динамикой и пагинацией**
-
 ```kotlin
-package com.example.qdsl
+package com.example.jpa.querydsl
 
-import com.querydsl.core.BooleanBuilder
-import com.querydsl.core.types.Order
-import com.querydsl.core.types.OrderSpecifier
-import com.querydsl.core.types.Projections
+import com.querydsl.core.types.dsl.BooleanExpression
 import com.querydsl.jpa.impl.JPAQueryFactory
 import jakarta.persistence.*
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-import org.springframework.data.domain.*
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.PageImpl
+import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 import java.time.Instant
 
 @Entity
-@Table(name = "customers_q")
-class CustomerQ(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "orders")
+class Order(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false) var name: String = "",
-    @Column(nullable = false) var city: String = ""
+
+    var number: String = "",
+
+    var amount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "created_at", nullable = false)
+    var createdAt: Instant = Instant.now(),
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    var customer: Customer? = null
 )
 
-@Entity
-@Table(name = "orders_q")
-class OrderQ(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "customer_id", nullable = false)
-    var customer: CustomerQ? = null,
-    @Column(nullable = false) var status: String = "",
-    @Column(nullable = false) var totalCents: Long = 0,
-    @Column(nullable = false) var createdAt: Instant = Instant.now()
+data class OrderFilter(
+    val customerEmail: String? = null,
+    val createdFrom: Instant? = null,
+    val createdTo: Instant? = null,
+    val minAmount: BigDecimal? = null
 )
-
-data class OrderView(
-    val id: Long,
-    val customerName: String,
-    val status: String,
-    val totalCents: Long,
-    val createdAt: Instant
-)
-
-@Configuration
-class QuerydslConfig {
-    @PersistenceContext lateinit var em: EntityManager
-    @Bean fun jpaQueryFactory() = JPAQueryFactory(em)
-}
 
 @Repository
-class OrderQdslRepo(private val qf: JPAQueryFactory) {
+@Transactional(readOnly = true)
+class OrderQuerydslRepository(
+    em: EntityManager
+) {
 
-    @Transactional(readOnly = true)
-    fun search(status: String?, city: String?, from: Instant?, to: Instant?, pageable: Pageable): Page<OrderView> {
-        val o = QOrderQ.orderQ
-        val c = QCustomerQ.customerQ
+    private val queryFactory = JPAQueryFactory(em)
 
-        val where = BooleanBuilder().apply {
-            if (!status.isNullOrBlank()) and(o.status.eq(status))
-            if (!city.isNullOrBlank()) and(c.city.equalsIgnoreCase(city))
-            if (from != null) and(o.createdAt.goe(from))
-            if (to != null) and(o.createdAt.lt(to))
+    fun findByFilter(filter: OrderFilter, pageable: Pageable): Page<Order> {
+        val qOrder = QOrder.order
+        val qCustomer = QCustomer.customer
+
+        val predicate = buildPredicate(filter, qOrder, qCustomer)
+
+        val baseQuery = queryFactory
+            .selectFrom(qOrder)
+            .join(qOrder.customer, qCustomer).fetchJoin()
+            .where(predicate)
+
+        if (pageable.sort.isSorted) {
+            pageable.sort.forEach { order ->
+                if (order.property == "createdAt") {
+                    baseQuery.orderBy(
+                        if (order.isAscending) qOrder.createdAt.asc() else qOrder.createdAt.desc()
+                    )
+                }
+            }
         }
 
-        val orders: List<OrderSpecifier<*>> = pageable.sort.map { s ->
-            val path = when (s.property) {
-                "createdAt" -> o.createdAt
-                "id" -> o.id
-                "totalCents" -> o.totalCents
-                "customerName" -> c.name
-                else -> o.id
-            }
-            OrderSpecifier(if (s.isAscending) Order.ASC else Order.DESC, path)
-        }.toList()
+        val all = baseQuery.clone().fetch()
+        val total = all.size.toLong()
 
-        val content = qf.select(
-                Projections.constructor(
-                    OrderView::class.java,
-                    o.id, c.name, o.status, o.totalCents, o.createdAt
-                )
-            )
-            .from(o)
-            .join(o.customer, c)
-            .where(where)
-            .orderBy(*orders.toTypedArray())
+        val content = baseQuery
             .offset(pageable.offset)
             .limit(pageable.pageSize.toLong())
             .fetch()
 
-        val total = qf.select(o.id.count())
-            .from(o).join(o.customer, c)
-            .where(where)
-            .fetchOne() ?: 0L
-
         return PageImpl(content, pageable, total)
     }
 
-    @Transactional(readOnly = true)
-    fun showCard(id: Long): OrderView? {
-        val o = QOrderQ.orderQ
-        val c = QCustomerQ.customerQ
-        return qf.select(
-                Projections.constructor(
-                    OrderView::class.java,
-                    o.id, c.name, o.status, o.totalCents, o.createdAt
+    private fun buildPredicate(
+        filter: OrderFilter,
+        qOrder: QOrder,
+        qCustomer: QCustomer
+    ): BooleanExpression {
+        var predicate: BooleanExpression = qOrder.isNotNull
+
+        filter.customerEmail
+            ?.takeIf { it.isNotBlank() }
+            ?.let {
+                predicate = predicate.and(
+                    qCustomer.email.containsIgnoreCase(it)
                 )
-            )
-            .from(o)
-            .join(o.customer, c).fetchJoin()
-            .where(o.id.eq(id))
-            .fetchOne()
+            }
+
+        filter.createdFrom?.let {
+            predicate = predicate.and(qOrder.createdAt.goe(it))
+        }
+
+        filter.createdTo?.let {
+            predicate = predicate.and(qOrder.createdAt.loe(it))
+        }
+
+        filter.minAmount?.let {
+            predicate = predicate.and(qOrder.amount.goe(it))
+        }
+
+        return predicate
     }
 }
 ```
 
-**Практические выводы.**
-
-1. Для «мозаичных» фильтров и быстрого роста требований используйте `Specification<T>`; держите спеки мелкими и чистыми, страницы — проекциями.
-2. Criteria берите, когда нужно управлять всей формой запроса (select/aggregate/group/having) и когда метамодель/типобезопасность важнее бойлерплейта.
-3. QueryDSL — выбор для сложной динамики, подзапросов и join-ов; он короче Criteria и безопаснее строкового JPQL. Списки — через DTO/проекции; карточки — через fetch join.
-
+В итоге картина такая: для умеренно сложных динамических фильтров удобно начинать со `Specification<T>`, под капотом которых живёт Criteria API. Когда запросы становятся тяжёлыми, много join’ов и подзапросов, — QueryDSL даёт более читаемый и типобезопасный DSL поверх того же JPA. Во всех трёх случаях важно помнить, что в конце всё упирается в SQL и индексы; инструменты лишь помогают вам написать этот SQL аккуратнее и безопаснее.
 
 # 12. JDBC и jOOQ: когда уходить ниже
 
-*Ниже — практическое продолжение «Основ» с фокусом на те случаи, где JPA перестаёт быть лучшим выбором. Покажу, когда и почему стоит опуститься на уровень JDBC или взять jOOQ, как настроить потоковое чтение, батчи, upsert/CTE/окна, и как безопасно сочетать это со Spring Data JPA.*
-
-**Зависимости (общие, можно добавить к существующему проекту):**
-
-**Gradle (Groovy DSL)**
-
-```groovy
-plugins {
-    id 'org.springframework.boot' version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
-    id 'java'
-}
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
-    implementation 'org.springframework.boot:spring-boot-starter-jooq' // для jOOQ-пунктов
-    runtimeOnly 'org.postgresql:postgresql:42.7.3'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.3.4"
-    id("io.spring.dependency-management") version "1.1.6"
-    java
-}
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("org.springframework.boot:spring-boot-starter-jooq")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
-```
-
----
-
 ## Где JPA неэффективна: отчёты, агрегаты/окна, сложные CTE, апсерты/`ON CONFLICT`, bulk-операции
 
-JPA оптимальна для «моделирования предметной области» и CRUD-а на сущностях. Там, где вы оперируете графами объектов, жизненным циклом и инвариантами, ORM экономит время и снижает связность. Но как только задача превращается в отчёт, агрегации по большим объёмам, окна и CTE — преимущества JPA сходят на нет: вам нужен **точный SQL** и контроль плана запроса, а не граф сущностей.
+Когда мы говорим «Spring Data JPA», почти всегда имеем в виду CRUD-операции и относительно простые выборки по сущностям: найти по id, вернуть страницу по фильтру, сохранить/обновить. Для этого JPA и проектировалась: скрыть от разработчика большую часть рутины ORM, дать объектно-ориентированную модель поверх таблиц и избавить от постоянного написания `SELECT ... FROM ...`. Но у такого подхода есть естественная граница. Как только вы выходите в отчёты, тяжёлую аналитику, сложные агрегации и vendor-specific возможности СУБД, JPA начинает работать против вас.
 
-Оконные функции (`row_number()`, `sum() over (partition by ...)`, `lag/lead`) — каркас более 70% реальных отчётов. JPQL их не выражает переносимо; Hibernate 6 кое-где помогает нативом или функциями, но это уже «выход наружу» и потеря переносимости. На практике такие запросы пишут либо через **native SQL** (JDBC), либо через **jOOQ** — типобезопасный DSL поверх SQL конкретной СУБД.
+Первая большая зона, где JPA неудобна, — отчётные запросы и агрегаты. Например, вам нужно посчитать сумму и количество заказов по дням с разбиением по статусу, выдать топ-N клиентов по обороту, построить гистограмму по корзине. С точки зрения БД это `GROUP BY`, `HAVING`, агрегатные функции и иногда оконные функции. С точки зрения JPA — необходимость либо писать сложный JPQL с конструкторными проекциями, либо сразу падать в native SQL. Чем сложнее отчёт, тем меньше смысла держаться за «объектность»: вам всё равно нужны SQL-концепции, и ORM только мешает.
 
-CTE (`with ... as (...)`) — ещё один «стержень» сложной аналитики и пошаговых преобразований. В JPQL CTE отсутствуют, в Criteria — нет удобного аналога. Снова выигрывают JDBC/jOOQ: читабельнее, предсказуемее, легче оптимизировать и профилировать `EXPLAIN ANALYZE`.
+Вторая зона — оконные функции и CTE (`WITH`-выражения). Современные СУБД (PostgreSQL, Oracle, SQL Server) умеют мощные вещи вроде `row_number() over (...)`, `lag/lead`, рекурсивные CTE и т.п. JPQL этого не знает, Criteria API — тоже; остаётся только `nativeQuery`. Да, Hibernate позволяет встраивать native-запросы в репозитории, но это уже не «JPA как абстракция над SQL», а «SQL с тонкой обёрткой Spring Data». Если ваш отчёт или алгоритм естественно формулируется в терминах оконных функций и CTE, честнее признать, что вы работаете на уровне SQL/JDBC и строить архитектуру вокруг этого.
 
-Апсерты — «вставь или обнови при конфликте». В Postgres это `INSERT ... ON CONFLICT (key) DO UPDATE SET ...`. Через JPA это превращается в хрупкую «попробуй найти → если нет — persist → иначе — merge», что медленно и гонкоопасно. Нативный апсерт **одним запросом** — быстрее и безопаснее. Точно так же массовые операции `bulk update/delete` в JPQL обходят Persistence Context и часто требуют ручной синхронизации — проще сразу писать точный SQL.
+Отдельная боль JPA — апсерты (UPSERT). Типичный кейс: «вставить запись, а если ключ уже существует — обновить». В PostgreSQL это `INSERT ... ON CONFLICT (key) DO UPDATE`, в других СУБД — свои варианты `MERGE`. JPA не стандартизирует апсерты: у вас либо два запроса (сначала `select`, потом `insert/update`), либо `@Query(nativeQuery = true)` со строкой SQL. При большом трафике и высокой конкуренции второй вариант предпочителен, но это уже явный выход за рамки «чистой JPA». Там, где апсерты — нормальная часть бизнес-логики (идемпотентные обработчики, интеграции), имеет смысл сразу спускаться на уровень JDBC или jOOQ.
 
-Bulk-вставки — любимая зона JPA-«боли». Даже с `hibernate.jdbc.batch_size` и упорядочиванием `order_inserts` вы завязаны на стратегию генерации идентификаторов, и реальный throughput может сильно уступать **чистому JDBC батчу**. Сырые батчи легче дозировать, логировать и оборачивать в «швабры» (retry, chunking).
+Третья важная область — массовые операции (bulk update/delete). JPA умеет `update ... where` и `delete ... where` в JPQL, но при этом такие операции обходят 1-й уровень кэша, не вызывают entity-listeners и легко раскоординируются с состоянием persistence context. Если вы активно используете кэш сущностей, версионирование, доменные события на `@PreUpdate/@PostUpdate`, массовые апдейты через JPQL становятся источником сюрпризов. Часто проще и честнее сделать отдельный «репозиторий на JDBC», который выполняет чистые SQL-операции и никак не связан с JPA-контекстом.
 
-В ETL/репортинге часто требуется «временная таблица»/`UNLOGGED`/`ON COMMIT DROP`, загрузка «как есть», с последующим `INSERT INTO ... SELECT` — это «низкоуровневые» приёмы, в которых ORM просто не участвует. Их честнее выразить SQL-ом и выполнить через JDBC.
+Ещё одна причина уходить ниже — сложные ETL/миграции и сервисы отчётности. Бывают случаи, когда сервису нужно перелопатить миллионы строк, сделать тяжёлую агрегацию, сбросить результаты в промежуточную таблицу или внешний storage. Тащить такие объёмы через JPA-сущности, дергая `entityManager.persist()` в цикле, — худшее из решений: вы нагружаете ORM, раздуваете контекст, получаете лишние проверки dirty-tracking и тратите память. Для таких задач намного здоровее использовать `JdbcTemplate` или jOOQ с тонким контролем над размером батчей, курсорами и транзакционностью.
 
-Важно и то, что JPA тянет за собой Persistence Context. При выводе десятков тысяч строк это превращается в лишний расход памяти, если вы не используете проекции. А в чистом JDBC вы формируете DTO сразу на чтении и не держите ORM-«хвост».
+К специфике СУБД JPA тоже относится слабо. Примеры — JSONB в PostgreSQL, полнотекстовый поиск (`tsvector`/`tsquery`), массивы, диапазоны, специфичные типы индексов. Да, существуют расширения (`hibernate-types` и подобные), но как только запрос выходит за рамки «вытащить поле JSON», а нужно сделать приличный поиск по структуре, короткая и точная SQL-конструкция будет проще, чем попытки натянуть всё это на Criteria или JPQL. В ситуациях, когда архитектурный центр — именно возможности базы, а не объектная модель, JPA должна отойти на второй план.
 
-Хорошее правило: **читайте там, где «тонко», а не «толсто»**. Для отчётных таблиц и агрегатов берите JDBC/jOOQ; для карточек/команд — JPA. И не бойтесь смешивать: один сервис может иметь JPA-репозитории и рядом DAO на jOOQ/JdbcTemplate.
+Нужно помнить и про производительность. Нередко JPA генерирует SQL не так, как вы бы написали руками: лишние join’ы, подзапросы, выборка полей, которые не нужны, невозможность подсказать planner’у нужный индекс. В простых CRUD-сценариях это приемлемая цена за удобство, но в тяжёлых отчётах или при больших объёмах данных каждый лишний join превращается в лишние десятки миллисекунд и мегабайты памяти. Там, где у вас есть жёсткие SLA по тяжёлым запросам, естественный путь — взять управление SQL на себя.
 
-Безопасность и тесты не страдают. Вы так же проходите через Spring-транзакции, так же используете Testcontainers и миграции Flyway/Liquibase. Вы просто говорите базе «вот ровно такой SQL», и это хорошо.
+Архитектурный вывод: JPA отлично подходит как «рабочая лошадь» для большинства бизнес-операций, где важно работать с доменной моделью, а не с таблицами. Но у каждого сервиса есть куски функциональности, которые по своей природе ближе к «SQL-аналитике», чем к «доменно-ориентированному CRUD». Именно для этих кусков и имеет смысл использовать JDBC или jOOQ: вы точно понимаете, какой SQL выполняется, контролируете план, используете возможности конкретной СУБД и не тратите ресурсы на ORM там, где она не даёт ценности.
 
-А теперь — небольшой, но рабочий пример честного апсерта через JDBC. Он показывает, как одним запросом вставить или обновить запись в Postgres, избежав гонок и двух походов.
+Обычно архитектурный паттерн выглядит так: на уровне сервиса есть обычные Spring Data JPA-репозитории для работающей части системы (заказы, клиенты, статусы), а рядом — отчётный/технический слой на JDBC/jOOQ для отчётов, batch-задач, сложных агрегатов. Граница между ними проходит по принципу: «если запрос легко читается как JPQL по сущностям — оставляем в JPA, если он естественно формулируется как SQL по таблицам — делаем JDBC/jOOQ».
 
-**Java — upsert `ON CONFLICT` через `JdbcTemplate`**
+Простой пример — отчёт по обороту клиентов с использованием оконной функции `row_number` и `sum` по окну. JPQL такого не умеет, а native-запрос в JPA — по сути уже прямой SQL. В таких местах намного логичнее сделать отдельный репозиторий на `JdbcTemplate` и явно сказать: «это отчётный SQL-слой, он сознательно работает на уровне таблиц».
+
+Ниже небольшой пример для отчётного запроса: Java-репозиторий, который выполняет native SQL с оконной функцией через `JdbcTemplate`, и эквивалент на Kotlin. Здесь основная демонстрация — что, как только запрос стал нетривиальным, мы честно переключаемся на прямой SQL, а не пытаемся выжать это из JPA.
 
 ```java
-package com.example.sql;
+package com.example.jpa.report;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.LocalDate;
+import java.util.List;
 
 @Repository
-public class ProductUpsertDao {
-    private final JdbcTemplate jdbc;
+public class CustomerTurnoverReportRepository {
 
-    public ProductUpsertDao(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    private final JdbcTemplate jdbcTemplate;
 
-    @Transactional
-    public int upsert(String sku, long priceCents) {
+    public CustomerTurnoverReportRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    public List<CustomerTurnoverRow> findTopCustomersByTurnover(LocalDate from, LocalDate to, int limit) {
         String sql = """
-            insert into products (sku, price_cents)
-            values (?, ?)
-            on conflict (sku) do update
-              set price_cents = excluded.price_cents
+            SELECT customer_id,
+                   SUM(amount)              AS total_amount,
+                   COUNT(*)                 AS orders_count,
+                   ROW_NUMBER() OVER (ORDER BY SUM(amount) DESC) AS rn
+            FROM orders
+            WHERE created_at >= ? AND created_at < ?
+            GROUP BY customer_id
+            ORDER BY total_amount DESC
+            LIMIT ?
             """;
-        return jdbc.update(sql, ps -> {
-            ps.setString(1, sku);
-            ps.setLong(2, priceCents);
-        });
+
+        return jdbcTemplate.query(
+                sql,
+                (rs, rowNum) -> mapRow(rs),
+                from.atStartOfDay(),
+                to.plusDays(1).atStartOfDay(),
+                limit
+        );
+    }
+
+    private CustomerTurnoverRow mapRow(ResultSet rs) throws SQLException {
+        return new CustomerTurnoverRow(
+                rs.getLong("customer_id"),
+                rs.getBigDecimal("total_amount"),
+                rs.getLong("orders_count"),
+                rs.getInt("rn")
+        );
+    }
+
+    public record CustomerTurnoverRow(
+            Long customerId,
+            BigDecimal totalAmount,
+            Long ordersCount,
+            Integer rank
+    ) {
     }
 }
 ```
-
-**Kotlin — тот же апсерт**
 
 ```kotlin
-package com.example.sql
+package com.example.jpa.report
 
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
-import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
+import java.sql.ResultSet
+import java.time.LocalDate
 
 @Repository
-class ProductUpsertDao(private val jdbc: JdbcTemplate) {
+class CustomerTurnoverReportRepository(
+    private val jdbcTemplate: JdbcTemplate
+) {
 
-    @Transactional
-    fun upsert(sku: String, priceCents: Long): Int {
+    fun findTopCustomersByTurnover(
+        from: LocalDate,
+        to: LocalDate,
+        limit: Int
+    ): List<CustomerTurnoverRow> {
         val sql = """
-            insert into products (sku, price_cents)
-            values (?, ?)
-            on conflict (sku) do update
-              set price_cents = excluded.price_cents
+            SELECT customer_id,
+                   SUM(amount)              AS total_amount,
+                   COUNT(*)                 AS orders_count,
+                   ROW_NUMBER() OVER (ORDER BY SUM(amount) DESC) AS rn
+            FROM orders
+            WHERE created_at >= ? AND created_at < ?
+            GROUP BY customer_id
+            ORDER BY total_amount DESC
+            LIMIT ?
         """.trimIndent()
-        return jdbc.update(sql) { ps ->
-            ps.setString(1, sku)
-            ps.setLong(2, priceCents)
-        }
+
+        return jdbcTemplate.query(sql, rowMapper,
+            from.atStartOfDay(),
+            to.plusDays(1).atStartOfDay(),
+            limit
+        )
+    }
+
+    private val rowMapper = RowMapper { rs: ResultSet, _: Int ->
+        CustomerTurnoverRow(
+            customerId = rs.getLong("customer_id"),
+            totalAmount = rs.getBigDecimal("total_amount") ?: BigDecimal.ZERO,
+            ordersCount = rs.getLong("orders_count"),
+            rank = rs.getInt("rn")
+        )
     }
 }
+
+data class CustomerTurnoverRow(
+    val customerId: Long,
+    val totalAmount: BigDecimal,
+    val ordersCount: Long,
+    val rank: Int
+)
 ```
+
+Этот пример показывает суть: как только запрос начинает жить своей SQL-жизнью, не надо мучить JPA — проще честно перейти на JDBC/jOOQ и держать этот слой отдельно, но рядом с доменной моделью.
 
 ---
 
 ## `JdbcTemplate/NamedParameterJdbcTemplate`: `RowMapper`, батчи `batchUpdate`, `SimpleJdbcInsert`, таймауты и `fetchSize`
 
-`JdbcTemplate` — рабочая лошадка Spring: он упрощает JDBC без потери контроля. Бинц-менеджмент, освобождение ресурсов, удобные коллбеки и мапперы — и вы получаете «чистый SQL» с минимумом бойлерплейта. Когда важна читаемость параметров по имени, берите `NamedParameterJdbcTemplate` — особенно удобно для длинных `IN`/`VALUES` и «семантических» апдейтов.
+`JdbcTemplate` — базовый инструмент Spring для работы с JDBC. Он решает типичные боли «голого» JDBC: управление ресурсами, обработку исключений, шаблон `try-with-resources`, перебор `ResultSet`. Вместо того чтобы писать десяток строк для открытия соединения и закрытия всего подряд, вы пишете одну строку `jdbcTemplate.query(...)` и передаёте лямбду, которая превращает строки результата в ваши объекты. `NamedParameterJdbcTemplate` добавляет к этому поддержку именованных параметров вместо позиционных `?`, что сильно улучшает читаемость сложных запросов.
 
-`RowMapper<T>` — простой способ собирать DTO напрямую из `ResultSet`. Это экономит память: вы не создаёте сущности, не держите их в PC, а формируете тонкий объект «по дороге». Для больших выборок используйте `RowCallbackHandler` (обработка построчно) — он не накапливает результаты в список и дружит с курсорами.
+Ключевая абстракция на чтении — `RowMapper<T>`. Это интерфейс, который превращает одну строку `ResultSet` в доменный объект. Вы пишете «как маппить одну строку», а `JdbcTemplate` делает всё остальное: бежит по `ResultSet`, вызывает `RowMapper` для каждой строки, собирает список. Это намного прозрачнее и дешевле, чем создавать временные сущности JPA, особенно если вам нужны только несколько полей из таблицы. Важно не злоупотреблять `BeanPropertyRowMapper` на проде: лучше писать явный маппинг, чтобы контролировать типы и избежать сюрпризов.
 
-Батчи (`batchUpdate`) — основной способ ускорить множество однотипных вставок/обновлений. JDBC отправляет их пачкой, и драйвер/СУБД оптимизируют сетевые round-trip’ы и планы. Важно «подбирать» размер батча (обычно 500–2000), следить за ошибками в отдельной строке (возвращаемые counts), и выставлять драйверные оптимизации (для PG — `reWriteBatchedInserts=true`).
+На записи важную роль играют батчи. `JdbcTemplate.batchUpdate` позволяет отправить много однотипных операций (вставок/обновлений) одним сетом, а не выполнять их по одной. Для PostgreSQL и многих других СУБД это даёт существенный выигрыш по времени и нагрузке на сеть/сервер. Главное — правильно выбирать размер батча: слишком маленький не даёт эффекта, слишком большой может забить буфер и создать долгие транзакции. Типичный размер — 100–1000 строк в батче, но зависит от профиля нагрузки и СУБД.
 
-`SimpleJdbcInsert` удобен, когда вы не хотите писать `INSERT` руками: описываете таблицу и набор колонок, передаёте `Map<String,Object>` — и всё. Он умеет возвращать сгенерированные ключи. Для массовых вставок всё же лучше явный `batchUpdate`.
+`NamedParameterJdbcTemplate` упрощает работу с запросами, где много параметров и не хочется считать позиции `?`. Вместо `WHERE status = ? AND created_at >= ? AND created_at < ?` вы пишете `:status`, `:from`, `:to` и передаёте `Map<String, Object>` или `SqlParameterSource`. Это особенно удобно в DAO-слое, где запросы со временем эволюционируют, добавляются новые фильтры и легко ошибиться в номерах параметров.
 
-Таймауты — защита от «зависших» запросов. Вы можете выставить `queryTimeout` на `JdbcTemplate`/`DataSource` или на отдельном `PreparedStatement`. Для длинных отчётов это must-have: один «заблудившийся» запрос не должен повесить пул.
+`SimpleJdbcInsert` — ещё один полезный инструмент для «тупых» вставок, когда вам не хочется писать `INSERT` руками. Вы настраиваете таблицу и список колонок, а затем передаёте `Map<String, Object>` с данными; `SimpleJdbcInsert` сам соберёт SQL и выполнит его, при необходимости вернув сгенерированный ключ. Хорошо подходит для технологических таблиц, логов, вспомогательных сущностей, где не нужна JPA-модель и важна только запись данных.
 
-`fetchSize` — хинт драйверу о размере «порций» результата. В Postgres, если `autocommit=false` и `fetchSize>0`, будет открыт server-side cursor, и строки поедут чанками. Это ключ к потоковой обработке (ниже), но и в «обычных» выборках помогает не раздувать память.
+Отдельная тема — тайм-ауты и `fetchSize`. С точки зрения надёжности важно, чтобы каждый SQL-запрос имел разумный верхний предел времени выполнения. Его можно задавать на уровне DataSource/драйвера, через `@Transactional(timeout = ...)` или через `JdbcTemplate` (например, через настройку `setQueryTimeout` на `PreparedStatement`). Для долгих запросов также важно управлять `fetchSize`: это подсказка драйверу, сколько строк за раз забирать с сервера. В PostgreSQL при правильной настройке это приводит к использованию серверных курсоров и потоковой выдаче результата.
 
-Логируйте SQL — но осторожно с параметрами (PII). Включайте логгер на `org.springframework.jdbc.core` для отладки, а в проде оставляйте только тайминги/метрики (Micrometer, p95/p99).
+В контексте Spring Boot большинство бинов `JdbcTemplate` и `NamedParameterJdbcTemplate` создаются автоматически, если у вас есть `DataSource`. Вам редко нужно настраивать их вручную, кроме случаев, когда вы хотите специфичные настройки (например, логирование, настройка `fetchSize`, специальные тайм-ауты). Но хороший тон — хотя бы понимать, как они устроены и что где можно подкрутить.
 
-Следите за типами. JDBC маппит по именам/индексам столбцов; опечатка — рантайм-ошибка. Тесты с Testcontainers покрывают риск: вы проверяете SQL против реальной БД, а не «эмулятора».
+Частая практика — иметь в приложении JPA-репозитории для основной работы и один-два `JdbcTemplate`-репозитория для тяжёлых вещей: batch-записей, отчётов, сервисных таблиц. Так вы не тащите ORM туда, где она не нужна, но и не отказываетесь от удобств Spring Data там, где они дают максимум выгоды.
 
-Ниже — небольшой, но самодостаточный пример: `RowMapper` для DTO, батчевая вставка и `SimpleJdbcInsert`. Он показывает, как собрать списки без JPA и с хорошим контролем.
-
-**Java — `RowMapper`, `batchUpdate`, `SimpleJdbcInsert`, таймауты**
+Ниже пример: конфигурация бинов `JdbcTemplate` и `NamedParameterJdbcTemplate` (если хотите их явного контроля) и репозиторий, который делает batch-вставку и выборку с именованными параметрами. Java и Kotlin варианты эквивалентны.
 
 ```java
-package com.example.jdbc;
+package com.example.jdbc.config;
 
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.*;
+
+import javax.sql.DataSource;
+
+@Configuration
+public class JdbcConfig {
+
+    @Bean
+    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+        JdbcTemplate template = new JdbcTemplate(dataSource);
+        template.setFetchSize(500);
+        return template;
+    }
+
+    @Bean
+    public NamedParameterJdbcTemplate namedParameterJdbcTemplate(DataSource dataSource) {
+        return new NamedParameterJdbcTemplate(dataSource);
+    }
+}
+```
+
+```java
+package com.example.jdbc.repo;
+
 import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.core.namedparam.*;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
-import java.util.*;
-
-record OrderRow(Long id, Long customerId, Long totalCents, Instant createdAt) {}
+import java.util.List;
+import java.util.Map;
 
 @Repository
-public class OrderJdbcDao {
-    private final JdbcTemplate jdbc;
-    private final NamedParameterJdbcTemplate named;
+public class AuditEventJdbcRepository {
 
-    public OrderJdbcDao(JdbcTemplate jdbc, NamedParameterJdbcTemplate named) {
-        this.jdbc = jdbc; this.named = named;
-        this.jdbc.setQueryTimeout(30);       // сек
-        this.jdbc.setFetchSize(500);         // дефолтный fetchSize
+    private final NamedParameterJdbcTemplate jdbc;
+
+    public AuditEventJdbcRepository(NamedParameterJdbcTemplate jdbc) {
+        this.jdbc = jdbc;
     }
 
-    private static final RowMapper<OrderRow> ORDER_MAPPER = (rs, rowNum) -> new OrderRow(
-        rs.getLong("id"),
-        rs.getLong("customer_id"),
-        rs.getLong("total_cents"),
-        rs.getTimestamp("created_at").toInstant()
-    );
+    public void saveBatch(List<AuditEvent> events) {
+        String sql = """
+            INSERT INTO audit_event(event_type, payload, created_at)
+            VALUES (:eventType, :payload, :createdAt)
+            """;
 
-    @Transactional(readOnly = true)
-    public List<OrderRow> findRecent(int limit) {
-        return jdbc.query("""
-            select id, customer_id, total_cents, created_at
-            from orders
-            order by id desc
-            limit ?
-        """, ORDER_MAPPER, limit);
+        SqlParameterSource[] batchParams = events.stream()
+                .map(event -> new MapSqlParameterSource()
+                        .addValue("eventType", event.eventType())
+                        .addValue("payload", event.payload())
+                        .addValue("createdAt", event.createdAt())
+                )
+                .toArray(SqlParameterSource[]::new);
+
+        jdbc.batchUpdate(sql, batchParams);
     }
 
-    @Transactional
-    public int[] insertBatch(List<OrderRow> rows) {
-        return jdbc.batchUpdate("""
-            insert into orders (customer_id, total_cents, created_at)
-            values (?, ?, ?)
-        """, rows, 1000, (ps, r) -> {
-            ps.setLong(1, r.customerId());
-            ps.setLong(2, r.totalCents());
-            ps.setTimestamp(3, java.sql.Timestamp.from(r.createdAt()));
-        });
+    public List<AuditEvent> findByTypeSince(String eventType, Instant since) {
+        String sql = """
+            SELECT id, event_type, payload, created_at
+            FROM audit_event
+            WHERE event_type = :type AND created_at >= :since
+            ORDER BY created_at DESC
+            """;
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("type", eventType)
+                .addValue("since", since);
+
+        return jdbc.query(sql, params, auditEventRowMapper);
     }
 
-    @Transactional
-    public Number insertOneSimple(long customerId, long totalCents, Instant createdAt) {
-        SimpleJdbcInsert insert = new SimpleJdbcInsert(jdbc)
-            .withTableName("orders")
-            .usingGeneratedKeyColumns("id");
-        Map<String, Object> params = Map.of(
-            "customer_id", customerId,
-            "total_cents", totalCents,
-            "created_at", java.sql.Timestamp.from(createdAt)
-        );
-        return insert.executeAndReturnKey(params);
-    }
+    private final RowMapper<AuditEvent> auditEventRowMapper = new RowMapper<>() {
+        @Override
+        public AuditEvent mapRow(ResultSet rs, int rowNum) throws SQLException {
+            return new AuditEvent(
+                    rs.getLong("id"),
+                    rs.getString("event_type"),
+                    rs.getString("payload"),
+                    rs.getTimestamp("created_at").toInstant()
+            );
+        }
+    };
 
-    @Transactional
-    public int updateNamed(List<Long> ids, long delta) {
-        var sql = """
-            update orders set total_cents = total_cents + :d
-            where id in (:ids)
-        """;
-        var params = new MapSqlParameterSource()
-            .addValue("d", delta)
-            .addValue("ids", ids);
-        return named.update(sql, params);
+    public record AuditEvent(
+            Long id,
+            String eventType,
+            String payload,
+            Instant createdAt
+    ) {
     }
 }
 ```
 
-**Kotlin — те же приёмы**
+```kotlin
+package com.example.jdbc.config
+
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
+import javax.sql.DataSource
+
+@Configuration
+class JdbcConfig {
+
+    @Bean
+    fun jdbcTemplate(dataSource: DataSource): JdbcTemplate =
+        JdbcTemplate(dataSource).apply {
+            fetchSize = 500
+        }
+
+    @Bean
+    fun namedParameterJdbcTemplate(dataSource: DataSource): NamedParameterJdbcTemplate =
+        NamedParameterJdbcTemplate(dataSource)
+}
+```
 
 ```kotlin
-package com.example.jdbc
+package com.example.jdbc.repo
 
-import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
-import org.springframework.jdbc.core.simple.SimpleJdbcInsert
 import org.springframework.stereotype.Repository
-import org.springframework.transaction.annotation.Transactional
+import java.sql.ResultSet
 import java.time.Instant
 
-data class OrderRow(val id: Long?, val customerId: Long, val totalCents: Long, val createdAt: Instant)
-
 @Repository
-class OrderJdbcDao(
-    private val jdbc: JdbcTemplate,
-    private val named: NamedParameterJdbcTemplate
+class AuditEventJdbcRepository(
+    private val jdbc: NamedParameterJdbcTemplate
 ) {
-    init {
-        jdbc.queryTimeout = 30
-        jdbc.fetchSize = 500
+
+    fun saveBatch(events: List<AuditEvent>) {
+        val sql = """
+            INSERT INTO audit_event(event_type, payload, created_at)
+            VALUES (:eventType, :payload, :createdAt)
+        """.trimIndent()
+
+        val batchParams = events.map {
+            MapSqlParameterSource()
+                .addValue("eventType", it.eventType)
+                .addValue("payload", it.payload)
+                .addValue("createdAt", it.createdAt)
+        }.toTypedArray()
+
+        jdbc.batchUpdate(sql, batchParams)
     }
 
-    private val mapper = RowMapper { rs, _ ->
-        OrderRow(
+    fun findByTypeSince(eventType: String, since: Instant): List<AuditEvent> {
+        val sql = """
+            SELECT id, event_type, payload, created_at
+            FROM audit_event
+            WHERE event_type = :type AND created_at >= :since
+            ORDER BY created_at DESC
+        """.trimIndent()
+
+        val params = MapSqlParameterSource()
+            .addValue("type", eventType)
+            .addValue("since", since)
+
+        return jdbc.query(sql, params, rowMapper)
+    }
+
+    private val rowMapper = RowMapper { rs: ResultSet, _: Int ->
+        AuditEvent(
             id = rs.getLong("id"),
-            customerId = rs.getLong("customer_id"),
-            totalCents = rs.getLong("total_cents"),
+            eventType = rs.getString("event_type"),
+            payload = rs.getString("payload"),
             createdAt = rs.getTimestamp("created_at").toInstant()
         )
     }
 
-    @Transactional(readOnly = true)
-    fun findRecent(limit: Int): List<OrderRow> =
-        jdbc.query(
-            """
-            select id, customer_id, total_cents, created_at
-            from orders
-            order by id desc
-            limit ?
-            """.trimIndent(),
-            mapper,
-            limit
-        )
-
-    @Transactional
-    fun insertBatch(rows: List<OrderRow>): IntArray =
-        jdbc.batchUpdate(
-            """
-            insert into orders (customer_id, total_cents, created_at)
-            values (?, ?, ?)
-            """.trimIndent(),
-            rows,
-        ) { ps, r ->
-            ps.setLong(1, r.customerId)
-            ps.setLong(2, r.totalCents)
-            ps.setTimestamp(3, java.sql.Timestamp.from(r.createdAt))
-        }
-
-    @Transactional
-    fun insertOneSimple(customerId: Long, totalCents: Long, createdAt: Instant): Number {
-        val insert = SimpleJdbcInsert(jdbc)
-            .withTableName("orders")
-            .usingGeneratedKeyColumns("id")
-        val params = mapOf(
-            "customer_id" to customerId,
-            "total_cents" to totalCents,
-            "created_at" to java.sql.Timestamp.from(createdAt)
-        )
-        return insert.executeAndReturnKey(params)
-    }
-
-    @Transactional
-    fun updateNamed(ids: List<Long>, delta: Long): Int {
-        val sql = """
-            update orders set total_cents = total_cents + :d
-            where id in (:ids)
-        """.trimIndent()
-        val params = MapSqlParameterSource()
-            .addValue("d", delta)
-            .addValue("ids", ids)
-        return named.update(sql, params)
-    }
+    data class AuditEvent(
+        val id: Long?,
+        val eventType: String,
+        val payload: String,
+        val createdAt: Instant
+    )
 }
 ```
+
+Такой слой на JDBC прекрасно дополняет JPA там, где нужна высокая производительность, контроль над SQL и работа с «сырыми» таблицами.
 
 ---
 
 ## Потоковая обработка: курсоры/стримы, контроль памяти, работа с LOB
 
-Потоковая обработка — ключ к стабильной памяти при больших выборках. Идея проста: не загружать всё в список, а читать и обрабатывать **порциями**. В Postgres это реализуется server-side cursor при `autocommit=false` и `fetchSize>0`. В Spring это достигается транзакцией `readOnly=true` + `JdbcTemplate` с `fetchSize` и обработчиком `RowCallbackHandler`.
+Когда речь идёт о больших объёмах данных, главное — не пытаться за один запрос вытащить всё в память. JPA по умолчанию загружает результат запроса в коллекцию и кладёт сущности в persistence context, что при сотнях тысяч строк может просто убить приложение. С JDBC ситуация похожая: если вы делаете `queryForList`, драйвер подтянет весь результат. Для по-настоящему больших выборок нужна потоковая обработка: курсоры, `fetchSize`, стримы, поэлементные обработчики.
 
-Курсор — forward-only: вы идёте вперёд и не откручиваете назад. Это накладывает стиль на код: «прочитал строку → сразу записал в поток/файл/очередь». Так вы не держите данные в памяти дольше, чем нужно. Для CSV/JSON-стриминга используйте буферизированные writer’ы и периодический flush.
+В JDBC потоковая обработка строится вокруг `ResultSet`. Драйвер может выдавать строки по мере чтения, а не весь набор сразу, если вы настроили `fetchSize` и, для PostgreSQL, включили использование серверных курсоров. В Spring-мире это оборачивается в методы `JdbcTemplate.query`, где вы вместо `RowMapper` можете использовать `RowCallbackHandler` или `ResultSetExtractor` и обрабатывать строки по мере поступления, не копя их в списке. Важно только не выходить за пределы транзакции или жизненного цикла соединения, иначе курсор закроется.
 
-Контроль памяти — не только про «коллекции». Избегайте создания временных больших строк (`StringBuilder` на десятки мегабайт), сериализуйте по мере чтения (например, NDJSON — «объект на строку»). Если вы всё же собираете пачку (например, на отправку в Kafka), ограничивайте размер чанка (1–5 тыс. строк) и очищайте.
+Простой паттерн для потоковой обработки — `RowCallbackHandler`, который вызывается для каждой строки. Вместо того чтобы собирать всё в `List<T>`, вы, например, пишете данные в файл, отправляете в очередь, агрегируете статистику. Так вы контролируете память: в любой момент в heap находится только текущий объект и небольшие структуры агрегации, а не весь набор данных.
 
-С LOB (BLOB/CLOB) потоки особенно важны. Никогда не грузите файл целиком в память. Вставка — через `PreparedStatement.setBinaryStream`, чтение — `getBinaryStream` и копирование в `OutputStream` с небольшим буфером. Старайтесь, чтобы и на стороне клиента (HTTP) был поток, а не буфер.
+Работа с LOB (BLOB/CLOB) особенно критична. Если вы делаете `getBytes()` или `getString()` для гигантской колонки, вы загружаете весь объект в память. Для больших файлов или документов корректнее читать LOB потоком: `getBinaryStream()`/`getCharacterStream()` и передавать этот поток дальше (в файловое хранилище, HTTP-ответ, на диск). Spring предлагает абстракцию `LobHandler`, но в простых случаях можно работать напрямую с `InputStream` и не держать целый файл в памяти.
 
-Таймауты и «heartbeat» логи — обязательны. Длинный курсор держит соединение. Выставляйте `statement_timeout`/`queryTimeout`, логируйте «прочитали N строк» каждые, скажем, 5k. Это помогает эксплуатации понимать, что процесс жив и что скорость нормальная.
+`fetchSize` — важный инструмент. Для PostgreSQL, если вы используете `setFetchSize(n)` на `Statement`, драйвер будет открывать курсор и забирать по `n` строк за один заход. Это позволяет балансировать между количеством round-trip’ов к серверу и размером памяти, занимаемым буфером. Типичные значения — 100–1000, но подбирать нужно по профилю нагрузки. Важно помнить, что некоторые драйверы игнорируют `fetchSize` при auto-commit и что при большом `fetchSize` транзакция может висеть дольше, блокируя строки.
 
-Если отчёт может продолжаться десятки минут, **бейте его на логические чанки** (по `id` или по дате). Транзакция на чанк + фиксация прогресса позволяет рестартовать процесс и не держать курсор вечность.
+С точки зрения транзакционности потоковая обработка почти всегда живёт внутри одной транзакции: пока вы читаете курсор, транзакция держится открытой. Это может быть проблемой, если чтение занимает минуты: блокировки и удержание ресурсов на БД. В таких случаях лучше разбивать задачу на «страницы» или использовать keyset-пагинацию: читать по условно «батчам» ID и обрабатывать их независимо, вместо одной огромной транзакции.
 
-LOB-и в Postgres — отдельная тема (`oid`/large objects), но в большинстве приложений хватает `bytea` (обычная колонка байтов). Она прекрасно работает с потоками, индексируется (хэши/префиксы) и упрощает миграции.
+В Spring Data JPA есть возможность возвращать `Stream<T>` из репозитория, но под капотом это всё равно ResultSet и курсор. Нужно аккуратно закрывать стрим (try-with-resources или `@Transactional` + явное закрытие), иначе соединение останется открытым. На JDBC это под вашим контролем, поэтому многие предпочитают работать с потоками напрямую и избегать JPA для таких операций.
 
-При чтении очень больших объектов («видео/архивы») не забывайте про ограничение полосы (throttling), иначе вы забьёте сетевой стек приложения. Отдавайте это на балансировщик/прокси или используйте NIO/Reactive, если это действительно streaming API, а не служебный экспорт.
+Для операций экспорта/архивирования часто строят pipeline: читаете данные потоково из БД, конвертируете в нужный формат, сразу же стримите в S3/MinIO/HTTP-ответ. Вы вообще не создаёте промежуточных списков и файлов на диске, вся обработка идёт чанками. Именно JDBC даёт такую гибкость; через JPA это либо сложнее, либо дорого по ресурсам.
 
-Ниже — пример потоковой выгрузки через `RowCallbackHandler` и чтение/запись LOB. Он безопасен по памяти и легко переносим.
-
-**Java — курсорное чтение и LOB-потоки**
+Ниже пример: Java-репозиторий, который потоково читает пользователей пачками и пишет их в обработчик, используя `RowCallbackHandler` и `fetchSize`, и аналог на Kotlin. Также пример чтения BLOB через `getBinaryStream` и запись в `OutputStream`.
 
 ```java
-package com.example.stream;
+package com.example.jdbc.stream;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.stereotype.Repository;
 
-import java.io.*;
+import java.io.OutputStream;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.function.Consumer;
 
-@Service
-public class StreamingService {
-    private final JdbcTemplate jdbc;
+@Repository
+public class UserStreamingRepository {
 
-    public StreamingService(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-        this.jdbc.setFetchSize(1000);
-        this.jdbc.setQueryTimeout(60);
+    private final JdbcTemplate jdbcTemplate;
+
+    public UserStreamingRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.jdbcTemplate.setFetchSize(500);
     }
 
-    @Transactional(readOnly = true)
-    public void exportCsv(OutputStream out) throws IOException {
-        try (BufferedWriter w = new BufferedWriter(new OutputStreamWriter(out))) {
-            w.write("id,customer_id,total_cents,created_at\n");
-            RowCallbackHandler rch = rs -> {
-                try {
-                    w.write(rs.getLong("id") + "," + rs.getLong("customer_id") + ","
-                            + rs.getLong("total_cents") + "," + rs.getTimestamp("created_at").toInstant() + "\n");
-                } catch (IOException e) { throw new UncheckedIOException(e); }
-            };
-            jdbc.query("""
-                select id, customer_id, total_cents, created_at
-                from orders where created_at >= now() - interval '30 days'
-                order by id
-            """, rch);
-            w.flush();
-        }
-    }
+    public void streamActiveUsers(Consumer<UserRow> consumer) {
+        String sql = """
+            SELECT id, email, full_name
+            FROM app_user
+            WHERE active = true
+            """;
 
-    @Transactional
-    public void saveBlob(long docId, InputStream content) {
-        jdbc.update("insert into docs(id, data) values(?, ?)",
-            ps -> { ps.setLong(1, docId); ps.setBinaryStream(2, content); });
-    }
-
-    @Transactional(readOnly = true)
-    public void loadBlob(long docId, OutputStream target) throws IOException {
-        jdbc.query("select data from docs where id = ?", rs -> {
-            try (InputStream in = rs.getBinaryStream(1)) {
-                in.transferTo(target);
+        jdbcTemplate.query(sql, new RowCallbackHandler() {
+            @Override
+            public void processRow(ResultSet rs) throws SQLException {
+                UserRow row = new UserRow(
+                        rs.getLong("id"),
+                        rs.getString("email"),
+                        rs.getString("full_name")
+                );
+                consumer.accept(row);
             }
-        }, docId);
+        });
+    }
+
+    public void streamUserAvatar(long userId, OutputStream out) {
+        String sql = """
+            SELECT avatar
+            FROM app_user_profile
+            WHERE user_id = ?
+            """;
+
+        jdbcTemplate.query(sql, rs -> {
+            if (rs.next()) {
+                try (var in = rs.getBinaryStream("avatar")) {
+                    if (in != null) {
+                        in.transferTo(out);
+                    }
+                }
+            }
+        }, userId);
+    }
+
+    public record UserRow(
+            Long id,
+            String email,
+            String fullName
+    ) {
     }
 }
 ```
 
-**Kotlin — те же подходы**
-
 ```kotlin
-package com.example.stream
+package com.example.jdbc.stream
 
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowCallbackHandler
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import java.io.*
+import org.springframework.stereotype.Repository
+import java.io.OutputStream
+import java.sql.ResultSet
+import java.util.function.Consumer
 
-@Service
-class StreamingService(private val jdbc: JdbcTemplate) {
+@Repository
+class UserStreamingRepository(
+    private val jdbcTemplate: JdbcTemplate
+) {
 
     init {
-        jdbc.fetchSize = 1000
-        jdbc.queryTimeout = 60
+        jdbcTemplate.fetchSize = 500
     }
 
-    @Transactional(readOnly = true)
-    fun exportCsv(out: OutputStream) {
-        BufferedWriter(OutputStreamWriter(out)).use { w ->
-            w.write("id,customer_id,total_cents,created_at\n")
-            val handler = RowCallbackHandler { rs ->
-                w.write("${rs.getLong("id")},${rs.getLong("customer_id")},${rs.getLong("total_cents")},${rs.getTimestamp("created_at").toInstant()}\n")
-            }
-            jdbc.query(
-                """
-                select id, customer_id, total_cents, created_at
-                from orders where created_at >= now() - interval '30 days'
-                order by id
-                """.trimIndent(),
-                handler
+    fun streamActiveUsers(consumer: Consumer<UserRow>) {
+        val sql = """
+            SELECT id, email, full_name
+            FROM app_user
+            WHERE active = true
+        """.trimIndent()
+
+        jdbcTemplate.query(sql, RowCallbackHandler { rs: ResultSet ->
+            val row = UserRow(
+                id = rs.getLong("id"),
+                email = rs.getString("email"),
+                fullName = rs.getString("full_name")
             )
-            w.flush()
-        }
+            consumer.accept(row)
+        })
     }
 
-    @Transactional
-    fun saveBlob(docId: Long, content: InputStream) {
-        jdbc.update("insert into docs(id, data) values(?, ?)") { ps ->
-            ps.setLong(1, docId)
-            ps.setBinaryStream(2, content)
-        }
+    fun streamUserAvatar(userId: Long, out: OutputStream) {
+        val sql = """
+            SELECT avatar
+            FROM app_user_profile
+            WHERE user_id = ?
+        """.trimIndent()
+
+        jdbcTemplate.query(sql, { rs ->
+            if (rs.next()) {
+                rs.getBinaryStream("avatar")?.use { input ->
+                    input.transferTo(out)
+                }
+            }
+        }, userId)
     }
 
-    @Transactional(readOnly = true)
-    fun loadBlob(docId: Long, target: OutputStream) {
-        jdbc.query("select data from docs where id = ?",
-            { rs -> rs.getBinaryStream(1).use { it.transferTo(target) } },
-            docId
-        )
-    }
+    data class UserRow(
+        val id: Long,
+        val email: String,
+        val fullName: String
+    )
 }
 ```
+
+Такой подход позволяет аккуратно работать с большими объёмами и тяжёлыми LOB, не распухая по памяти и не ломая JPA-контекст.
 
 ---
 
 ## jOOQ как «типобезопасный SQL»: генерация DSL из схемы, тонкая оптимизация под конкретную СУБД; совместное использование с JPA в одном сервисе
 
-jOOQ — это «SQL как Java/Kotlin-DSL». В отличие от ORM, он не скрывает SQL, а делает его **типобезопасным**: поля, таблицы и функции — это классы/методы, проверяемые компилятором. jOOQ отлично подходит для CTE, окон, апсертов, сложных `JOIN/UNION`, когда важна читаемость и контроль. При этом вы остаётесь в экосистеме Spring (`DSLContext` как бин, транзакции Spring).
+jOOQ — это библиотека, которая делает SQL «первым гражданином» в вашем Java/Kotlin-коде, но при этом даёт типобезопасный DSL вместо строк. В отличие от JPA, jOOQ не пытается скрыть таблицы за сущностями; наоборот, он поднимает таблицы и колонки в виде сгенерированных классов `Tables.MY_TABLE`, `MY_TABLE.ID`, `MY_TABLE.NAME`, а дальше вы строите запросы через fluent-API `dsl.select(...).from(...).where(...)`. Главная идея: «пишите SQL, но с помощью типов, автодополнения и compile-time-проверок».
 
-Сердце jOOQ — **генерация кода** из схемы: на основе БД создаются классы `Tables`, `Routines`, `Keys`. Это даёт настоящую типизацию (например, `ORDERS.CREATED_AT` — это `Field<Timestamp>`). Генератор можно запускать при билде (плагин Gradle) или отдельной задачей в CI. Если генерация пока не настроена, вы можете писать и «динамический DSL» через `DSL.table("...")`, но сила jOOQ именно в сгенерированных типах.
+Основой jOOQ является генерация DSL из схемы БД. На этапе сборки вы подключаете плагин, который подключается к базе (или читает DDL), вытаскивает метаданные и генерирует Java-классы: по каждой таблице, по каждому типу. Для PostgreSQL это означает, что вы получите типобезопасный доступ к JSONB, массивам, enum’ам, диапазонам; для других СУБД — к их специфичным типам. Дальше в коде вы пишете `DSL.using(configuration)` и оперируете этими классами, вместо того чтобы вручную писать имена таблиц/колонок строками.
 
-jOOQ «понимает» диалект. Запись `insertInto(...).onConflict(...).doUpdate()` сгенерирует корректный `ON CONFLICT` в Postgres и «эквивалент» в других СУБД, где возможно. То же касается оконных функций и CTE (`with(...)`). Это упрощает переносимость и снимает страх «завязать» проект на один SQL-диалект — хотя честно, для продвинутых фич вы всё равно будете «под Postgres».
+С точки зрения Spring Boot jOOQ обычно интегрируется через `DSLContext`, который вы инжектите в свои сервисы/репозитории. За транзакции отвечает всё тот же Spring: если вы оборачиваете вызовы jOOQ в `@Transactional`, запросы выполняются в рамках тех же транзакций, что и JPA, при условии, что они разделяют `DataSource`. Это позволяет иметь один сервис, внутри которого сосуществуют и JPA-репозитории, и jOOQ-репозитории, работающие с одной и той же БД.
 
-Сочетание с JPA — обычная практика. Вы храните агрегаты/отчёты в jOOQ, а доменную модель — в JPA. В одном транзакционном методе вы можете читать через jOOQ и сохранять сущности через JPA: Spring обеспечивает общий `Connection` (через `DataSourceTransactionManager` или JPA-менеджер). Главное — не мешать «толстые» графы и «большие» отчёты в одну транзакцию без необходимости.
+Большое преимущество jOOQ — поддержка vendor-specific функций и диалектов. Для PostgreSQL вы можете использовать `onConflict()`, `jsonb_extract_path_text`, расширенные операторы, оконные функции, CTE — всё это есть в DSL и будет сгенерировано в корректный SQL-диалект. То, что в JPA превращается в `@Query(nativeQuery = true)` со строкой, в jOOQ становится типобезопасным выражением, которое IDE подсвечивает и проверяет. Это особенно ценно для сложных отчётов и оптимизаций под конкретную СУБД.
 
-Производительность jOOQ хороша «из коробки»: нет PC, вы превращаете строки сразу в DTO/Record. Но ответственность за «правильный SQL» — на вас: индексы, планы, таймауты. К счастью, jOOQ логирует SQL и помогает строить сложные конструкции безопасно.
+jOOQ хорошо ложится на архитектуру «JPA для домена, jOOQ для отчётов/тяжёлых запросов». Типичный паттерн: доменная модель живёт на сущностях и Spring Data JPA, вокруг неё строится бизнес-логика. Рядом есть слой report-/sql-репозиториев на jOOQ, которые делают всё, что требует сложного SQL: отчётность, batch-операции, maintenance-скрипты. Оба слоя делят один `DataSource` и, при необходимости, одну транзакцию, но логически они разделены — это уменьшает смешение концепций.
 
-Тестирование — как у JDBC: интеграционные тесты с Testcontainers, миграции прикладываются перед запуском, `DSLContext` инжектится как бин. Вы можете писать фикстуры SQL и проверять, что запрос возвращает ожидаемые строки.
+Есть нюанс по лицензированию и версиям jOOQ, но в техническом плане главное — настроить генерацию. В Gradle-проекте вы добавляете зависимости на `jooq` и на плагин генерации, настраиваете подключение к БД и путь для сгенерированного кода. После этого IDE увидит классы `com.example.jooq.tables.Orders`, `Orders.ORDERS` и т.п., и вы сможете пользоваться полнотой DSL.
 
-В больших системах jOOQ становится «языком данных», на котором пишут отчётные DAO. Там, где тревожит JPA N+1 или нужно сделать хитрый `WITH RECURSIVE`, jOOQ читабельнее и безопаснее, чем «нативные строки» в коде.
+Ниже пример: добавляем jOOQ в Spring Boot-проект через Gradle, конфигурируем `DSLContext` и пишем репозиторий, который делает UPSERT (`ON CONFLICT`) и сложный select с агрегатами. Java и Kotlin варианты используют один и тот же подход.
 
-Ниже — примеры: CTE + оконная функция, апсерт. Я сознательно не использую сгенерированные классы, чтобы пример был самодостаточным; в комментарии — минимальная конфигурация codegen-плагина для прод-проекта.
+```groovy
+// build.gradle (Groovy DSL) — зависимости jOOQ
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-jooq'
+    runtimeOnly 'org.postgresql:postgresql'
+}
+```
 
-**Java — `DSLContext`: CTE, окно, upsert**
+```kotlin
+// build.gradle.kts (Kotlin DSL)
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-jooq")
+    runtimeOnly("org.postgresql:postgresql")
+}
+```
 
 ```java
-package com.example.jooq;
+package com.example.jooq.repo;
 
-import org.jooq.*;
+import com.example.jooq.generated.tables.Orders;
+import com.example.jooq.generated.tables.records.OrdersRecord;
+import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 
 @Repository
-public class ReportDao {
+public class OrderJooqRepository {
 
     private final DSLContext dsl;
+    private static final Orders ORDERS = Orders.ORDERS;
 
-    public ReportDao(DSLContext dsl) { this.dsl = dsl; }
-
-    @Transactional(readOnly = true)
-    public List<Record3<Long, String, Long>> topCustomersBySum(int limit) {
-        // WITH o AS (select customer_id, total_cents from orders where created_at >= now() - interval '30 days')
-        // select customer_id, sum(total_cents) as sum, row_number() over (order by sum desc) as rn from o ...
-        Name o = DSL.name("o");
-        Table<?> cte = DSL.name("o").as(DSL.table(
-                DSL.select(DSL.field("customer_id"), DSL.field("total_cents"))
-                   .from(DSL.table("orders"))
-                   .where(DSL.field("created_at").ge(DSL.field("now() - interval '30 days'")))
-        ));
-        Field<Long> customerId = DSL.field(DSL.name("customer_id"), Long.class);
-        Field<Long> total = DSL.sum(DSL.field(DSL.name("total_cents"), Long.class)).as("sum");
-        Field<Integer> rn = DSL.rowNumber().over().orderBy(total.desc()).as("rn");
-
-        return dsl.with(o).as(cte)
-                .select(customerId, total, rn)
-                .from(DSL.table(o))
-                .groupBy(customerId)
-                .orderBy(total.desc())
-                .limit(limit)
-                .fetch();
+    public OrderJooqRepository(DSLContext dsl) {
+        this.dsl = dsl;
     }
 
     @Transactional
-    public int upsertOrder(long id, long customerId, long totalCents, OffsetDateTime createdAt) {
-        // INSERT ... ON CONFLICT (id) DO UPDATE
-        return dsl.insertInto(DSL.table("orders"))
-                .columns(DSL.field("id"), DSL.field("customer_id"), DSL.field("total_cents"), DSL.field("created_at"))
-                .values(id, customerId, totalCents, createdAt)
-                .onConflict(DSL.field("id"))
+    public void upsertOrder(Long id, BigDecimal amount, String status) {
+        dsl.insertInto(ORDERS)
+                .set(ORDERS.ID, id)
+                .set(ORDERS.AMOUNT, amount)
+                .set(ORDERS.STATUS, status)
+                .set(ORDERS.UPDATED_AT, OffsetDateTime.now())
+                .onConflict(ORDERS.ID)
                 .doUpdate()
-                .set(DSL.field("customer_id"), customerId)
-                .set(DSL.field("total_cents"), totalCents)
-                .set(DSL.field("created_at"), createdAt)
+                .set(ORDERS.AMOUNT, DSL.excluded(ORDERS.AMOUNT))
+                .set(ORDERS.STATUS, DSL.excluded(ORDERS.STATUS))
+                .set(ORDERS.UPDATED_AT, DSL.excluded(ORDERS.UPDATED_AT))
                 .execute();
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerTurnoverRow> findCustomerTurnover() {
+        return dsl.select(
+                    ORDERS.CUSTOMER_ID,
+                    DSL.sum(ORDERS.AMOUNT).as("total_amount"),
+                    DSL.count().as("orders_count")
+                )
+                .from(ORDERS)
+                .groupBy(ORDERS.CUSTOMER_ID)
+                .orderBy(DSL.sum(ORDERS.AMOUNT).desc())
+                .fetch(record -> new CustomerTurnoverRow(
+                        record.get(ORDERS.CUSTOMER_ID),
+                        record.get("total_amount", BigDecimal.class),
+                        record.get("orders_count", Long.class)
+                ));
+    }
+
+    public record CustomerTurnoverRow(
+            Long customerId,
+            BigDecimal totalAmount,
+            Long ordersCount
+    ) {
     }
 }
 ```
 
-**Kotlin — `DSLContext` с CTE, окном и upsert**
-
 ```kotlin
-package com.example.jooq
+package com.example.jooq.repo
 
+import com.example.jooq.generated.tables.Orders
 import org.jooq.DSLContext
-import org.jooq.Field
-import org.jooq.Name
-import org.jooq.Record3
 import org.jooq.impl.DSL
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 import java.time.OffsetDateTime
 
 @Repository
-class ReportDao(private val dsl: DSLContext) {
+class OrderJooqRepository(
+    private val dsl: DSLContext
+) {
+
+    private val ORDERS = Orders.ORDERS
+
+    @Transactional
+    fun upsertOrder(id: Long, amount: BigDecimal, status: String) {
+        dsl.insertInto(ORDERS)
+            .set(ORDERS.ID, id)
+            .set(ORDERS.AMOUNT, amount)
+            .set(ORDERS.STATUS, status)
+            .set(ORDERS.UPDATED_AT, OffsetDateTime.now())
+            .onConflict(ORDERS.ID)
+            .doUpdate()
+            .set(ORDERS.AMOUNT, DSL.excluded(ORDERS.AMOUNT))
+            .set(ORDERS.STATUS, DSL.excluded(ORDERS.STATUS))
+            .set(ORDERS.UPDATED_AT, DSL.excluded(ORDERS.UPDATED_AT))
+            .execute()
+    }
 
     @Transactional(readOnly = true)
-    fun topCustomersBySum(limit: Int): List<Record3<Long, String, Long>> {
-        val o: Name = DSL.name("o")
-        val cte = DSL.name("o").`as`(
-            DSL.table(
-                DSL.select(DSL.field("customer_id"), DSL.field("total_cents"))
-                    .from(DSL.table("orders"))
-                    .where(DSL.field("created_at").ge(DSL.field("now() - interval '30 days'")))
-            )
+    fun findCustomerTurnover(): List<CustomerTurnoverRow> {
+        return dsl.select(
+            ORDERS.CUSTOMER_ID,
+            DSL.sum(ORDERS.AMOUNT).`as`("total_amount"),
+            DSL.count().`as`("orders_count")
         )
-        val customerId: Field<Long> = DSL.field(DSL.name("customer_id"), Long::class.java)
-        val total: Field<Long> = DSL.sum(DSL.field(DSL.name("total_cents"), Long::class.java)).`as`("sum")
-        val rn = DSL.rowNumber().over().orderBy(total.desc()).`as`("rn")
-
-        return dsl.with(o).`as`(cte)
-            .select(customerId, total, rn)
-            .from(DSL.table(o))
-            .groupBy(customerId)
-            .orderBy(total.desc())
-            .limit(limit)
-            .fetch()
-    }
-
-    @Transactional
-    fun upsertOrder(id: Long, customerId: Long, totalCents: Long, createdAt: OffsetDateTime): Int =
-        dsl.insertInto(DSL.table("orders"))
-            .columns(DSL.field("id"), DSL.field("customer_id"), DSL.field("total_cents"), DSL.field("created_at"))
-            .values(id, customerId, totalCents, createdAt)
-            .onConflict(DSL.field("id"))
-            .doUpdate()
-            .set(DSL.field("customer_id"), customerId)
-            .set(DSL.field("total_cents"), totalCents)
-            .set(DSL.field("created_at"), createdAt)
-            .execute()
-}
-```
-
-**Совместное использование с JPA в одном сервисе (одна транзакция)**
-— читаем отчёт jOOQ-ом и обновляем доменные сущности JPA. Это легально и часто удобно.
-
-**Java — jOOQ + JPA под одной транзакцией**
-
-```java
-package com.example.mixed;
-
-import com.example.jooq.ReportDao;
-import com.example.domain.Order; // ваша JPA-сущность
-import com.example.domain.OrderRepository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-@Service
-public class MixedService {
-    private final ReportDao reportDao;
-    private final OrderRepository orderRepo;
-
-    public MixedService(ReportDao reportDao, OrderRepository orderRepo) {
-        this.reportDao = reportDao; this.orderRepo = orderRepo;
-    }
-
-    @Transactional
-    public void recomputeTopAndMarkFeatured() {
-        var top = reportDao.topCustomersBySum(10); // jOOQ
-        top.forEach(rec -> {
-            Long id = (Long) rec.get(0); // пример; в реале — свой DTO
-            orderRepo.findById(id).ifPresent(o -> o.setStatus("FEATURED")); // JPA
-        });
-    }
-}
-```
-
-**Kotlin — то же**
-
-```kotlin
-package com.example.mixed
-
-import com.example.jooq.ReportDao
-import com.example.domain.OrderRepository
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-
-@Service
-class MixedService(
-    private val reportDao: ReportDao,
-    private val orderRepo: OrderRepository
-) {
-    @Transactional
-    fun recomputeTopAndMarkFeatured() {
-        val top = reportDao.topCustomersBySum(10)
-        top.forEach { rec ->
-            val id = rec.get(0, Long::class.java)
-            orderRepo.findById(id).ifPresent { it.status = "FEATURED" }
-        }
-    }
-}
-```
-
-**(Опционально) Минимальная конфигурация codegen для jOOQ (Gradle Kotlin DSL, плагин nu.studer.jooq)**
-*Этот блок — справочный. Его можно добавить позже; он не нужен для компиляции приведённого кода.*
-
-```kotlin
-plugins {
-    id("nu.studer.jooq") version "9.0"
-}
-dependencies {
-    jooqGenerator("org.postgresql:postgresql:42.7.3")
-}
-jooq {
-    version.set("3.19.9") // актуальную версию уточните в документации
-    configurations {
-        create("main") {
-            generateSchemaSourceOnCompilation.set(true)
-            jooqConfiguration.apply {
-                jdbc.apply {
-                    driver = "org.postgresql.Driver"
-                    url = "jdbc:postgresql://localhost:5432/app"
-                    user = "app"
-                    password = "app"
-                }
-                generator.apply {
-                    name = "org.jooq.codegen.DefaultGenerator"
-                    database.apply {
-                        name = "org.jooq.meta.postgres.PostgresDatabase"
-                        inputSchema = "public"
-                    }
-                    target.apply {
-                        packageName = "org.jooq.generated"
-                        directory = "$projectDir/src/generated/jooq"
-                    }
-                }
+            .from(ORDERS)
+            .groupBy(ORDERS.CUSTOMER_ID)
+            .orderBy(DSL.sum(ORDERS.AMOUNT).desc())
+            .fetch { record ->
+                CustomerTurnoverRow(
+                    customerId = record.get(ORDERS.CUSTOMER_ID),
+                    totalAmount = record.get("total_amount", BigDecimal::class.java),
+                    ordersCount = record.get("orders_count", Long::class.java)
+                )
             }
-        }
     }
-}
-sourceSets.main {
-    java.srcDir("src/generated/jooq")
+
+    data class CustomerTurnoverRow(
+        val customerId: Long?,
+        val totalAmount: BigDecimal?,
+        val ordersCount: Long?
+    )
 }
 ```
 
-**Итоги практики по JDBC/jOOQ**
-
-1. Сложные отчёты, окна, CTE, апсерты и bulk — это **зона JDBC/jOOQ**.
-2. `JdbcTemplate` даёт контроль: `RowMapper`, `RowCallbackHandler`, батчи, таймауты, `fetchSize`.
-3. LOB — только потоками. Вставка/чтение через стрим без буферизации в память.
-4. jOOQ — «SQL как код»: типобезопасно и прозрачно. С JPA уживается отлично; держите транзакции короткими и роль каждого инструмента понятной.
-
-
+Совместное использование JPA и jOOQ требует дисциплины: не смешивать сущности и jOOQ-record’ы в одном уровне, понимать, где у вас доменная модель, а где — SQL-модель. Но при правильной организации вы получаете лучшее из двух миров: удобный CRUD и навигацию по графу сущностей через JPA и при этом полный контроль над сложным SQL, апсертами, CTE и отчётами через jOOQ.
 
 # 13. Репозитории: расширение и кастомизация
 
-Ниже разберём практики, которые начинают понадобиться, когда возможностей «голых» `JpaRepository` уже не хватает: общий базовый репозиторий с полезными утилитами, точечные (surgical) кастомные реализации для отдельных агрегатов, а также здравые границы ответственности между репозиторием и сервисом. Всё — с рабочими примерами на Java и Kotlin, и с акцентом на производительность и предсказуемость поведения.
-
-**Gradle (Groovy DSL)**
-
-```groovy
-plugins {
-  id 'org.springframework.boot' version '3.3.4'
-  id 'io.spring.dependency-management' version '1.1.6'
-  id 'java'
-}
-dependencies {
-  implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-  implementation 'org.springframework.boot:spring-boot-starter-cache' // для спец-кешей при желании
-  implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'      // пример локального кеша
-  runtimeOnly 'org.postgresql:postgresql:42.7.3'
-  testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
-```
-
-**Gradle (Kotlin DSL)**
-
-```kotlin
-plugins {
-  id("org.springframework.boot") version "3.3.4"
-  id("io.spring.dependency-management") version "1.1.6"
-  java
-}
-dependencies {
-  implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-  implementation("org.springframework.boot:spring-boot-starter-cache")
-  implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
-  runtimeOnly("org.postgresql:postgresql:42.7.3")
-  testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
-```
-
-**application.yml (минимум для примеров)**
-
-```yaml
-spring:
-  jpa:
-    open-in-view: false
-```
-
 ## Свой базовый интерфейс репозитория: общие методы, хук на `EntityManager`
 
-Первый импульс «вынести общее» в репозитории возникает, когда по проекту начинают копироваться однотипные приёмы: пакетные вставки/обновления, принудительный `flush/clear`, поиск по коллекции id **с сохранением порядка**, безопасные read-only выборки без dirty checking и т.п. Делать всё это в каждом конкретном интерфейсе неудобно; правильнее — определить **свой базовый репозиторий**, расширяющий `JpaRepository`, и подключить собственную базовую реализацию на основе `SimpleJpaRepository`.
+Во всех сколько-нибудь крупных проектах очень быстро появляются одни и те же паттерны в репозиториях: «найти по id и бросить своё исключение, если нет», «пометить как удалённый вместо физического удаления», «сделать постраничный поиск с одинаковой сортировкой и фильтрами по тенанту». Если эти подходы размазывать по десяткам интерфейсов `JpaRepository`, код начинает дублироваться, а правки превращаются в квест «поправь одно и то же в 15 местах». Собственный базовый интерфейс репозитория как раз и нужен, чтобы собрать эти общие вещи в одном месте и навязать единые подходы всей команде.
 
-Технически это два шага: объявить `@NoRepositoryBean`-интерфейс `BaseRepository<T, ID>` c дополнительными методами, и написать `BaseRepositoryImpl<T, ID>` (наследник `SimpleJpaRepository`), который умеет обращаться к `EntityManager` и Hibernate `Session`. Затем в конфигурации репозиториев указать `repositoryBaseClass = BaseRepositoryImpl.class`, чтобы Spring Data JPA использовал именно вашу реализацию как «скелет» для всех репозиториев домена.
+В Spring Data JPA базовый репозиторий реализуется двумя составляющими: интерфейсом, который расширяет `JpaRepository<T, ID>` (и, при необходимости, ещё что-то вроде `JpaSpecificationExecutor<T>`), и базовой реализацией, которая наследуется от `SimpleJpaRepository<T, ID>` и получает доступ к `EntityManager`. В интерфейсе вы объявляете новые «общие» методы (`findRequired`, `softDelete`, `existsOrThrow` и т.п.), а в реализации — задаёте их поведение единообразно для всех сущностей. Дальше все ваши конкретные репозитории (`CustomerRepository`, `OrderRepository`) расширяют именно этот базовый интерфейс.
 
-Хук на `EntityManager` даёт доступ к «тонким ручкам»: можно временно переключить `FlushModeType`, вызвать `flush()` в определённой точке, использовать `setHint(READ_ONLY,true)`/`Session.setDefaultReadOnly(true)` для дешёвого чтения, вызвать `unwrap(Session.class)` и зачитаться forward-only-курсор с `fetchSize`. Когда это собрано в базовый класс, команда пользуется единым и проверенным API, а не изобретает велосипед заново.
+Доступ к `EntityManager` в базовой реализации даёт вам возможность делать вещи, которых нет в стандартном `JpaRepository`: писать общий `findRequired` с правильным логированием, работать напрямую с `Criteria` или `Query` для каких-то узких кейсов, реализовывать soft-delete на уровне базового класса (`em.remove` заменяется на обновление флага). При этом важно помнить, что базовый репозиторий должен оставаться максимально универсальным: никакой доменной логики, только инфраструктура и паттерны доступа к данным.
 
-Полезный метод — `findAllByIdsOrdered(Collection<ID> ids)`, который возвращает сущности строго в порядке входных id. Это спасает в слоях, где порядок важен (например, выдача карточек по «желаемому» списку id). Ещё один частый утилитарный метод — `saveInBatch(List<T> entities, int batchSize)`, который дозирует нагрузку на L1-кэш и вызывает `flush/clear` между порциями.
+Типичный набор методов в таком базовом репозитории — это вариации на тему `findByIdOrThrow`, «безопасное» удаление, общие хелперы для пагинации и, иногда, методы поддержки многоарендности (например, автоматический фильтр по `tenantId` при поиске). Главное — не скатиться в то, что базовый репозиторий начинает знать о полях конкретной сущности. Как только внутри реализации появляются обращения к `SomeEntity.class` или конкретным колонкам, база превращается в свалку. Если нужен общий функционал, опирайтесь либо на интерфейсы-маркерные (`HasTenant`, `SoftDeletable`), либо на generics-ограничения с абстрактным суперклассом.
 
-Часто хочется и «правильного» read-only чтения без слепков в PC. В базовой реализации можно сделать `streamReadOnly(Query)`/`listReadOnly(TypedQuery<T>)`, которые выставляют хинты `READ_ONLY`, `fetchSize`, `cacheable=false` (если нужно), и выдают результат в потоковом режиме. Так вы снизите нагрузку на память и GC в списках.
+С точки зрения транзакций базовый репозиторий остаётся обычным Spring-компонентом: его методы могут быть помечены `@Transactional` или полагаться на аннотации сервисного слоя. Обычно хорошая практика — в базовом репозитории делать только `readOnly = true` для общих чтений и оставлять управление записью (`@Transactional`) на сервисы. Исключение — очень низкоуровневые операции, которые явно должны быть атомарными и не зависят от внешних сервисов (например, массовые обновления одной таблицы).
 
-Осторожнее с «универсализацией»: не нужно тянуть в базовый репозиторий бизнес-логику, кеши конкретных сущностей, специфичные нативные запросы. Всё, что привязано к одной модели — оставляем на уровне кастомных имплементаций или сервисов. База — только общий инфраструктурный «инструментарий».
+Подключение базовой реализации к Spring Data JPA делается через параметр `repositoryBaseClass` в `@EnableJpaRepositories`. Вы указываете свой класс, и фреймворк будет генерировать прокси для ваших репозиториев, используя его в качестве базового. Важно, чтобы интерфейсы репозиториев расширяли ваш базовый интерфейс, иначе всё вернётся к дефолтной `SimpleJpaRepository`. Именно поэтому стоит сразу задать единый паттерн: «у нас все репозитории наследуются от `BaseRepository<T, ID>`».
 
-С точки зрения тестирования базовый репозиторий неплохо покрыть мини-набором интеграционных тестов (Testcontainers), которые проверят: `findAllByIdsOrdered` сохраняет порядок, `saveInBatch` действительно делает `flush/clear`, а `streamReadOnly` не накапливает сущности в PC. Это инвестиция, которая окупится, когда репозиториев станет десятки.
+С практической точки зрения базовый репозиторий — это место, где вы можете централизовано навязать подходы к логированию и обработке ошибок. Например, `findRequiredById` может логировать запрос в debug с указанием класса сущности и ключа, а при отсутствии — кидать доменное `NotFoundException`, которое потом централизованно маппится в 404. Это лучше, чем каждый раз вручную делать `orElseThrow` с разными сообщениями и типами исключений.
 
-Производительноcть базового класса зависит от аккуратного обращения с `flush()`. Он не должен вызываться «про запас». Для пакетных операций — да; для обычного `save()` — нет. Хорошая эвристика: в базовом методе при `batchSize > 0` делать `flush/clear` каждые N записей, иначе — не трогать.
+Ещё одно удобство — возможность добавлять туда диагностические хелперы: измерение времени выполнения запроса, дополнительные проверки, детальную ошибку при нарушении уникальности. Да, часть этого решается на уровне AOP/`@RepositoryAdvice`, но иногда проще иметь маленький набор методов в репозитории, которые точно ведут себя одинаково, чем пытаться оборачивать всё подряд.
 
-Важный момент — совместимость с транзакциями. Базовый репозиторий не должен «сам» открывать/закрывать транзакции, это ответственность сервисного слоя. Но он может использовать `@Transactional(readOnly = true)` на методах «чтения», если вы явно вызываете их из сервисов без аннотаций. В большинстве проектов аннотации ставят на сервисах — и это нормально.
+В существующем проекте базовый репозиторий можно вводить постепенно. Сначала вы создаёте интерфейс и реализацию, включаете их через `@EnableJpaRepositories`, затем переводите один-два репозитория, проверяете, что всё работает, и только потом массово меняете наследование. При этом не обязательно сразу переносить весь старый хелпер-код вовнутрь: можно начать с пары самых важных методов (например, `findRequired`), а остальное допиливать по мере необходимости.
 
-Наконец, не забывайте про `@NoRepositoryBean`: без него Spring попытается создать бин для интерфейса базового репозитория — и вы получите ошибку. Это мелочь, но встречается часто.
+Важно, чтобы команда договорилась, что доменная логика в базовый репозиторий не попадает. Любые правила предметной области — в сервисах. Базовый репозиторий — это инфраструктурный слой, задача которого облегчить работу с JPA и навязать общие практики. Если туда начать добавлять «магические» методы вроде `deactivateCustomerWithAllRelations`, через пару лет код станет нечитаемым, а архитектура — хрупкой.
 
-**Java — базовый репозиторий и реализация с хуком на EntityManager**
+Ниже пример: базовый интерфейс и реализация в Java и Kotlin, плюс конфигурация `@EnableJpaRepositories` и простой `CustomerRepository`, который наследует общий функционал.
 
 ```java
-package com.example.repo.base;
+package com.example.jpa.base;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import jakarta.persistence.TypedQuery;
-import org.hibernate.Session;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.repository.NoRepositoryBean;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.jpa.repository.support.SimpleJpaRepository;
+import org.springframework.data.repository.NoRepositoryBean;
+import org.springframework.stereotype.Repository;
 
-import java.util.*;
-import java.util.stream.Collectors;
+import java.io.Serializable;
+import java.util.Optional;
 
 @NoRepositoryBean
-public interface BaseRepository<T, ID> extends JpaRepository<T, ID> {
-    List<T> findAllByIdsOrdered(Collection<ID> ids);
-    void saveInBatch(List<T> entities, int batchSize);
-    <X> List<X> listReadOnly(TypedQuery<X> query, Integer fetchSize);
+public interface BaseRepository<T, ID extends Serializable> extends JpaRepository<T, ID> {
+
+    T findRequired(ID id);
+
+    Optional<T> findOptional(ID id);
 }
+```
 
-public class BaseRepositoryImpl<T, ID> extends SimpleJpaRepository<T, ID> implements BaseRepository<T, ID> {
+```java
+package com.example.jpa.base;
 
-    @PersistenceContext
-    private final EntityManager em;
+import jakarta.persistence.EntityManager;
+import org.springframework.data.jpa.repository.support.SimpleJpaRepository;
 
-    public BaseRepositoryImpl(Class<T> domainClass, EntityManager em) {
-        super(domainClass, em);
-        this.em = em;
+import java.io.Serializable;
+import java.util.Optional;
+
+public class BaseRepositoryImpl<T, ID extends Serializable>
+        extends SimpleJpaRepository<T, ID>
+        implements BaseRepository<T, ID> {
+
+    private final EntityManager entityManager;
+    private final Class<T> domainClass;
+
+    public BaseRepositoryImpl(Class<T> domainClass, EntityManager entityManager) {
+        super(domainClass, entityManager);
+        this.entityManager = entityManager;
+        this.domainClass = domainClass;
     }
 
     @Override
-    @Transactional(readOnly = true)
-    public List<T> findAllByIdsOrdered(Collection<ID> ids) {
-        if (ids == null || ids.isEmpty()) return List.of();
-        List<T> list = this.findAllById(ids);
-        // вернуть в порядке входных ids
-        Map<Object, T> byId = list.stream().collect(Collectors.toMap(this::getId, e -> e));
-        List<T> ordered = new ArrayList<>(ids.size());
-        for (ID id : ids) {
-            T t = byId.get(id);
-            if (t != null) ordered.add(t);
-        }
-        return ordered;
+    public T findRequired(ID id) {
+        return findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        domainClass.getSimpleName(), String.valueOf(id)
+                ));
     }
 
     @Override
-    @Transactional
-    public void saveInBatch(List<T> entities, int batchSize) {
-        Session session = em.unwrap(Session.class);
-        int i = 0;
-        for (T e : entities) {
-            session.persist(e);
-            i++;
-            if (batchSize > 0 && i % batchSize == 0) {
-                session.flush();
-                session.clear();
-            }
-        }
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public <X> List<X> listReadOnly(TypedQuery<X> query, Integer fetchSize) {
-        Session session = em.unwrap(Session.class);
-        boolean prev = session.isDefaultReadOnly();
-        try {
-            session.setDefaultReadOnly(true);
-            if (fetchSize != null) query.setHint(org.hibernate.jpa.HibernateHints.HINT_FETCH_SIZE, fetchSize);
-            query.setHint(org.hibernate.jpa.HibernateHints.HINT_READ_ONLY, true);
-            return query.getResultList();
-        } finally {
-            session.setDefaultReadOnly(prev);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Object getId(T entity) {
-        return em.getEntityManagerFactory().getPersistenceUnitUtil().getIdentifier(entity);
+    public Optional<T> findOptional(ID id) {
+        return findById(id);
     }
 }
 ```
 
 ```java
-package com.example.repo.base;
+package com.example.jpa.base;
 
+public class EntityNotFoundException extends RuntimeException {
+
+    public EntityNotFoundException(String entityName, String id) {
+        super("Entity '%s' with id '%s' not found".formatted(entityName, id));
+    }
+}
+```
+
+```java
+package com.example.jpa.config;
+
+import com.example.jpa.base.BaseRepositoryImpl;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @Configuration
 @EnableJpaRepositories(
-        basePackages = "com.example.repo",
+        basePackages = "com.example.jpa.repository",
         repositoryBaseClass = BaseRepositoryImpl.class
 )
-class JpaRepoConfig { }
+public class JpaConfig {
+}
 ```
 
-**Kotlin — базовый репозиторий и реализация**
+```java
+package com.example.jpa.customer;
+
+import jakarta.persistence.*;
+import java.time.Instant;
+
+@Entity
+@Table(name = "customer")
+public class Customer {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String email;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt = Instant.now();
+
+    // getters/setters
+}
+```
+
+```java
+package com.example.jpa.customer;
+
+import com.example.jpa.base.BaseRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface CustomerRepository extends BaseRepository<Customer, Long> {
+}
+```
 
 ```kotlin
-package com.example.repo.base
+package com.example.jpa.base
 
 import jakarta.persistence.EntityManager
-import jakarta.persistence.PersistenceContext
-import jakarta.persistence.TypedQuery
-import org.hibernate.Session
 import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.data.repository.NoRepositoryBean
 import org.springframework.data.jpa.repository.support.SimpleJpaRepository
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.data.repository.NoRepositoryBean
+import java.io.Serializable
+import java.util.Optional
 
 @NoRepositoryBean
-interface BaseRepository<T, ID> : JpaRepository<T, ID> {
-    fun findAllByIdsOrdered(ids: Collection<ID>): List<T>
-    fun <X> listReadOnly(query: TypedQuery<X>, fetchSize: Int? = null): List<X>
-    fun saveInBatch(entities: List<T>, batchSize: Int = 1000)
+interface BaseRepository<T, ID : Serializable> : JpaRepository<T, ID> {
+
+    fun findRequired(id: ID): T
+
+    fun findOptional(id: ID): Optional<T>
 }
 
 class BaseRepositoryImpl<T, ID>(
-    domainClass: Class<T>,
-    @PersistenceContext private val em: EntityManager
-) : SimpleJpaRepository<T, ID>(domainClass, em), BaseRepository<T, ID> {
+    private val domainClass: Class<T>,
+    private val em: EntityManager
+) : SimpleJpaRepository<T, ID>(domainClass, em),
+    BaseRepository<T, ID> where ID : Serializable {
 
-    @Transactional(readOnly = true)
-    override fun findAllByIdsOrdered(ids: Collection<ID>): List<T> {
-        if (ids.isEmpty()) return emptyList()
-        val list = findAllById(ids)
-        val byId = list.associateBy { em.entityManagerFactory.persistenceUnitUtil.getIdentifier(it) }
-        return ids.mapNotNull { byId[it] }
-    }
-
-    @Transactional
-    override fun saveInBatch(entities: List<T>, batchSize: Int) {
-        val session = em.unwrap(Session::class.java)
-        var i = 0
-        for (e in entities) {
-            session.persist(e)
-            i++
-            if (batchSize > 0 && i % batchSize == 0) {
-                session.flush()
-                session.clear()
-            }
+    override fun findRequired(id: ID): T =
+        findById(id).orElseThrow {
+            EntityNotFoundException(domainClass.simpleName, id.toString())
         }
-    }
 
-    @Transactional(readOnly = true)
-    override fun <X> listReadOnly(query: TypedQuery<X>, fetchSize: Int?): List<X> {
-        val session = em.unwrap(Session::class.java)
-        val prev = session.isDefaultReadOnly
-        try {
-            session.isDefaultReadOnly = true
-            fetchSize?.let { query.setHint(org.hibernate.jpa.HibernateHints.HINT_FETCH_SIZE, it) }
-            query.setHint(org.hibernate.jpa.HibernateHints.HINT_READ_ONLY, true)
-            return query.resultList
-        } finally {
-            session.isDefaultReadOnly = prev
-        }
-    }
+    override fun findOptional(id: ID): Optional<T> =
+        findById(id)
 }
+
+class EntityNotFoundException(
+    entityName: String,
+    id: String
+) : RuntimeException("Entity '$entityName' with id '$id' not found")
 ```
 
-Для примеров использования нам достаточно любой сущности; ниже в следующих пунктах появится `Product`/`Order` — они автоматически унаследуют возможности из базового репозитория благодаря конфигурации `repositoryBaseClass`.
+```kotlin
+package com.example.jpa.config
+
+import com.example.jpa.base.BaseRepositoryImpl
+import org.springframework.context.annotation.Configuration
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories
+
+@Configuration
+@EnableJpaRepositories(
+    basePackages = ["com.example.jpa.repository"],
+    repositoryBaseClass = BaseRepositoryImpl::class
+)
+class JpaConfig
+```
+
+```kotlin
+package com.example.jpa.customer
+
+import jakarta.persistence.*
+import java.time.Instant
+
+@Entity
+@Table(name = "customer")
+class Customer(
+
+    @Id
+    @GeneratedValue
+    var id: Long? = null,
+
+    var email: String = "",
+
+    @Column(name = "created_at", nullable = false)
+    var createdAt: Instant = Instant.now()
+)
+```
+
+```kotlin
+package com.example.jpa.customer
+
+import com.example.jpa.base.BaseRepository
+import org.springframework.stereotype.Repository
+
+@Repository
+interface CustomerRepository : BaseRepository<Customer, Long>
+```
+
+---
 
 ## Кастомные имплементации для отдельных репозиториев (surgical-SQL, спец-кеши)
 
-Помимо общего «скелета», иногда нужна **точечная**, «хирургическая» оптимизация: нативный запрос на конкретную таблицу, быстрый «апсерт», локальный кеш по бизнес-ключу, специальная пагинация с хинтами. В Spring Data JPA это решается **фрагментами репозитория**: вы объявляете интерфейс `XxxRepositoryCustom` и реализацию `XxxRepositoryImpl` (важно совпадение суффиксов), а затем ваш основной `XxxRepository` расширяет и `JpaRepository`, и `XxxRepositoryCustom`.
+Помимо базового репозитория, который расширяет функциональность всех репозиториев сразу, Spring Data JPA позволяет настраивать кастомные реализации для конкретных репозиториев. Это как «точечная хирургия»: у вас есть 1–2 метода, которые требуют особого подхода — сложный SQL, кэширование, комбинированный доступ JPA+JDBC, работа с jOOQ — и вы не хотите тащить всю эту специфику в базовый класс. Тогда вы создаёте отдельный интерфейс `XxxRepositoryCustom` и его реализацию `XxxRepositoryImpl`, которые Spring «подмешивает» к основному репозиторию.
 
-Такой фрагмент идеально подходит для «surgical SQL», когда JPA-абстракция мешает: нужно `INSERT ... ON CONFLICT`, `WITH ...` (CTE), специфичный индекс-хинт, или банально — получить **две колонки** без подъёма всей сущности. Внутри кастомной реализации у вас есть `EntityManager`, можно инжектировать и `JdbcTemplate`, и локальные кеши (например, Caffeine).
+Сценарии, где кастомная имплементация особенно полезна, довольно типичны. Например, вам нужно сделать один очень тяжёлый отчётный запрос по заказам с денормализованными данными, и явно виден SQL, который вы хотите написать руками. Остальные методы `OrderRepository` спокойно живут на стандартном `JpaRepository`. Логично не ломать модель ради одного кейса и не городить отдельный репозиторий «для отчётов», а расширить существующий репозиторий кастомной реализацией с нужным SQL.
 
-Кеш в уровне репозитория — решение спорное, но иногда оправданное: например, часто дергается «getIdBySku» по стабильному справочнику. Делать для этого отдельный сервис и палить сеть/базу в каждом вызове — накладно; достаточно локального `Cache<K,V>` с управляемой инвалидацией при изменении данных. Главное — **место** инвалидации: обновляете `Product` — почистите кеш по соответствующему ключу.
+Другой пример — специальное кэширование результата. Допустим, вы хотите кэшировать только один-два тяжёлых метода репозитория, оборачивая данные в локальный кэш или Redis, но не хотите включать `@Cacheable` на уровне сервиса (чтобы не смешивать там доменную логику и инфраструктуру). Тогда в кастомной реализации вы можете явно использовать `CacheManager`, управлять ключами и TTL, не влияя на остальные методы репозитория. Главное — помнить, что репозиторий остаётся частью слоя доступа к данным, и кеш здесь — инфраструктурная оптимизация, а не логика предметной области.
 
-Опасные места кастомных реализаций — рассогласование с L1-кешем и транзакциями. Если вы делаете нативный `UPDATE`/`DELETE`, Hibernate **не знает** об изменениях управляемых сущностей: либо делайте `clear()`/evict после операции, либо используйте такие методы вне сессий, где сущности уже загружены и будут переиспользованы. В нашем примере после апсерта мы не держим `Product` в PC — и это безопасно.
+Технически паттерн выглядит так: вы объявляете интерфейс `UserRepositoryCustom` с методами, которых нет в стандартном `JpaRepository`, например, `findForExport(...)`. Затем создаёте класс `UserRepositoryImpl`, который реализует этот интерфейс, помечаете его `@Repository` (необязательно) и инжектите `EntityManager`, `JdbcTemplate` или `DSLContext`. Интерфейс основного репозитория `UserRepository` расширяет и `JpaRepository`, и `UserRepositoryCustom`. Spring Data по соглашению (`Impl` в названии) автоматически найдёт реализацию и сгенерирует прокси, который объединит стандартные методы и кастомные.
 
-Ещё один нюанс — маппинг DTO из `createNativeQuery`. Либо используйте JPA `SqlResultSetMapping`, либо возвращайте «плоские» типы (`Object[]`) и вручную склеивайте DTO. Для компактности примера ниже покажу «вручную» c `Object[]`, а также альтернативу через `JdbcTemplate` (она короче и чаще приятнее).
+Кастомные реализации — хорошее место для «surgical SQL»: точечных native-запросов, которые явно заточены под конкретную СУБД и таблицы. Вы можете написать аккуратный SQL с оконными функциями, CTE, `ON CONFLICT`, использовать `JdbcTemplate` или jOOQ, а снаружи оставить чистый репозиторийный интерфейс. Это даёт хорошую изоляцию: сервисы ничего не знают о том, SQL там или JPQL, и вам проще менять реализацию, если интеграционные требования изменятся.
 
-Локальные кеши: если выбираете Caffeine, определите TTL/ёмкость, продумайте инвалидацию. В критичных местах не полагайтесь на «вечные» значения; даже для справочников лучше короткий TTL или подписка на «инвалидацию» через событие. В примере — мини-кеш по `sku → id`.
+Важно не злоупотреблять кастомными репозиториями. Если каждый второй репозиторий имеет по кастомной имплементации с бизнес-логикой, это признак того, что слой сервисов слишком тонкий, а репозитории превратились в «супер-сервисы». Правильнее использовать кастомные реализации строго для задач доступа к данным: нетривиальные запросы, оптимизации производительности, интеграции с кэшем. Всё, что требует оркестрации нескольких репозиториев или внешних сервисов, должно жить в сервисном слое.
 
-Каскады и кеши не дружат «из коробки»: если вы мягко удалили запись (`@SQLDelete`), а кеш хранит id по ключу — метод «найди id» начнёт возвращать «скрытую» запись. Решение — включить в ключ кеша параметр «только живые/со всеми» или всегда читать только «живые» (и инвалидировать при удалении).
+Транзакции для кастомных методов работают так же, как и для обычных: вы можете пометить интерфейс репозитория `@Transactional(readOnly = true)` и переопределить конкретные методы с `@Transactional` для записи. В кастомной реализации аннотации можно ставить прямо на методы, если вам нужно изменить режим по сравнению с дефолтным. При этом следует помнить, что методы стандартного `JpaRepository` и кастомные методы реализуются разными классами, но прокси Spring Data объединяет их транзакционную семантику.
 
-Журналируйте «попадания/промахи» кеша — это покажет, окупается ли он вообще. В микросервисах с несколькими инстансами помните: Caffeine локален, может дать разные ответы на разных узлах при гонках. Если нужна единая картинка — идите в распределённый кеш (Redis) или откажитесь от кеша на этом уровне.
+Хорошая практика — держать сигнатуру кастомных методов «узкой»: принимать чёткий фильтр (DTO) или конкретные параметры, возвращать либо доменные сущности, либо простые DTO/проекции. Старайтесь не протаскивать внутрь методы сервисного слоя или другие репозитории, чтобы не перепутать уровни. Если кастомная реализация начинает вызывать сторонние сервисы, это тревожный сигнал: вероятно, её часть должна быть вынесена наверх.
 
-И последнее: не превращайте кастомный репозиторий в «монолит всего». Выносите сюда только то, что **реально** относится к данным этого агрегата и даёт измеримый выигрыш. Всё иное — в сервис.
+С точки зрения тестирования кастомные репозитории можно проверять интеграционными тестами с Testcontainers (реальная СУБД и миграции), чтобы убедиться, что SQL корректен и использует нужные индексы. При этом вы тестируете только слой данных, без поднятия всего приложения. Для кэширования можно дополнительно проверять, что повторные вызовы не бьют по базе, а при инвалидации — SQL действительно выполняется заново.
 
-**Java — кастомный фрагмент репозитория с surgical SQL и локальным кешем (Caffeine)**
+Ниже пример: кастомный репозиторий для пользователей, где один из методов реализован через native SQL и `JdbcTemplate`. Снаружи `UserRepository` остаётся обычным Spring Data-интерфейсом, но получает дополнительный метод `findForExport`. Java и Kotlin варианты эквивалентны.
 
 ```java
-package com.example.repo.product;
+package com.example.jpa.user;
 
 import jakarta.persistence.*;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
+import java.time.Instant;
+
+@Entity
+@Table(name = "app_user")
+public class User {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private String email;
+
+    private String fullName;
+
+    @Column(name = "active", nullable = false)
+    private boolean active = true;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt = Instant.now();
+
+    // getters/setters
+}
+```
+
+```java
+package com.example.jpa.user;
 
 import java.time.Instant;
-import java.util.Optional;
-import java.util.concurrent.TimeUnit;
+import java.util.List;
 
-// --- сущность для примера ---
-@Entity
-@Table(name = "products", indexes = { @Index(columnList = "sku", unique = true) })
-public class Product {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    @Column(nullable = false, unique = true, length = 64) private String sku;
-    @Column(nullable = false) private Long priceCents;
-    @Column(nullable = false) private Instant createdAt = Instant.now();
-    protected Product() {}
-    public Product(String sku, long priceCents){ this.sku=sku; this.priceCents=priceCents; }
-    public Long getId(){ return id; }
-    public String getSku(){ return sku; }
-    public Long getPriceCents(){ return priceCents; }
-    public void setPriceCents(Long v){ this.priceCents = v; }
-}
+public interface UserRepositoryCustom {
 
-// --- фрагмент интерфейса ---
-interface ProductRepositoryCustom {
-    Optional<Long> findIdBySkuCached(String sku);
-    int upsertPrice(String sku, long priceCents);
-    Optional<ProductPriceView> findPriceViewNative(String sku);
-}
+    List<UserForExport> findForExport(Instant createdFrom, boolean onlyActive);
 
-record ProductPriceView(Long id, String sku, Long priceCents) {}
-
-// --- основное API репозитория ---
-@Repository
-interface ProductRepository extends JpaRepository<Product, Long>, ProductRepositoryCustom { }
-
-// --- реализация фрагмента (важно имя ...Impl) ---
-class ProductRepositoryImpl implements ProductRepositoryCustom {
-
-    @PersistenceContext private EntityManager em;
-    private final Cache<String, Long> idBySku = Caffeine.newBuilder()
-            .maximumSize(10_000)
-            .expireAfterWrite(10, TimeUnit.MINUTES)
-            .build();
-
-    @Override
-    @Transactional(readOnly = true)
-    public Optional<Long> findIdBySkuCached(String sku) {
-        Long cached = idBySku.getIfPresent(sku);
-        if (cached != null) return Optional.of(cached);
-        Long id = em.createQuery("select p.id from Product p where p.sku = :sku", Long.class)
-                .setParameter("sku", sku)
-                .setHint(org.hibernate.jpa.HibernateHints.HINT_READ_ONLY, true)
-                .getResultStream().findFirst().orElse(null);
-        if (id != null) idBySku.put(sku, id);
-        return Optional.ofNullable(id);
-    }
-
-    @Override
-    @Transactional
-    public int upsertPrice(String sku, long priceCents) {
-        // surgical SQL: Postgres ON CONFLICT
-        int updated = em.createNativeQuery("""
-            insert into products(sku, price_cents, created_at)
-            values (:sku, :price, now())
-            on conflict (sku) do update set price_cents = excluded.price_cents
-        """)
-        .setParameter("sku", sku)
-        .setParameter("price", priceCents)
-        .executeUpdate();
-
-        idBySku.invalidate(sku); // инвалидация локального кеша
-        return updated;
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public Optional<ProductPriceView> findPriceViewNative(String sku) {
-        var rows = em.createNativeQuery("""
-            select id, sku, price_cents from products where sku=:sku
-        """).setParameter("sku", sku).getResultList();
-
-        if (rows.isEmpty()) return Optional.empty();
-        Object[] r = (Object[]) rows.get(0);
-        return Optional.of(new ProductPriceView(((Number) r[0]).longValue(), (String) r[1], ((Number) r[2]).longValue()));
+    record UserForExport(
+            Long id,
+            String email,
+            String fullName,
+            Instant createdAt
+    ) {
     }
 }
 ```
 
-**Kotlin — тот же кастомный фрагмент**
+```java
+package com.example.jpa.user;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.Instant;
+import java.util.List;
+
+public class UserRepositoryImpl implements UserRepositoryCustom {
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public UserRepositoryImpl(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Override
+    public List<UserForExport> findForExport(Instant createdFrom, boolean onlyActive) {
+        String sql = """
+            SELECT id, email, full_name, created_at
+            FROM app_user
+            WHERE created_at >= ?
+              AND (:active = FALSE OR active = TRUE)
+            ORDER BY created_at ASC
+            """;
+
+        return jdbcTemplate.query(
+                sql,
+                (rs, rowNum) -> mapRow(rs),
+                createdFrom,
+                onlyActive
+        );
+    }
+
+    private UserForExport mapRow(ResultSet rs) throws SQLException {
+        return new UserForExport(
+                rs.getLong("id"),
+                rs.getString("email"),
+                rs.getString("full_name"),
+                rs.getTimestamp("created_at").toInstant()
+        );
+    }
+}
+```
+
+```java
+package com.example.jpa.user;
+
+import com.example.jpa.base.BaseRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface UserRepository extends BaseRepository<User, Long>, UserRepositoryCustom {
+}
+```
 
 ```kotlin
-package com.example.repo.product
+package com.example.jpa.user
 
-import com.github.benmanes.caffeine.cache.Caffeine
 import jakarta.persistence.*
-import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.stereotype.Repository
-import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
-import java.util.Optional
-import java.util.concurrent.TimeUnit
 
 @Entity
-@Table(name = "products", indexes = [Index(columnList = "sku", unique = true)])
-class Product(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "app_user")
+class User(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false, unique = true, length = 64)
-    var sku: String = "",
+
+    var email: String = "",
+
+    @Column(name = "full_name")
+    var fullName: String = "",
+
     @Column(nullable = false)
-    var priceCents: Long = 0,
-    @Column(nullable = false)
+    var active: Boolean = true,
+
+    @Column(name = "created_at", nullable = false)
     var createdAt: Instant = Instant.now()
 )
+```
 
-data class ProductPriceView(val id: Long, val sku: String, val priceCents: Long)
+```kotlin
+package com.example.jpa.user
 
-interface ProductRepositoryCustom {
-    fun findIdBySkuCached(sku: String): Optional<Long>
-    fun upsertPrice(sku: String, priceCents: Long): Int
-    fun findPriceViewNative(sku: String): Optional<ProductPriceView>
+import java.time.Instant
+
+interface UserRepositoryCustom {
+
+    fun findForExport(createdFrom: Instant, onlyActive: Boolean): List<UserForExport>
+
+    data class UserForExport(
+        val id: Long,
+        val email: String,
+        val fullName: String,
+        val createdAt: Instant
+    )
 }
+```
 
-@Repository
-interface ProductRepository : JpaRepository<Product, Long>, ProductRepositoryCustom
+```kotlin
+package com.example.jpa.user
 
-class ProductRepositoryImpl(
-    @PersistenceContext private val em: EntityManager
-) : ProductRepositoryCustom {
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.RowMapper
+import java.sql.ResultSet
+import java.time.Instant
 
-    private val idBySku = Caffeine.newBuilder()
-        .maximumSize(10_000)
-        .expireAfterWrite(10, TimeUnit.MINUTES)
-        .build<String, Long>()
+class UserRepositoryImpl(
+    private val jdbcTemplate: JdbcTemplate
+) : UserRepositoryCustom {
 
-    @Transactional(readOnly = true)
-    override fun findIdBySkuCached(sku: String): Optional<Long> {
-        idBySku.getIfPresent(sku)?.let { return Optional.of(it) }
-        val id = em.createQuery("select p.id from Product p where p.sku = :sku", java.lang.Long::class.java)
-            .setParameter("sku", sku)
-            .setHint(org.hibernate.jpa.HibernateHints.HINT_READ_ONLY, true)
-            .resultStream.findFirst().orElse(null)
-        if (id != null) idBySku.put(sku, id)
-        return Optional.ofNullable(id)
+    override fun findForExport(createdFrom: Instant, onlyActive: Boolean): List<UserRepositoryCustom.UserForExport> {
+        val sql = """
+            SELECT id, email, full_name, created_at
+            FROM app_user
+            WHERE created_at >= ?
+              AND (? = FALSE OR active = TRUE)
+            ORDER BY created_at ASC
+        """.trimIndent()
+
+        return jdbcTemplate.query(sql, rowMapper, createdFrom, onlyActive)
     }
 
-    @Transactional
-    override fun upsertPrice(sku: String, priceCents: Long): Int {
-        val updated = em.createNativeQuery(
-            """
-            insert into products(sku, price_cents, created_at)
-            values (:sku, :price, now())
-            on conflict (sku) do update set price_cents = excluded.price_cents
-            """.trimIndent()
+    private val rowMapper = RowMapper { rs: ResultSet, _: Int ->
+        UserRepositoryCustom.UserForExport(
+            id = rs.getLong("id"),
+            email = rs.getString("email"),
+            fullName = rs.getString("full_name"),
+            createdAt = rs.getTimestamp("created_at").toInstant()
         )
-            .setParameter("sku", sku)
-            .setParameter("price", priceCents)
-            .executeUpdate()
-        idBySku.invalidate(sku)
-        return updated
-    }
-
-    @Transactional(readOnly = true)
-    override fun findPriceViewNative(sku: String): Optional<ProductPriceView> {
-        val rows = em.createNativeQuery("select id, sku, price_cents from products where sku=:sku")
-            .setParameter("sku", sku)
-            .resultList
-        if (rows.isEmpty()) return Optional.empty()
-        val r = rows[0] as Array<*>
-        return Optional.of(ProductPriceView((r[0] as Number).toLong(), r[1] as String, (r[2] as Number).toLong()))
     }
 }
 ```
 
-Такой подход (фрагмент + имплементация) сохраняет декларативный стиль Spring Data для «обычных» операций и даёт точечную мощь там, где она нужна. А кеш показывает, как экономно закрыть частый «lookup» без перегрева БД — при условии аккуратной инвалидации.
+```kotlin
+package com.example.jpa.user
+
+import com.example.jpa.base.BaseRepository
+import org.springframework.stereotype.Repository
+
+@Repository
+interface UserRepository :
+    BaseRepository<User, Long>,
+    UserRepositoryCustom
+```
+
+Такой подход позволяет не засорять базовый репозиторий и в то же время даёт точечные расширения там, где это действительно нужно.
+
+---
 
 ## «Граница ответственности» репозитория: тонкие методы vs «толстые» сервисы — баланс читаемости и производительности
 
-Классический соблазн — начать «накачивать» репозиторий бизнес-логикой: валидацией входных данных, агрегациями из нескольких агрегатов, вызовами внешних систем и т.д. Это ведёт к «толстым» репозиториям, трудно тестируемым и плохо сочетаемым между собой. Правильная граница проста: **репозиторий оперирует данными одной модели и близкими к ней проекциями; сервис оркестрирует сценарий** из нескольких репозиториев, внешних клиентов и доменных политик.
+Граница ответственности между репозиторием и сервисом — один из ключевых архитектурных моментов. Репозиторий — это абстракция над хранилищем данных: он знает, как читать и записывать сущности, но не знает, зачем это делается и какие бизнес-правила за этим стоят. Сервис — это слой, где реализуются сценарии предметной области: последовательность вызовов репозиториев, валидация, взаимодействие с внешними системами. Если эту границу размыть, код быстро превращается в кашу: часть бизнес-логики уехала в репозитории, часть осталась в сервисах, а часть размазалась по контроллерам.
 
-«Тонкий» репозиторий — это набор чётких контрактов: найти по бизнес-ключу, сохранить партию, получить проекцию для списка, выполнить спец-запрос по этой таблице. Такой код стабилен, хорошо тестируется slice-тестами `@DataJpaTest` и редко ломается при изменениях бизнес-логики. Он не знает о «кто вызвал» и «какой use-case», он про данные.
+В идеальной картинке «тонкий» репозиторий — это набор относительно простых методов доступа к данным: `findById`, `save`, несколько осмысленных `findBy...`, возможно, пара сложных выборок, но без сценариев и оркестраций. Вся логика «если клиент заблокирован — не создавать заказ», «после обновления статуса — отправить уведомление и логировать аудиторное событие» должна жить в сервисе. Это упрощает тестирование (репозитории тестируются на уровне БД, сервисы — на уровне сценариев), делает архитектуру прозрачной и упрощает рефакторинг.
 
-Сервис «толстый» — но это правильно: именно сервис знает, как связать операции разных агрегатов, какие инварианты применить, какие транзакции нужны (`REQUIRES_NEW` для аудита, `readOnly` для чтения), как устроен ретрай и как логировать шаги. Здесь уместны и кеши уровня сценария (например, кэшировать результат сложного отчёта, зависящего от нескольких таблиц).
+Однако реальность подкидывает компромиссы. Бывают случаи, когда один метод репозитория должен сделать довольно сложную выборку или использует специфичный для СУБД SQL. С точки зрения производительности правильнее сделать один сложный запрос, чем три простых. И вот тут легко начать «переезжать» бизнес-логику в репозиторий: «ну давайте сразу отфильтруем только активных клиентов, у которых есть незакрытые заказы и которые подходят под какие-то условия». Если эти условия — чисто технические и не меняются от сценария к сценарию, это нормально. Если же в разных бизнес-операциях условия разные, такую фильтрацию лучше всё-таки оставить сервису.
 
-Производительность страдает, когда репозитории начинают дергать друг друга (скрытые циклы) или когда в одном методе репозитория происходит и чтение, и запись в несвязанные агрегаты. Рецепт — держать коммуникацию на уровне сервиса, а в репозитории не использовать «чужие» репозитории напрямую. Это снижает риск взаимных зависимостей и «скрытых» транзакций.
+Один из признаков того, что репозиторий стал слишком «толстым» — появление методов, имена которых описывают целые бизнес-сценарии: `approveOrderAndSendNotification`, `createCustomerWithDefaultContractAndLimit`. Это не про доступ к данным, это уже чистый домен и оркестрация. Такие методы логично переносить в сервисы, оставляя в репозитории только операции «прочитать сущность», «сохранить», «найти по фильтру». В противном случае вы получаете слой, который одновременно и ходит в БД, и знает бизнес, и шлёт события в Kafka — а значит, его очень сложно менять без риска поломать полсистемы.
 
-Ещё одно правило — явная композиция: если для страницы нужен список и «итого», не прячьте второй запрос внутри метода репозитория «найти список». Пусть сервис читает список через один метод, а «итого» — через другой, чтобы было видно, сколько запросов реально выполняется и где узкие места.
+С другой стороны, слишком «тонкий» репозиторий с безумным количеством методов вида `findBy...` под каждый сценарий тоже не радует. Когда в одном интерфейсе десятки методов с практически одинаковыми структурами фильтрации, а сервисы используют каждый свой набор, читаемость падает. Лучше в таких случаях сделать пару более универсальных методов (например, `searchByFilter(FilterDto filter)`) с динамическими спецификациями или QueryDSL, чем гнать на каждый сценарий свой метод.
 
-Проверка границ на практике простая: задайте себе вопрос, можно ли переиспользовать этот метод репозитория **в другом сценарии** без изменения. Если нет — вероятно, это логика уровня сервиса (или даже контроллера), и ей не место в репозитории. Репозиторий — библиотека данных; сервис — сценарий.
+Баланс в итоге сводится к простому правилу: репозиторий отвечает за «как» достать данные, но не за «зачем». Он может скрывать сложность SQL, агрегаций, индексов, но не должен принимать решения о бизнес-смыслах этих запросов. Если метод репозитория удобно описать как «получи заказы с такими-то параметрами», это нормально. Если он описывается как «подготовь заказ к списанию и валидации лимита», это уже сервис.
 
-Разумеется, есть исключения. Например, «инкремент склада» — мелкая бизнес-операция строго на одном агрегате `Product`. Её удобно разместить как кастомный метод в репозитории (atomic `UPDATE ... SET stock = stock + ? WHERE id=?`). Это «узкоспециализированный» метод, но он **в рамках** модели данных. Сценарии «создай заказ и зарезервируй склад» — уже сервис.
+Ещё один важный аспект — взаимодействие с несколькими репозиториями. Как только операция требует работы с несколькими агрегатами (клиент + заказы + счета), её место автоматически — в сервисном слое. Репозиторий работает в границах одной aggregate root (иногда чуть больше, но не оркестрирует несколько независимых подсистем). Если вы видите внутри репозитория вызов другого репозитория, почти наверняка это архитектурный запах.
 
-В плане тестов: репозитории — slice `@DataJpaTest` на реальной БД (Testcontainers), сервисы — интеграционные тесты с моками внешних клиентов и настоящими транзакциями. Такой раскол ускоряет обратную связь и помогает ловить регрессы отдельно в хранилище и в оркестрации.
+Производительность иногда подталкивает к тому, чтобы «приспустить» границу: например, сделать один метод репозитория, который сразу возвращает DTO с данными из нескольких таблиц для API-эндпоинта. Это нормально, если вы чётко отделяете такой «read-model» от доменной модели: метод возвращает специальный DTO, не мутирует сущности и не включает бизнес-решения. Тогда сервис остаётся владельцем сценария, а репозиторий — владельцем доступа к данным, пусть и чуть более сложного.
 
-Не забывайте про «потолок» репозитория: как только у вас пошли агрегации с CTE/окнами через jOOQ — держите их в **отдельном DAO**, не смешивая с JPA-репозиторием. Это тоже граница ответственности между «ORM-частью» и «репортинг-частью». Общее — транзакции и миграции; разное — подход к данным и оптимизации.
+С организационной точки зрения полезно отражать границу ответственности в пакетовке и именовании. Репозитории лежат в своём слое (`.repository`), сервисы — в своём (`.service`), контроллеры — отдельно. На уровне статического анализа можно использовать ArchUnit или подобные инструменты, чтобы не допускать, например, вызовов контроллеров из репозиториев или зависимостей сервисов от конкретных `EntityManager`. Это дисциплинирует и не даёт архитектуре «уползти» за пару месяцев активной разработки.
 
-В результате «тонкие репозитории, толстые сервисы» дают читаемость и предсказуемость. Сервис становится «источником правды» сценариев, репозиторий — «надёжным драйвером данных». И с ростом проекта эта архитектура помогает распределять зоны ответственности между командами.
-
-**Java — тонкий репозиторий + «толстый» сервис (оркестрация нескольких операций)**
+Ниже пример: сначала «плохой» вариант, где репозиторий берёт на себя бизнес-ответственность, а затем более здоровый вариант с тонким репозиторием и сервисом, который делает оркестрацию. Java и Kotlin варианты показывают одну и ту же идею.
 
 ```java
-package com.example.boundary;
+package com.example.jpa.order;
 
+import com.example.jpa.customer.Customer;
 import jakarta.persistence.*;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+
+@Entity
+@Table(name = "customer")
+class Customer {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    private boolean active;
+
+    private String email;
+
+    // getters/setters
+}
+
+@Entity
+@Table(name = "orders")
+class Order {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    private Customer customer;
+
+    private String status;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt = Instant.now();
+
+    // getters/setters
+}
+
+@Repository
+interface OrderRepositoryBad extends JpaRepository<Order, Long> {
+
+    @Transactional
+    default Order approveOrderAndNotify(Order order, NotificationService notificationService) {
+        if (!order.getCustomer().isActive()) {
+            throw new IllegalStateException("Customer is not active");
+        }
+        order.setStatus("APPROVED");
+        Order saved = save(order);
+        notificationService.sendOrderApproved(saved);
+        return saved;
+    }
+}
+
+interface NotificationService {
+    void sendOrderApproved(Order order);
+}
+```
+
+```java
+package com.example.jpa.order;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+interface OrderRepository extends JpaRepository<Order, Long> {
+
+    List<Order> findByCustomerIdAndStatus(Long customerId, String status);
+}
+```
+
+```java
+package com.example.jpa.order;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-@Entity
-@Table(name = "customers_b")
-class CustomerB {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
-    @Column(nullable = false) String email;
-    protected CustomerB() {}
-    CustomerB(String email){ this.email = email; }
-}
-
-@Entity
-@Table(name = "orders_b")
-class OrderB {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
-    @Column(nullable = false) Long customerId;
-    @Column(nullable = false) Long totalCents;
-    protected OrderB() {}
-    OrderB(Long customerId, Long totalCents){ this.customerId = customerId; this.totalCents = totalCents; }
-}
-
-@Repository interface CustomerBRepository extends JpaRepository<CustomerB, Long> {
-    boolean existsByEmailIgnoreCase(String email);
-}
-
-@Repository interface OrderBRepository extends JpaRepository<OrderB, Long> { }
-
 @Service
-class CheckoutService {
-    private final CustomerBRepository customers;
-    private final OrderBRepository orders;
+public class OrderService {
 
-    CheckoutService(CustomerBRepository customers, OrderBRepository orders) {
-        this.customers = customers; this.orders = orders;
+    private final OrderRepository orderRepository;
+    private final NotificationService notificationService;
+
+    public OrderService(
+            OrderRepository orderRepository,
+            NotificationService notificationService
+    ) {
+        this.orderRepository = orderRepository;
+        this.notificationService = notificationService;
     }
 
     @Transactional
-    public Long checkout(String email, long totalCents) {
-        // Валидация и сценарий — здесь (сервис), не в репозитории
-        if (!customers.existsByEmailIgnoreCase(email)) {
-            CustomerB c = customers.save(new CustomerB(email));
-            OrderB o = orders.save(new OrderB(c.id, totalCents));
-            return o.id;
-        } else {
-            // Упростим: существующему создаём заказ
-            CustomerB c = customers.findAll().stream()
-                    .filter(u -> u.email.equalsIgnoreCase(email)).findFirst().orElseThrow();
-            OrderB o = orders.save(new OrderB(c.id, totalCents));
-            return o.id;
+    public Order approveOrder(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+
+        if (!order.getCustomer().isActive()) {
+            throw new IllegalStateException("Customer is not active");
         }
+
+        order.setStatus("APPROVED");
+        Order saved = orderRepository.save(order);
+        notificationService.sendOrderApproved(saved);
+        return saved;
     }
 }
 ```
 
-**Kotlin — тот же принцип**
-
 ```kotlin
-package com.example.boundary
+package com.example.jpa.order
 
 import jakarta.persistence.*
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.stereotype.Repository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
 
 @Entity
-@Table(name = "customers_b")
-class CustomerB(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "customer")
+class Customer(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false)
+
+    var active: Boolean = true,
+
     var email: String = ""
 )
 
 @Entity
-@Table(name = "orders_b")
-class OrderB(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+@Table(name = "orders")
+class Order(
+
+    @Id
+    @GeneratedValue
     var id: Long? = null,
-    @Column(nullable = false)
-    var customerId: Long = 0,
-    @Column(nullable = false)
-    var totalCents: Long = 0
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    var customer: Customer? = null,
+
+    var status: String = "NEW",
+
+    @Column(name = "created_at", nullable = false)
+    var createdAt: Instant = Instant.now()
 )
 
-@Repository
-interface CustomerBRepository : JpaRepository<CustomerB, Long> {
-    fun existsByEmailIgnoreCase(email: String): Boolean
+interface NotificationService {
+    fun sendOrderApproved(order: Order)
 }
 
 @Repository
-interface OrderBRepository : JpaRepository<OrderB, Long>
+interface OrderRepository : JpaRepository<Order, Long> {
+
+    fun findByCustomerIdAndStatus(customerId: Long, status: String): List<Order>
+}
 
 @Service
-class CheckoutService(
-    private val customers: CustomerBRepository,
-    private val orders: OrderBRepository
+class OrderService(
+    private val orderRepository: OrderRepository,
+    private val notificationService: NotificationService
 ) {
+
     @Transactional
-    fun checkout(email: String, totalCents: Long): Long {
-        val cid = if (!customers.existsByEmailIgnoreCase(email)) {
-            customers.save(CustomerB(email = email)).id!!
-        } else {
-            customers.findAll().first { it.email.equals(email, ignoreCase = true) }.id!!
+    fun approveOrder(orderId: Long): Order {
+        val order = orderRepository.findById(orderId)
+            .orElseThrow { IllegalArgumentException("Order not found") }
+
+        val customer = order.customer
+            ?: throw IllegalStateException("Order has no customer")
+
+        if (!customer.active) {
+            throw IllegalStateException("Customer is not active")
         }
-        return orders.save(OrderB(customerId = cid, totalCents = totalCents)).id!!
+
+        order.status = "APPROVED"
+        val saved = orderRepository.save(order)
+        notificationService.sendOrderApproved(saved)
+        return saved
     }
 }
 ```
 
-В этом примере репозитории — «тонкие»: в них нет сценарной логики; всё принятие решений и последовательность шагов — в сервисе. Если завтра добавится аудит, резервы, публикация в Kafka — это появится в сервисе и не сломает репозитории. Производительность контролируется точечно: при необходимости вы добавите кастомные методы в отдельные `*RepositoryCustom`, не мешая общему контракту.
+В «плохом» варианте репозиторий знает о `NotificationService`, реализует бизнес-правила и занимается оркестрацией — это нарушает границы и усложняет сопровождение. В «хорошем» варианте репозиторий остаётся тонким, отвечает за доступ к данным, а сервис целиком берёт на себя сценарий «одобрить заказ и отправить уведомление». Такой баланс даёт и читабельность, и предсказуемую производительность: сложные запросы — в репозиториях, бизнес — в сервисах.
 
 
 # 14. Тестирование продвинутого persistence
 
+Тесты persistence-слоя — это не просто «проверить, что `save` что-то сохраняет». На проде вас интересуют совсем другие вещи: что миграции накатываются, что запросы не бьют в N+1, что уникальные и внешние ключи реально защищают данные, что при дедлоках и таймаутах код ведёт себя предсказуемо. Всё это невозможно проверить на моках или в in-memory H2 с «примерно похожей» схемой — нужен почти настоящий стенд, только в масштабе тестов.
+
+Хорошая стратегия тестирования persistence-слоя опирается на три столпа. Во-первых, окружение: реальная СУБД в Testcontainers, миграции, чёткая схема. Во-вторых, сценарии: отдельные тесты на производительность запросов (N+1, пагинация, графы загрузки), на инварианты БД (уникальные, `check`, FK), на поведение под нагрузкой и блокировками. В-третьих, метрики и диагностика: сбор статистики Hibernate, логов SQL и понятные ассерты, чтобы тесты ловили регрессии, а не случайность.
+
+---
+
 ## Testcontainers с реальной СУБД, прогон миграций перед тестами, сидирование данных
 
-Тестировать persistence слой «по-настоящему» — значит запускать тесты на **реальной СУБД** с реальными типами данных, планами выполнения и поведением транзакций. Встраиваемые БД («под PG») часто ведут себя иначе: иначе считают индексы, не знают `jsonb`, не поддерживают `ON CONFLICT`, по-другому реализуют блокировки. Поэтому базовый инструмент для интеграционных тестов сегодня — **Testcontainers**: он поднимает контейнер Postgres (или другой СУБД) на время тестов, выдаёт реквизиты подключения и убирает за собой. Вы получаете предсказуемость и верность поведения, а команда — уверенность, что код пройдёт на проде.
+Первый принцип — тестируем на той же СУБД, на которой живём в проде. Если в проде PostgreSQL, а в тестах H2 «в режиме совместимости», вы сами себе стреляете в ногу: другой планировщик запросов, другие типы, другие ограничения, другая работа индексов. Testcontainers как раз решает проблему: вы поднимаете реальный Postgres в Docker-контейнере рядом с тестами и гоняете на нём тот же DDL/DML, что и на бою (через Flyway/Liquibase).
 
-Важно включить **миграции перед тестами**. Схему нельзя полагать на `ddl-auto=create` — вы рискуете рассинхронизировать код и DDL. Гораздо надёжнее запускать Flyway/Liquibase в тестах ровно так же, как это делается в приложении при старте. Тогда ваши тесты становятся «детектором рассинхронизации»: если новая сущность забыта в миграции, тесты упадут на `DataAccessException` при первом `persist`.
+Spring Boot хорошо дружит с Testcontainers: вы поднимаете `PostgreSQLContainer` как статическое поле, а через `@DynamicPropertySource` прокидываете в контекст URL, логин, пароль. Дальше всё работает как обычно: `spring-boot-starter-data-jpa` поднимает `DataSource`, `EntityManagerFactory`, а Flyway/Liquibase при старте гонит миграции. В тестах вы получаете схему, созданную теми же скриптами, что и в CI/prod.
 
-**Сидирование (fixtures)** — данные для тестов. Есть три основных подхода. Первый: SQL-скрипты (`@Sql`) — быстрые, декларативные, хорошо подходят для справочников и больших наборов данных. Второй: «чистые фабрики» в коде — билдеры сущностей, которые создают минимально валидные объекты для данного сценария. Третий: комбинированный — базовые справочники через `@Sql`, доменные экземпляры через фабрики. Важно, чтобы тесты не зависели друг от друга — то есть сами готовили нужный набор данных и не полагались на «порядок выполнения».
+Миграции должны применяться перед любым тестом, который работает с БД. В типичном Spring Boot-проекте это делается автоматически: при старте контекста Boot запускает мигратор (Flyway/Liquibase) и падает, если что-то пошло не так. Важно не «облегчать» схему для тестов: если вы уберёте часть ограничений «чтобы проще было тестировать», тесты перестанут ловить реальные проблемы. Лучше сложнее сидировать данные, чем жить с вырезанными check/unique/FK.
 
-Чтобы **ускорить старт** контейнера, используйте reusability (перезапускаемый контейнер между сессиями разработчика) и статический singleton для всего сьюта. В Testcontainers это делается либо через `~/.testcontainers.properties` (`testcontainers.reuse.enable=true`), либо через паттерн «одиночки» с `@Testcontainers` и статическим `@Container`. Для CI лучше поднимать контейнер на сьют (а не на каждый тест-класс), чтобы не тратить минуты на каждый запуск.
+Сидирование данных можно делать по-разному. Самый простой путь — использовать Spring-репозитории в `@BeforeEach`/`@BeforeAll`: создаёте сущности обычным Java/Kotlin-кодом, сохраняете их через JPA, тесты работают с ними. Плюс: типобезопасность, меньше дублирования схемы, часто проще рефакторить. Минус: вы зависите от JPA-модели для подготовленных данных, иногда трудно смоделировать «грязные» кейсы, которые через ORM не создашь.
 
-Тайм-зона и локаль в тестах — тоже не мелочи. Приводите всё к **UTC** (и в БД, и в Hibernate), иначе сравнение времён превратится в случайный набор «±1 час» и будет ломать тесты в феврале и октябре. В `application-test.yml` укажите `hibernate.jdbc.time_zone: UTC`. Это также исключит расхождения при сериализации `Instant`.
+Альтернатива — чистый SQL через `JdbcTemplate` или `@Sql`-скрипты. Это даёт полный контроль: вы можете создать строки с нарушением инвариантов, проверить поведение триггеров, подготовить «грязные» данные для миграций. Плата — сложнее поддерживать синхронизацию схемы и тестовых SQL: меняется колонка — нужно не забыть поправить скрипты. Для критичных сценариев (миграции, audit, tricky-констрейнты) это оправдано.
 
-При работе с Testcontainers удобно **прокидывать свойства** в Spring через `@DynamicPropertySource`: так Boot сам создаст DataSource на базе параметров контейнера (`jdbcUrl`, `username`, `password`). И — обязательно — отключите автоподмену DataSource у `@DataJpaTest`: `@AutoConfigureTestDatabase(replace = NONE)`. Иначе Boot поставит H2 и весь смысл потеряется.
+Ещё одна важная тема — очистка БД между тестами. Вариант «прогонять миграции заново перед каждым тестом» слишком медленный. Обычно делают так: один контейнер на весь test-suite, миграции — один раз при старте, а дальше либо откаты транзакций вокруг каждого теста (`@Transactional` над тестовым классом), либо TRUNCATE/DELETE нужных таблиц в `@AfterEach`. Первый вариант проще для JPA, второй полезен, когда вы используете полусторонние вещи (bulk SQL, jOOQ).
 
-С точки зрения структуры тестов полезно отделять **slice-тесты** (`@DataJpaTest`) от **полных интеграционных** (`@SpringBootTest`). Первые — быстрые проверки репозиториев/DAO на реальной СУБД с минимальным контекстом. Вторые — сценарные тесты сервисов/транзакций/блокировок. Обе группы работают на одном контейнере Postgres в рамках сьюта, что экономит время.
+Testcontainers по умолчанию поднимает новый контейнер на каждый запуск тестового класса. Чтобы ускорить тесты, контейнер делают `static` и используют reusable режим. Это позволяет делить один Postgres на весь набор тестов, но важно следить за изоляцией данных — именно поэтому откат транзакций и/или очищающие SQL обязательны. На CI часто используют «один контейнер на весь job» и параллельный запуск тестов на одном экземпляре БД.
 
-Наконец, не забывайте про **миграции расширений**. Если используете `jsonb`, массивы, `hstore`, убедитесь, что в миграции есть `CREATE EXTENSION ...`. В H2 такого нет, а в реальном PG — есть. Тесты должны «ловить» такие пропуски. Именно поэтому интеграционные тесты на Testcontainers — это не «роскошь», а «страховка» от инцидентов.
+Безопасность: никогда не подключайтесь к «настоящему» тестовому или dev-кластерам из unit/integration тестов. Все параметры подключения должны приходить от Testcontainers. Хорошая практика — явно задавать имя БД, пользователя и префиксы контейнера, чтобы даже при ошибке вы не попали в живую базу. Любые «временные» конфиги с подключением к shared-test-БД быстро превращаются в источник флаки-тестов и случайной порчи данных.
 
-**Gradle зависимости (тесты)**
+Наконец, не забывайте про профили. Для тестов удобно иметь профиль `test`, в котором включены нужные настройки: подробный лог SQL, включённые статистики Hibernate, tuned-down таймауты, отдельные имена схем. Testcontainers даёт вам БД, миграции создают схему, а профиль test — делает это окружение удобным для диагностики.
 
-*Groovy DSL*
+Ниже пример конфигурации зависимостей и простого интеграционного теста с Testcontainers и Flyway. Java и Kotlin варианты эквивалентны.
 
 ```groovy
+// build.gradle (Groovy DSL)
 dependencies {
-  testImplementation 'org.springframework.boot:spring-boot-starter-test'
-  testImplementation 'org.testcontainers:junit-jupiter:1.20.2'
-  testImplementation 'org.testcontainers:postgresql:1.20.2'
-  testImplementation 'org.flywaydb:flyway-core'
-  runtimeOnly 'org.postgresql:postgresql:42.7.3'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
 }
 ```
-
-*Kotlin DSL*
 
 ```kotlin
+// build.gradle.kts (Kotlin DSL)
 dependencies {
-  testImplementation("org.springframework.boot:spring-boot-starter-test")
-  testImplementation("org.testcontainers:junit-jupiter:1.20.2")
-  testImplementation("org.testcontainers:postgresql:1.20.2")
-  testImplementation("org.flywaydb:flyway-core")
-  runtimeOnly("org.postgresql:postgresql:42.7.3")
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    runtimeOnly("org.postgresql:postgresql")
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.testcontainers:postgresql")
 }
 ```
-
-**application-test.yml (UTC + OSIV off)**
-
-```yaml
-spring:
-  jpa:
-    open-in-view: false
-    properties:
-      hibernate:
-        jdbc.time_zone: UTC
-```
-
-**Java — базовая настройка Testcontainers + Flyway + сидирование**
 
 ```java
-package com.example.testcontainers;
+package com.example.jpa.test;
 
-import org.junit.jupiter.api.*;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import com.example.jpa.customer.Customer;
+import com.example.jpa.customer.CustomerRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.containers.PostgreSQLContainer;
 
-@DataJpaTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+import jakarta.annotation.Resource;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest
 @Testcontainers
-class BasicJpaSliceIT {
+@ActiveProfiles("test")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class CustomerRepositoryTest {
 
-  @Container
-  static final PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine")
-      .withDatabaseName("app")
-      .withUsername("app")
-      .withPassword("app");
+    @Container
+    static final PostgreSQLContainer<?> POSTGRES =
+            new PostgreSQLContainer<>("postgres:16-alpine")
+                    .withDatabaseName("testdb")
+                    .withUsername("test")
+                    .withPassword("test");
 
-  @DynamicPropertySource
-  static void props(DynamicPropertyRegistry r) {
-    r.add("spring.datasource.url", pg::getJdbcUrl);
-    r.add("spring.datasource.username", pg::getUsername);
-    r.add("spring.datasource.password", pg::getPassword);
-    r.add("spring.flyway.enabled", () -> true);
-  }
+    @DynamicPropertySource
+    static void configureDatasource(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
+        registry.add("spring.flyway.enabled", () -> "true");
+    }
 
-  @Autowired JdbcTemplate jdbc;
+    @Resource
+    private CustomerRepository customerRepository;
 
-  @BeforeEach
-  void seed() {
-    jdbc.update("insert into customers(id, email) values(1, 'seed@example.com')");
-  }
+    @Test
+    void shouldApplyMigrationsAndPersistCustomer() {
+        Customer customer = new Customer();
+        customer.setEmail("test@example.com");
 
-  @Test
-  void containerStartsAndMigrationsApplied() {
-    Integer cnt = jdbc.queryForObject("select count(*) from customers", Integer.class);
-    Assertions.assertNotNull(cnt);
-  }
+        Customer saved = customerRepository.save(customer);
+
+        assertThat(saved.getId()).isNotNull();
+        var found = customerRepository.findById(saved.getId());
+        assertThat(found).isPresent();
+        assertThat(found.get().getEmail()).isEqualTo("test@example.com");
+    }
 }
 ```
 
-**Kotlin — тот же slice-тест**
-
 ```kotlin
-package com.example.testcontainers
+package com.example.jpa.test
 
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.BeforeEach
+import com.example.jpa.customer.Customer
+import com.example.jpa.customer.CustomerRepository
+import jakarta.annotation.Resource
+import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
-import org.springframework.jdbc.core.JdbcTemplate
+import org.junit.jupiter.api.TestInstance
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 
-@DataJpaTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@SpringBootTest
 @Testcontainers
-class BasicJpaSliceIT {
+@ActiveProfiles("test")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class CustomerRepositoryTest {
 
     companion object {
         @Container
         @JvmStatic
-        val pg = PostgreSQLContainer("postgres:16-alpine")
-            .withDatabaseName("app")
-            .withUsername("app")
-            .withPassword("app")
+        val postgres: PostgreSQLContainer<*> =
+            PostgreSQLContainer("postgres:16-alpine")
+                .withDatabaseName("testdb")
+                .withUsername("test")
+                .withPassword("test")
 
         @JvmStatic
         @DynamicPropertySource
-        fun props(reg: DynamicPropertyRegistry) {
-            reg.add("spring.datasource.url", pg::getJdbcUrl)
-            reg.add("spring.datasource.username", pg::getUsername)
-            reg.add("spring.datasource.password", pg::getPassword)
-            reg.add("spring.flyway.enabled") { true }
+        fun configureDatasource(registry: DynamicPropertyRegistry) {
+            registry.add("spring.datasource.url", postgres::getJdbcUrl)
+            registry.add("spring.datasource.username", postgres::getUsername)
+            registry.add("spring.datasource.password", postgres::getPassword)
+            registry.add("spring.jpa.hibernate.ddl-auto") { "none" }
+            registry.add("spring.flyway.enabled") { "true" }
         }
     }
 
-    @Autowired lateinit var jdbc: JdbcTemplate
-
-    @BeforeEach
-    fun seed() {
-        jdbc.update("insert into customers(id, email) values(1, 'seed@example.com')")
-    }
+    @Resource
+    lateinit var customerRepository: CustomerRepository
 
     @Test
-    fun containerStartsAndMigrationsApplied() {
-        val cnt = jdbc.queryForObject("select count(*) from customers", Int::class.java)
-        assertNotNull(cnt)
+    fun `should apply migrations and persist customer`() {
+        val customer = Customer().apply {
+            email = "test@example.com"
+        }
+
+        val saved = customerRepository.save(customer)
+
+        assertThat(saved.id).isNotNull()
+        val found = customerRepository.findById(saved.id!!)
+        assertThat(found).isPresent
+        assertThat(found.get().email).isEqualTo("test@example.com")
     }
 }
 ```
@@ -7673,197 +7433,126 @@ class BasicJpaSliceIT {
 
 ## Проверки на N+1/пагинацию/графы загрузки; сбор статистики Hibernate в тестах
 
-Проблема **N+1** редко видна на локальном стенде, но на проде превращается в лавину запросов. В тестах эту ловушку можно ловить **счётчиком SQL**. Hibernate предоставляет `Statistics` (если включить `hibernate.generate_statistics=true`), где есть метрики запросов. Мы можем обнулить статистику, выполнить метод репозитория и проверить, сколько SQL улетело. Такой тест не «ломкий» и не зависит от формулировок SQL — ему важна только **кардинальность**.
+Проблема N+1 — классика: вы делаете один запрос за списком сущностей, а потом JPA лениво догружает коллекции/ссылки ещё N запросами. На небольших объёмах это незаметно, на проде — превращается в десятки/сотни лишних round-trip’ов и падение p95/p99. Это чисто persistence-проблема, поэтому логично ловить её именно тестами уровня репозиториев/сервисов, а не ждать профилировщика на проде.
 
-Для списков важно проверить **пагинацию** и **стабильную сортировку**. Если вы делаете `Page<T>`, но сортируете по полю с повторяющимися значениями без вторичного ключа, строки будут «перепрыгивать» между страницами. Тест должен это ловить: запросите первую страницу два раза и проверьте, что порядки совпадают. При `JOIN FETCH` коллекций пагинация может ломаться совсем (дубликаты строк) — такой тест тоже обязателен.
+Самый грубый способ диагностики — включить логирование SQL и глазами посмотреть, сколько запросов выполняется для одного сценария. Для разовой отладки работает, но в виде автоматического теста — слабо: сложно считать, легко «проморгать» регресс. Более надёжный подход — использовать статистику Hibernate (`SessionFactory.getStatistics()`), которая считает количество запросов, хитов кэша, загрузок сущностей и т.п., и на неё уже вешать ассерты.
 
-Когда вы используете **графы загрузки** (`@EntityGraph`/`@NamedEntityGraph`), тест легко подтверждает, что N+1 устранён: один запрос на корневую сущность и (в идеале) ни одного дополнительного на «детей». Если граф сложный и вы не уверены, включите логгер SQL на DEBUG только в тестах и проверьте вручную, но предпочтительнее — автоматические проверки статистики.
+Чтобы статистика Hibernate была доступна, нужно включить её в конфигурации тестового профиля: `spring.jpa.properties.hibernate.generate_statistics=true`. В тесте вы можете через `EntityManagerFactory` достать `SessionFactory`, обнулить статистику перед сценарием, выполнить код и проверить счётчики `getPrepareStatementCount()`, `getEntityLoadCount()`, `getCollectionFetchCount()` и т.д. Главное — не превращать тесты в хрупкие проверки «строго 3 запроса», лучше проверять разумный верхний предел.
 
-Для корректных измерений надо **обнулять и «прогревать»**. Часто первый запрос включает `prepare`/инициализацию; чтобы не привязывать тест к этому, либо прогрейте репозиторий «холостым» вызовом, либо снимайте статистику в повторном вызове. Также важно выгрузить L1-кеш: `em.clear()` перед замером, иначе часть чтения пройдёт из PC и тест «соврёт».
+Отдельная тема — тесты на пагинацию. Тут важно две вещи: корректность данных (страницы без дырок и дублей, стабильный порядок) и отсутствие лишних запросов. Часто при сложных связях и `JOIN FETCH` с коллекциями пагинация начинает вести себя странно: Hibernate делает подзапрос, а затем второй запрос на fetch, из-за чего появляются дубли и дополнительные запросы. В тестах логично проверять, что `Page<T>` возвращает правильный `totalElements`, а SQL остается в пределах разумного.
 
-Ещё один аспект — **глубокие графы**. Если вы тянете `Order -> items -> product`, проверяйте не только количество запросов, но и **размер результата** (rows). При неаккуратном `JOIN FETCH` на «многие» результат раздувается, и Hibernate делает `distinct`. Это может повлиять на `count`. Тесты должны удостовериться, что «карточка» загружается без дубликатов, а «списки» — через проекции.
+Графы загрузки (`@EntityGraph`) и `JOIN FETCH` тоже стоит покрывать тестами. Идея простая: вы вызываете метод репозитория, который должен загрузить сущность с заранее определённым набором ассоциаций, а затем в тесте обращаетесь к этим ассоциациям вне транзакции. Если всё работает без `LazyInitializationException` и при этом количество запросов не раздуто, значит граф настроен разумно. Такие тесты хорошо документируют ожидания к модели загрузки.
 
-Важный сценарий — **EntityGraph в репозитории**. Тест показывает, что метод с графом делает меньше запросов, чем базовый. Это сильный сигнал для команды: «для карточки используйте метод X, для списка — Y (DTO)». Документируйте это прямо в Javadoc метода репозитория и подтверждайте тестом.
+Для сложных сценариев иногда полезно проверять не только количество запросов, но и сами SQL — например, что используется нужный `JOIN`, нужный индекс и т.п. Но это уже сильно привязывает тесты к конкретной версии Hibernate/SQL-диалекта, поэтому стоит быть аккуратным: такие проверки оправданы только для критичных кусочков, где любое изменение плана — риск SLA.
 
-Можно использовать и внешние инструменты — например, datasource-proxy, которые логируют каждый запрос. Но с Hibernate Statistics проще и быстрее. Добавьте утиль «счётчик запросов» с функциональным интерфейсом и используйте его во всех тестах на производительность загрузки.
+Сбор статистики особенно ценен как regression-guard. Допустим, вы оптимизировали репозиторий и снизили количество запросов с 50 до 3 для конкретного сценария. Добавив тест, который проверяет `<= 3`, вы защищаете оптимизацию от случайного отката: любой разработчик, который «улучшит читаемость» и сломает граф загрузки, получит красный тест и повод задуматься.
 
-Наконец, всё это нужно **в CI**. Если тест ловит N+1 и падает при регрессе, вы обнаружите проблему на PR, а не на проде. Старайтесь писать такие тесты как **«контракты производительности загрузки»**.
-
-**application-test.yml — статистика Hibernate**
-
-```yaml
-spring:
-  jpa:
-    properties:
-      hibernate:
-        generate_statistics: true
-```
-
-**Java — утиль счётчика запросов + тест N+1 и EntityGraph**
+Ниже пример `@DataJpaTest`, который включает статистику Hibernate и проверяет количество SQL-запросов для метода репозитория. Java и Kotlin версии аналогичны.
 
 ```java
-package com.example.nplus1;
+package com.example.jpa.stats;
 
-import jakarta.persistence.*;
+import com.example.jpa.customer.Customer;
+import com.example.jpa.customer.CustomerRepository;
+import jakarta.persistence.EntityManagerFactory;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
-import org.springframework.transaction.annotation.Transactional;
-import java.util.List;
+import org.springframework.test.context.ActiveProfiles;
 
-@Entity
-class Author {
-  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
-  String name;
-  @OneToMany(mappedBy="author", fetch=FetchType.LAZY)
-  List<Book> books;
-}
-@Entity
-class Book {
-  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
-  String title;
-  @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="author_id")
-  Author author;
-}
+import jakarta.annotation.Resource;
 
-interface AuthorRepository extends JpaRepository<Author, Long> {
-  @EntityGraph(attributePaths = "books")
-  @Query("select a from Author a")
-  List<Author> findAllWithBooksGraph();
-
-  @Query("select a from Author a")
-  List<Author> findAllPlain();
-}
+import static org.assertj.core.api.Assertions.assertThat;
 
 @DataJpaTest
-@EnableJpaRepositories(considerNestedRepositories = true)
-class NPlusOneIT {
+@ActiveProfiles("test")
+class CustomerRepositoryStatisticsTest {
 
-  @Autowired EntityManager em;
-  @Autowired AuthorRepository authors;
+    @Resource
+    private CustomerRepository customerRepository;
 
-  private Statistics stats() {
-    return em.getEntityManagerFactory().unwrap(SessionFactory.class).getStatistics();
-  }
+    @Resource
+    private EntityManagerFactory entityManagerFactory;
 
-  @BeforeEach
-  @Transactional
-  void seed() {
-    for (int i=0;i<5;i++) {
-      Author a = new Author(); a.name = "A"+i; em.persist(a);
-      for (int j=0;j<3;j++) { Book b = new Book(); b.title="B"+i+"_"+j; b.author=a; em.persist(b); }
+    private Statistics statistics;
+
+    @BeforeEach
+    void setUp() {
+        SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+        statistics = sessionFactory.getStatistics();
+        statistics.clear();
     }
-    em.flush(); em.clear();
-  }
 
-  @Test
-  void plainQuery_hasNPlusOne() {
-    stats().clear();
-    var list = authors.findAllPlain();
-    list.forEach(a -> a.books.size()); // инициализация LAZY
-    long q = stats().getPrepareStatementCount();
-    Assertions.assertTrue(q >= 1 + list.size(), "Ожидали N+1 запросов");
-  }
+    @Test
+    void shouldLoadCustomersWithExpectedQueryCount() {
+        for (int i = 0; i < 5; i++) {
+            Customer customer = new Customer();
+            customer.setEmail("user" + i + "@example.com");
+            customerRepository.save(customer);
+        }
+        statistics.clear();
 
-  @Test
-  void entityGraph_eliminatesNPlusOne() {
-    stats().clear();
-    var list = authors.findAllWithBooksGraph();
-    list.forEach(a -> a.books.size());
-    long q = stats().getPrepareStatementCount();
-    Assertions.assertTrue(q <= 2, "Должно быть 1-2 запроса, а не N+1");
-  }
+        var all = customerRepository.findAll();
+
+        assertThat(all).hasSize(5);
+        long queryCount = statistics.getPrepareStatementCount();
+        assertThat(queryCount).isLessThanOrEqualTo(2);
+    }
 }
 ```
 
-**Kotlin — аналогичный тест**
-
 ```kotlin
-package com.example.nplus1
+package com.example.jpa.stats
 
-import jakarta.persistence.*
+import com.example.jpa.customer.Customer
+import com.example.jpa.customer.CustomerRepository
+import jakarta.annotation.Resource
+import jakarta.persistence.EntityManagerFactory
+import org.assertj.core.api.Assertions.assertThat
 import org.hibernate.SessionFactory
 import org.hibernate.stat.Statistics
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
-import org.springframework.data.jpa.repository.EntityGraph
-import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.data.jpa.repository.Query
-import org.springframework.data.jpa.repository.config.EnableJpaRepositories
-import org.springframework.transaction.annotation.Transactional
-
-@Entity
-class Author(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    var name: String? = null,
-    @OneToMany(mappedBy = "author", fetch = FetchType.LAZY)
-    var books: MutableList<Book> = mutableListOf()
-)
-@Entity
-class Book(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    var title: String? = null,
-    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "author_id")
-    var author: Author? = null
-)
-
-interface AuthorRepository : JpaRepository<Author, Long> {
-    @EntityGraph(attributePaths = ["books"])
-    @Query("select a from Author a")
-    fun findAllWithBooksGraph(): List<Author>
-
-    @Query("select a from Author a")
-    fun findAllPlain(): List<Author>
-}
+import org.springframework.test.context.ActiveProfiles
 
 @DataJpaTest
-@EnableJpaRepositories(considerNestedRepositories = true)
-class NPlusOneIT {
+@ActiveProfiles("test")
+class CustomerRepositoryStatisticsTest {
 
-    @Autowired lateinit var em: EntityManager
-    @Autowired lateinit var authors: AuthorRepository
+    @Resource
+    lateinit var customerRepository: CustomerRepository
 
-    private fun stats(): Statistics =
-        em.entityManagerFactory.unwrap(SessionFactory::class.java).statistics
+    @Resource
+    lateinit var entityManagerFactory: EntityManagerFactory
+
+    private lateinit var statistics: Statistics
 
     @BeforeEach
-    @Transactional
-    fun seed() {
+    fun setUp() {
+        val sessionFactory: SessionFactory =
+            entityManagerFactory.unwrap(SessionFactory::class.java)
+        statistics = sessionFactory.statistics
+        statistics.clear()
+    }
+
+    @Test
+    fun `should load customers with expected query count`() {
         repeat(5) { i ->
-            val a = Author(name = "A$i")
-            em.persist(a)
-            repeat(3) { j ->
-                em.persist(Book(title = "B${i}_$j", author = a))
+            val customer = Customer().apply {
+                email = "user$i@example.com"
             }
+            customerRepository.save(customer)
         }
-        em.flush(); em.clear()
-    }
+        statistics.clear()
 
-    @Test
-    fun plainQuery_hasNPlusOne() {
-        stats().clear()
-        val list = authors.findAllPlain()
-        list.forEach { it.books.size }
-        val q = stats().prepareStatementCount
-        assertTrue(q >= 1 + list.size, "Ожидали N+1 запросов")
-    }
+        val all = customerRepository.findAll()
 
-    @Test
-    fun entityGraph_eliminatesNPlusOne() {
-        stats().clear()
-        val list = authors.findAllWithBooksGraph()
-        list.forEach { it.books.size }
-        val q = stats().prepareStatementCount
-        assertTrue(q <= 2, "Должно быть 1-2 запроса, а не N+1")
+        assertThat(all).hasSize(5)
+        val queryCount = statistics.prepareStatementCount
+        assertThat(queryCount).isLessThanOrEqualTo(2)
     }
 }
 ```
@@ -7872,130 +7561,135 @@ class NPlusOneIT {
 
 ## Инварианты БД: уникальные/`check`/FK — негативные тесты на нарушения
 
-Никакая валидация на уровне бинов не заменит **жёстких ограничений БД**. Именно они — последняя линия обороны от гонок и «недобросовестных» клиентов. В тестах нам нужно удостовериться, что **уникальные ключи**, **CHECK-ограничения** и **внешние ключи** работают как задумано, а приложение корректно переводит SQL-ошибки в исключения Spring (`DataIntegrityViolationException`, `ConstraintViolationException` и т.д.).
+Валидация на уровне Java-кода (`@NotNull`, `@Size`, `@Pattern`) защищает только на входе. В любой нетривиальной системе всегда остаётся путь обойти бизнес-слой: миграция, batch-скрипт, баг в одном сервисе, который пишет в таблицу, которую читает другой. Единственная настоящая защита от некорректных данных — ограничения на уровне БД: `NOT NULL`, `UNIQUE`, `CHECK`, внешние ключи. Поэтому их нужно не только описать в DDL, но и реально тестировать.
 
-Проверка **уникальности** должна покрывать и обычные, и «частичные» уникальные индексы (например, `where deleted_at is null` при soft-delete). В тесте мы вставляем две строки с одинаковым бизнес-ключом и убеждаемся, что вторая операция падает на `flush()`/`commit()`. Важно именно **форсировать flush**, потому что JPA буферизует вставки; без `flush()` исключение может прилететь вне теста.
+Негативные тесты на инварианты БД несложны по идее: вы пытаетесь сохранить некорректную сущность, ожидаете `DataIntegrityViolationException` (или более конкретный тип, зависящий от драйвера/диалекта) и проверяете, что транзакция откатывается. Важно явно вызывать `flush()` или использовать `saveAndFlush`, чтобы Hibernate действительно отправил SQL в БД и получил ошибку — иначе ограничение может сработать уже после завершения теста.
 
-**CHECK** — это доменные инварианты на уровне БД: «сумма >= 0», «дата окончания >= даты начала». Тесты на CHECK полезны, когда в доменной модели много путей изменения полей (несколько сервисов) и высок риск «забыть» валидацию. Мы намеренно сохраняем «плохую» сущность и убеждаемся, что БД её отвергает.
+Уникальные ограничения (`UNIQUE`) — первый кандидат на такие тесты. Например, `email` пользователя должен быть уникален. Тест выглядит так: создаём первого пользователя, сохраняем; создаём второго с тем же email, пытаемся сохранить и флашим; ожидаем, что выброшено исключение. Такой тест гарантирует, что constraint действительно присутствует в миграциях, и никто не «удалил его случайно» при модификации схемы.
 
-**FK** гарантирует ссылочную целостность. В тестах мы пытаемся сохранить «дитя» без родителя или удалить родителя при существующих детях (если FK без `ON DELETE ...`). Мы ожидаем, что БД откажет, и что исключение будет перехвачено переводчиком исключений Spring (в `@DataJpaTest` он активен).
+`CHECK`-ограничения отвечают за правдоподобие данных: сумма должна быть неотрицательной, дата начала не позже даты окончания, статус входит в список значений и т.п. Тест здесь аналогичный: создаём сущность с нарушением ограничения, пробуем сохранить и ловим ошибку. Особенно полезно это для сложных check’ов (например, по нескольким колонкам), где легко ошибиться в логике в DDL.
 
-Отдельный сценарий — **дефолты** и `NOT NULL`. Если столбец объявлен `NOT NULL`, а вы забыли поставить значение, JPA может попытаться вставить `null`. Тест ловит это на `flush()`. То же для «серверных» дефолтов: в миграции `default now()`, а в сущности — `null`. Тест даёт сигнал, что модель и DDL рассинхронизированы.
+Внешние ключи (FK) защищают ссылки между таблицами. Тесты на них важны по двум причинам. Во-первых, чтобы убедиться, что вы действительно не можете создать «висящие» записи (например, payment без существующего заказа). Во-вторых, чтобы проверить каскадное поведение: `ON DELETE CASCADE/SET NULL/RESTRICT`. Типичный негативный тест — попытка сохранить дочернюю сущность с несуществующим `parent_id` и ожидание ошибки. Позитивный — удаление родителя и проверка того, что дети либо удалились, либо обновились по правилам.
 
-Удобно держать **фикстурные фабрики** для валидных сущностей и «инвалидов». Тогда тесты читаются: «добавляем валидного клиента → повторяем вставку с тем же email → ждём падения». Старайтесь не строить негативные тесты на «магических» id — сначала явно убедитесь, что «первый» записан.
+При тестировании инвариантов важно опираться на миграции, а не на автогенерацию схемы через `hibernate.hbm2ddl.auto`. В идеале тестовый стенд должен поднимать схему ровно так же, как это делает Flyway/Liquibase на проде. Тогда тесты выступают ещё и в роли «интеграционных» для миграций: если constraint исчез, тест упадёт, и это будет видно в CI.
 
-Наконец, учтите **задержку проверки**. Некоторые ограничения могут быть отложенными (DEFERRABLE INITIALLY DEFERRED). В Postgres это опционально и по умолчанию `NOT DEFERRABLE`. Если вы используете отложенные FK/unique, вызовите `SET CONSTRAINTS ALL IMMEDIATE` перед `flush`, чтобы получить ошибку в тесте «здесь и сейчас».
+Ещё один момент — уровень, на котором вы ловите исключения. `DataIntegrityViolationException` — это обёртка Spring над `SQLException`. В большинстве случаев этого достаточно: вы просто проверяете, что нарушение инварианта не проходит. Если вам нужно более тонко различать типы ошибок (например, уникальность vs FK), можно смотреть на `SQLException` внутри и анализировать `SQLState`/код ошибки. Делать это стоит только в особых случаях, чтобы не привязывать тесты слишком сильно к конкретной СУБД.
 
-**Java — негативные тесты: UNIQUE, CHECK, FK (с `flush()`)**
+Наконец, помните, что негативные тесты на инварианты должны существовать там, где от нарушения инварианта действительно больно бизнесу. Не надо тестировать каждый `NOT NULL` ради самих тестов, но уникальность бизнес-ключа, корректность суммы, ссылки на критичные сущности — вполне заслуживают отдельного сценария.
+
+Пример интеграционного теста, который проверяет уникальность email и FK-ограничение. Java и Kotlin версии — зеркальные.
 
 ```java
-package com.example.constraints;
+package com.example.jpa.constraints;
 
-import jakarta.persistence.*;
-import org.junit.jupiter.api.*;
+import com.example.jpa.customer.Customer;
+import com.example.jpa.customer.CustomerRepository;
+import com.example.jpa.order.Order;
+import com.example.jpa.order.OrderRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.context.ActiveProfiles;
 
-@Entity
-@Table(name="users_u", uniqueConstraints = @UniqueConstraint(columnNames = "email"))
-class UserU {
-  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
-  @Column(nullable=false) String email;
-  @Column(nullable=false) Long balanceCents; // CHECK (balance_cents >= 0) в DDL
-}
+import jakarta.annotation.Resource;
 
-@Entity
-@Table(name="orders_fk")
-class OrderFK {
-  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
-  @Column(nullable=false) Long userId; // FK на users_u(id)
-}
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DataJpaTest
-class ConstraintsIT {
+@ActiveProfiles("test")
+class ConstraintsTest {
 
-  @PersistenceContext EntityManager em;
+    @Resource
+    private CustomerRepository customerRepository;
 
-  @Test
-  @Transactional
-  void uniqueViolation_onDuplicateEmail() {
-    var a = new UserU(); a.email="dup@example.com"; a.balanceCents=0L; em.persist(a);
-    var b = new UserU(); b.email="dup@example.com"; b.balanceCents=0L; em.persist(b);
-    Assertions.assertThrows(DataIntegrityViolationException.class, () -> {
-      em.flush(); // выбросит исключение из-за UNIQUE
-    });
-  }
+    @Resource
+    private OrderRepository orderRepository;
 
-  @Test
-  @Transactional
-  void checkViolation_onNegativeBalance() {
-    var u = new UserU(); u.email="bad@example.com"; u.balanceCents=-10L; em.persist(u);
-    Assertions.assertThrows(DataIntegrityViolationException.class, () -> em.flush());
-  }
+    @PersistenceContext
+    private EntityManager entityManager;
 
-  @Test
-  @Transactional
-  void fkViolation_onMissingParent() {
-    var o = new OrderFK(); o.userId=999_999L; em.persist(o);
-    Assertions.assertThrows(DataIntegrityViolationException.class, () -> em.flush());
-  }
+    @Test
+    void uniqueEmailShouldBeEnforced() {
+        Customer first = new Customer();
+        first.setEmail("unique@example.com");
+        customerRepository.saveAndFlush(first);
+
+        Customer second = new Customer();
+        second.setEmail("unique@example.com");
+
+        assertThatThrownBy(() -> {
+            customerRepository.saveAndFlush(second);
+        }).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void foreignKeyShouldPreventDanglingOrders() {
+        Order order = new Order();
+        order.setCustomerId(999_999L); // поле в Order, не @ManyToOne, а FK колонка
+
+        assertThatThrownBy(() -> {
+            orderRepository.saveAndFlush(order);
+        }).isInstanceOf(DataIntegrityViolationException.class);
+    }
 }
 ```
 
-**Kotlin — негативные тесты**
-
 ```kotlin
-package com.example.constraints
+package com.example.jpa.constraints
 
-import jakarta.persistence.*
-import org.junit.jupiter.api.Assertions.assertThrows
+import com.example.jpa.customer.Customer
+import com.example.jpa.customer.CustomerRepository
+import com.example.jpa.order.Order
+import com.example.jpa.order.OrderRepository
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
 import org.springframework.dao.DataIntegrityViolationException
-import org.springframework.transaction.annotation.Transactional
-
-@Entity
-@Table(name = "users_u", uniqueConstraints = [UniqueConstraint(columnNames = ["email"])])
-class UserU(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var email: String = "",
-    @Column(nullable = false) var balanceCents: Long = 0
-)
-
-@Entity
-@Table(name = "orders_fk")
-class OrderFK(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var userId: Long = 0
-)
+import org.springframework.test.context.ActiveProfiles
+import jakarta.annotation.Resource
 
 @DataJpaTest
-class ConstraintsIT(
-    @PersistenceContext private val em: EntityManager
-) {
+@ActiveProfiles("test")
+class ConstraintsTest {
+
+    @Resource
+    lateinit var customerRepository: CustomerRepository
+
+    @Resource
+    lateinit var orderRepository: OrderRepository
+
+    @PersistenceContext
+    lateinit var entityManager: EntityManager
+
     @Test
-    @Transactional
-    fun uniqueViolation_onDuplicateEmail() {
-        em.persist(UserU(email = "dup@example.com", balanceCents = 0))
-        em.persist(UserU(email = "dup@example.com", balanceCents = 0))
-        assertThrows(DataIntegrityViolationException::class.java) { em.flush() }
+    fun `unique email should be enforced`() {
+        val first = Customer().apply {
+            email = "unique@example.com"
+        }
+        customerRepository.saveAndFlush(first)
+
+        val second = Customer().apply {
+            email = "unique@example.com"
+        }
+
+        assertThatThrownBy {
+            customerRepository.saveAndFlush(second)
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
     }
 
     @Test
-    @Transactional
-    fun checkViolation_onNegativeBalance() {
-        em.persist(UserU(email = "bad@example.com", balanceCents = -10))
-        assertThrows(DataIntegrityViolationException::class.java) { em.flush() }
-    }
+    fun `foreign key should prevent dangling orders`() {
+        val order = Order().apply {
+            customerId = 999_999L  // FK колонка без существующего родителя
+        }
 
-    @Test
-    @Transactional
-    fun fkViolation_onMissingParent() {
-        em.persist(OrderFK(userId = 999_999))
-        assertThrows(DataIntegrityViolationException::class.java) { em.flush() }
+        assertThatThrownBy {
+            orderRepository.saveAndFlush(order)
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
     }
 }
 ```
@@ -8004,275 +7698,210 @@ class ConstraintsIT(
 
 ## Контроль таймаутов/блокировок: сценарии дедлоков, пессимистические lock-тесты, «грязные» чтения
 
-Производственные инциденты часто связаны не с «ошибками в коде», а с **подвисшими транзакциями**, **дедлоками** и слишком долгими запросами. Эти истории можно и нужно воспроизводить в тестах. В Postgres есть два важных параметра: `lock_timeout` (сколько ждать блокировку) и `statement_timeout` (сколько ждать выполнение запроса). В тестах мы можем установить их **локально на сессию** (`SET LOCAL ...`) и ожидать предсказуемый таймаут/исключение.
+Многие самые неприятные баги persistence-слоя — не про «не сохранилось», а про «подвисло» или «упало через 30 секунд с дедлоком». Постфактум такие вещи диагностируются тяжело: нужно копать pg_stat_activity, логи СУБД, смотреть графики. Гораздо приятнее иметь пару целевых тестов, которые воспроизводят типичные сценарии блокировок и таймаутов, и гарантируют, что код реагирует на них предсказуемо.
 
-Сценарий **пессимистической блокировки**: поток A открывает транзакцию и делает `SELECT ... FOR UPDATE` по строке, поток B пытается сделать то же — и блокируется. Если `lock_timeout` короткий, поток B получит исключение `PessimisticLockingFailureException`/`LockTimeoutException`. Такой тест доказывает, что наш код правильно конфигурирован (мы не ждём вечность) и что у нас есть корректная обработка ошибок.
+Пессимистические блокировки (`SELECT ... FOR UPDATE`, `LockModeType.PESSIMISTIC_WRITE/READ`) — первый кандидат на такие тесты. Идея в том, чтобы смоделировать две конкурентные транзакции, которые пытаются взять один и тот же ресурс. Первая успешно берёт блокировку и «засыпает», вторая — либо ждёт до тайм-аута и падает с исключением, либо сразу получает отказ, в зависимости от настроек. Тест должен убедиться, что второе поведение действительно срабатывает за разумное время, а не превращается в бесконечное ожидание.
 
-**Дедлок** воспроизводится, если два потока берут **разные строки в разном порядке** и пытаются взять вторую — в пересекающемся порядке. Постгрес обнаружит дедлок и убьёт одну транзакцию (выпадет `DeadlockLoserDataAccessException`). Важно синхронизировать потоки (через `CountDownLatch`/`CyclicBarrier`), чтобы гарантировать пересечение.
+Реализуется это обычно через запуск двух операций в разных потоках, каждая — в своей `@Transactional(propagation = REQUIRES_NEW)` обёртке. Внутри первой операции вы вызываете репозиторий с пессимистической блокировкой (`@Lock(PESSIMISTIC_WRITE)`), потом искусственно ждёте (например, `Thread.sleep`), имитируя долгую обработку. Вторая операция пытается сделать то же самое, но с низким тайм-аутом `lock_timeout` на уровне БД или с ограничением времени на стороне приложения. В тесте вы проверяете, что вторая операция падает с `PessimisticLockingFailureException` или подобным.
 
-Про **«грязные» чтения**: в Postgres их нет — `READ UNCOMMITTED` фактически ведёт себя как `READ COMMITTED`. Это тоже полезно зафиксировать тестом: поток A обновляет значение и не коммитит, поток B читает и видит **старое** значение. Такой тест — «предохранитель» против иллюзий команды о «заглянуть в неподтверждённое».
+Тайм-ауты запросов — ещё одна важная тема. Если вы ошиблись с индексацией или запрос внезапно стал тяжёлым, приложение не должно «висеть» минутами. Тайм-аут можно задавать на разных уровнях: JDBC-драйвер (`setQueryTimeout`), Spring-транзакция (`@Transactional(timeout = ...)`), настройки пула, коннектора (например, в WebClient). Тесты можно строить вокруг искусственно тяжёлого запроса (например, `SELECT pg_sleep(2)` в PostgreSQL) и низкого тайм-аута — вы проверяете, что через N миллисекунд прилетает exception, а не блокировка thread pool’а на минуту.
 
-Организационно такие тесты удобнее писать **на сервисе**, а не в тестовом классе напрямую. Сделайте методы `tx1()`/`tx2()` с нужной изоляцией и аннотациями `@Transactional`, и вызовите их из теста в отдельных потоках через `ExecutorService`. Так вы используете тот же прокси/аспект транзакций, что и в проде.
+Dirty read и аномалии изоляции сложнее тестировать, и сильно зависят от базы. В PostgreSQL по умолчанию `READ COMMITTED`, и «грязных» чтений в строгом смысле нет, но возможны non-repeatable reads и phantom reads на более низких уровнях. Для этих вещей редко пишут общие тесты, но конкретный баг, связанный с изоляцией (например, «при одновременном изменении баланса и чтении отчёта видны промежуточные значения»), имеет смысл зафиксировать как regression-test: два потока, разные изоляции, проверки того, что видит читающая транзакция.
 
-Чтобы **не виснуть**, перед блокирующей операцией выставляйте `SET LOCAL lock_timeout='1s'` и/или `SET LOCAL statement_timeout='2s'`. Это делается через `EntityManager.createNativeQuery(...).executeUpdate()` в начале транзакционного метода. Тогда даже если что-то пошло не по плану, тест завершится быстро и предсказуемо.
+При построении подобных тестов ключевой риск — флаки. Если вы завязываетесь на «сначала поток А, потом через 10 мс поток Б», рано или поздно на CI всё пойдёт не так, как ожидалось. Для надёжности используйте синхронизацию: `CountDownLatch`, `CyclicBarrier`, чёткие точки, где обе транзакции стартуют или ждут. Важнее воспроизвести порядок операций, чем конкретные интервалы времени.
 
-Наконец, держите такие тесты **детерминированными**. Категорически избегайте `Thread.sleep` как синхронизации; используйте барьеры/защёлки. И помните: эти тесты не должны гоняться в десятки потоков — достаточно двух потоков, чтобы воспроизвести нужный граф блокировок.
+Конечно, такие тесты — тяжёлая артиллерия, их не должно быть десятки. Обычно хватает 2–5 хорошо продуманных сценариев, которые отражают реальные риски: дедлок при обновлении двух таблиц, пессимистическая блокировка на «очереди задач», тайм-аут при долгом отчёте. Остальное — зона нагрузочного тестирования и профилировки, а не unit/integration тестов.
 
-**Java — сервис для сценариев блокировок и тест с тайм-аутами/дедлоком**
+Ниже упрощённый пример, который демонстрирует тест на пессимистическую блокировку: первый поток захватывает строку, второй — получает исключение. Код иллюстративный, в реальном проекте сценарий нужно адаптировать под вашу модель. Java и Kotlin версии используют одинаковый подход.
 
 ```java
-package com.example.locks;
+package com.example.jpa.lock;
 
-import jakarta.persistence.*;
-import org.junit.jupiter.api.*;
-import org.springframework.boot.test.context.SpringBootTest;
+import com.example.jpa.order.Order;
+import com.example.jpa.order.OrderLockingRepository;
+import jakarta.annotation.Resource;
+import org.junit.jupiter.api.Test;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.*;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.concurrent.*;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Entity
-@Table(name="acc")
-class Account {
-  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
-  @Column(nullable=false) Long balance;
-}
+@SpringJUnitConfig(LockTestConfig.class)
+@DirtiesContext
+class PessimisticLockTest {
 
-interface AccountRepository extends org.springframework.data.jpa.repository.JpaRepository<Account, Long> { }
+    @Resource
+    private LockService lockService;
+
+    @Test
+    void secondTransactionShouldFailOnPessimisticLock() throws Exception {
+        Long orderId = lockService.createOrder();
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        Future<Void> first = executor.submit(() -> {
+            lockService.lockAndHold(orderId, latch);
+            return null;
+        });
+
+        latch.await();
+
+        Future<Void> second = executor.submit(() -> {
+            lockService.tryLockWithTimeout(orderId);
+            return null;
+        });
+
+        assertThatThrownBy(second::get)
+                .hasCauseInstanceOf(PessimisticLockingFailureException.class);
+
+        first.cancel(true);
+        executor.shutdownNow();
+    }
+}
 
 @Service
 class LockService {
-  @PersistenceContext EntityManager em;
 
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void lockRow(Long id, long lockMs) {
-    em.createNativeQuery("set local lock_timeout = :t").setParameter("t", lockMs + "ms").executeUpdate();
-    em.createQuery("select a from Account a where a.id=:id", Account.class)
-      .setParameter("id", id)
-      .setLockMode(LockModeType.PESSIMISTIC_WRITE)
-      .getSingleResult(); // держим блокировку до конца транзакции
-  }
+    private final OrderLockingRepository orderRepository;
 
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void tryUpdate(Long id, long lockMs) {
-    em.createNativeQuery("set local lock_timeout = :t").setParameter("t", lockMs + "ms").executeUpdate();
-    Account a = em.find(Account.class, id, LockModeType.PESSIMISTIC_WRITE);
-    a.balance += 10;
-  }
-}
-
-@SpringBootTest
-class LockingIT {
-
-  @Autowired LockService svc;
-  @Autowired AccountRepository repo;
-
-  @BeforeEach
-  void init() { repo.deleteAll(); repo.save(new Account(){ { balance=100L; } }); }
-
-  @Test
-  void lockTimeout_whenRowAlreadyLocked() throws Exception {
-    Long id = repo.findAll().get(0).id;
-
-    ExecutorService es = Executors.newFixedThreadPool(2);
-    CountDownLatch start = new CountDownLatch(1);
-
-    Future<?> f1 = es.submit(() -> { start.countDown(); svc.lockRow(id, 5000); }); // удерживает
-    start.await();
-
-    assertThatThrownBy(() -> svc.tryUpdate(id, 500))
-      .isInstanceOfAny(org.springframework.dao.PessimisticLockingFailureException.class,
-                       jakarta.persistence.LockTimeoutException.class);
-
-    f1.get(2, TimeUnit.SECONDS);
-    es.shutdown();
-  }
-
-  @Test
-  void deadlock_oneLoser() throws Exception {
-    // создадим две строки
-    var a = repo.save(new Account(){ { balance=1L; } });
-    var b = repo.save(new Account(){ { balance=2L; } });
-
-    ExecutorService es = Executors.newFixedThreadPool(2);
-    CyclicBarrier barrier = new CyclicBarrier(2);
-
-    Callable<Void> t1 = () -> {
-      svc.lockRow(a.id, 5000);
-      barrier.await();
-      svc.tryUpdate(b.id, 2000); // пытаемся взять вторую
-      return null;
-    };
-    Callable<Void> t2 = () -> {
-      svc.lockRow(b.id, 5000);
-      barrier.await();
-      svc.tryUpdate(a.id, 2000);
-      return null;
-    };
-
-    Future<Void> r1 = es.submit(t1);
-    Future<Void> r2 = es.submit(t2);
-
-    int failures = 0;
-    for (Future<Void> r : new Future[]{r1, r2}) {
-      try { r.get(); } catch (ExecutionException ex) { failures++; }
+    LockService(OrderLockingRepository orderRepository) {
+        this.orderRepository = orderRepository;
     }
-    Assertions.assertEquals(1, failures, "Ожидали одного проигравшего в дедлоке");
-    es.shutdown();
-  }
+
+    @Transactional
+    public Long createOrder() {
+        Order order = new Order();
+        order.setStatus("NEW");
+        Order saved = orderRepository.save(order);
+        return saved.getId();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void lockAndHold(Long orderId, CountDownLatch latch) {
+        Order order = orderRepository.findForUpdate(orderId);
+        latch.countDown();
+        try {
+            Thread.sleep(2_000);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 1)
+    public void tryLockWithTimeout(Long orderId) {
+        orderRepository.findForUpdate(orderId);
+    }
 }
 ```
 
-**Kotlin — тот же сценарий**
+```java
+package com.example.jpa.order;
+
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface OrderLockingRepository extends JpaRepository<Order, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Order findForUpdate(Long id);
+}
+```
 
 ```kotlin
-package com.example.locks
+package com.example.jpa.lock
 
-import jakarta.persistence.*
+import com.example.jpa.order.Order
+import com.example.jpa.order.OrderLockingRepository
 import org.assertj.core.api.Assertions.assertThatThrownBy
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.dao.PessimisticLockingFailureException
 import org.springframework.stereotype.Service
+import org.springframework.test.annotation.DirtiesContext
+import org.springframework.test.context.junit.jupiter.SpringJUnitConfig
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
-import java.util.concurrent.*
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import jakarta.annotation.Resource
 
-@Entity
-@Table(name = "acc")
-class Account(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    var id: Long? = null,
-    @Column(nullable = false) var balance: Long = 0
-)
+@SpringJUnitConfig(LockTestConfig::class)
+@DirtiesContext
+class PessimisticLockTest {
 
-interface AccountRepository : JpaRepository<Account, Long>
+    @Resource
+    lateinit var lockService: LockService
+
+    @Test
+    fun `second transaction should fail on pessimistic lock`() {
+        val orderId = lockService.createOrder()
+        val executor = Executors.newFixedThreadPool(2)
+        val latch = CountDownLatch(1)
+
+        val first: Future<Void?> = executor.submit<Void?> {
+            lockService.lockAndHold(orderId, latch)
+            null
+        }
+
+        latch.await()
+
+        val second: Future<Void?> = executor.submit<Void?> {
+            lockService.tryLockWithTimeout(orderId)
+            null
+        }
+
+        assertThatThrownBy { second.get() }
+            .hasCauseInstanceOf(PessimisticLockingFailureException::class.java)
+
+        first.cancel(true)
+        executor.shutdownNow()
+    }
+}
 
 @Service
 class LockService(
-    @PersistenceContext private val em: EntityManager
+    private val orderRepository: OrderLockingRepository
 ) {
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    fun lockRow(id: Long, lockMs: Long) {
-        em.createNativeQuery("set local lock_timeout = :t").setParameter("t", "${lockMs}ms").executeUpdate()
-        em.createQuery("select a from Account a where a.id=:id", Account::class.java)
-            .setParameter("id", id)
-            .setLockMode(LockModeType.PESSIMISTIC_WRITE)
-            .singleResult
+
+    @Transactional
+    fun createOrder(): Long {
+        val order = Order().apply {
+            status = "NEW"
+        }
+        val saved = orderRepository.save(order)
+        return saved.id!!
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    fun tryUpdate(id: Long, lockMs: Long) {
-        em.createNativeQuery("set local lock_timeout = :t").setParameter("t", "${lockMs}ms").executeUpdate()
-        val a = em.find(Account::class.java, id, LockModeType.PESSIMISTIC_WRITE)
-        a.balance += 10
-    }
-}
-
-@SpringBootTest
-class LockingIT(
-    private val svc: LockService,
-    private val repo: AccountRepository
-) {
-    @BeforeEach
-    fun init() { repo.deleteAll(); repo.save(Account(balance = 100)) }
-
-    @Test
-    fun lockTimeout_whenRowAlreadyLocked() {
-        val id = repo.findAll().first().id!!
-
-        val start = CountDownLatch(1)
-        val es = Executors.newFixedThreadPool(2)
-        val f1 = es.submit<Void?> {
-            start.countDown()
-            svc.lockRow(id, 5000)
-            null
+    fun lockAndHold(orderId: Long, latch: CountDownLatch) {
+        val order = orderRepository.findForUpdate(orderId)
+        latch.countDown()
+        try {
+            Thread.sleep(2_000)
+        } catch (ex: InterruptedException) {
+            Thread.currentThread().interrupt()
         }
-        start.await()
-
-        assertThatThrownBy { svc.tryUpdate(id, 500) }
-            .isInstanceOfAny(
-                org.springframework.dao.PessimisticLockingFailureException::class.java,
-                jakarta.persistence.LockTimeoutException::class.java
-            )
-
-        f1.get(2, TimeUnit.SECONDS)
-        es.shutdown()
     }
 
-    @Test
-    fun deadlock_oneLoser() {
-        val a = repo.save(Account(balance = 1))
-        val b = repo.save(Account(balance = 2))
-
-        val es = Executors.newFixedThreadPool(2)
-        val barrier = CyclicBarrier(2)
-
-        val t1 = Callable {
-            svc.lockRow(a.id!!, 5000)
-            barrier.await()
-            svc.tryUpdate(b.id!!, 2000)
-            null
-        }
-        val t2 = Callable {
-            svc.lockRow(b.id!!, 5000)
-            barrier.await()
-            svc.tryUpdate(a.id!!, 2000)
-            null
-        }
-
-        val r1 = es.submit(t1)
-        val r2 = es.submit(t2)
-
-        var failures = 0
-        listOf(r1, r2).forEach {
-            try { it.get() } catch (e: ExecutionException) { failures++ }
-        }
-        assertEquals(1, failures, "Ожидали одного проигравшего в дедлоке")
-        es.shutdown()
+    @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 1)
+    fun tryLockWithTimeout(orderId: Long) {
+        orderRepository.findForUpdate(orderId)
     }
 }
 ```
 
-**Проверка «грязных» чтений (для Postgres — отсутствие dirty read) — идея теста**
-
-*Суть: Тx1 начало, обновило баланс, не закоммитило. Тx2 читает и видит старое значение. В Postgres READ UNCOMMITTED == READ COMMITTED.*
-
-```java
-// В сервисе:
-@Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_UNCOMMITTED)
-public long readBalance(Long id) {
-  return em.find(Account.class, id).balance;
-}
-```
-
-В тесте: `tx1` меняет баланс и «спит» до команды коммита; `tx2` читает и сравнивает со старым значением; убеждаемся, что грязного чтения **нет** (видим старое). Это закрепляет знание о семантике PG.
-
----
-
-### Резюме по подтеме
-
-1. Берите **Testcontainers** и гоняйте тесты на реальной СУБД с реальными миграциями.
-2. Ловите **N+1** и проверяйте **пагинацию/графы** через Hibernate Statistics; фиксируйте стабильную сортировку.
-3. Тестируйте **инварианты БД** негативными сценариями и форсируйте `flush()` для детерминизма.
-4. Репродуцируйте **блокировки/дедлоки** в двух потоках, ставьте локальные таймауты, и документируйте отсутствие **dirty read** в PG.
-
-
-
-
-
-
-
-
-
-
-
-
+Такие тесты не нужно плодить в огромном количестве, но 2–3 хорошо продуманных сценария по блокировкам и тайм-аутам дают сильную страховку от регрессий на уровне concurrency и поведения БД под нагрузкой.
 
 
 
