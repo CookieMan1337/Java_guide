@@ -63,6 +63,22 @@ permalink: /spring/ioc_di
   * [Интерфейсы у внешних портов и сложной доменной логики; реализации — отдельными бинами](#интерфейсы-у-внешних-портов-и-сложной-доменной-логики-реализации--отдельными-бинами)
   * [Ясные имена бинов и квалификаторов, общий стиль ошибок при конфликте кандидатов](#ясные-имена-бинов-и-квалификаторов-общий-стиль-ошибок-при-конфликте-кандидатов)
   * [Запрет на `ApplicationContextAware` и Service Locator вне инфраструктурного слоя](#запрет-на-applicationcontextaware-и-service-locator-вне-инфраструктурного-слоя)
+* [Вопросы](#вопросы)
+  * [Ответы](#ответы)
+* [Теоретические материалы](#теоретические-материалы)
+* [Задачи](#задачи)
+  * [1. Построить модуль уведомлений с разными способами регистрации бинов](#1-построить-модуль-уведомлений-с-разными-способами-регистрации-бинов)
+    * [Решение](#решение)
+  * [2. Реализовать ресурсный бин с корректным жизненным циклом и прогревом после старта](#2-реализовать-ресурсный-бин-с-корректным-жизненным-циклом-и-прогревом-после-старта)
+    * [Решение](#решение-1)
+  * [3. Собрать маршрутизатор обработчиков через `Map<String, Bean>` и осмысленные имена бинов](#3-собрать-маршрутизатор-обработчиков-через-mapstring-bean-и-осмысленные-имена-бинов)
+    * [Решение](#решение-2)
+      * [4. Переписать конфигурацию так, чтобы она была безопасной при `proxyBeanMethods=false`](#4-переписать-конфигурацию-так-чтобы-она-была-безопасной-при-proxybeanmethodsfalse)
+    * [Решение](#решение-3)
+  * [5. Спроектировать условную автоконфигурацию для аудита и не сломать пользовательские бины](#5-спроектировать-условную-автоконфигурацию-для-аудита-и-не-сломать-пользовательские-бины)
+    * [Решение](#решение-4)
+  * [6. Разделить сервис с self-invocation и добавить корректное получение prototype-бина через `@Lookup`](#6-разделить-сервис-с-self-invocation-и-добавить-корректное-получение-prototype-бина-через-lookup)
+    * [Решение](#решение-5)
 <!-- TOC -->
 
 # 0. Введение
@@ -2715,6 +2731,1028 @@ class CallbackAdapter(private val ctx: ApplicationContext) {
     fun handler(): (String) -> String = ctx.getBean("processor", Processor::class.java)::process
 }
 ```
+
+---
+
+# Вопросы
+
+**1. Что такое бин в Spring и чем он отличается от обычного Java-объекта?**
+**2. Что такое `BeanDefinition` и зачем разработчику вообще знать о его существовании?**
+**3. Какими основными способами бин попадает в Spring-контекст?**
+**4. Когда стоит использовать `@Component`-семейство, а когда `@Configuration` + `@Bean`?**
+**5. Что такое каноническое имя бина и зачем нужны алиасы?**
+**6. Почему коллизии имён бинов опасны и как их предотвращать?**
+**7. Какие основные этапы проходит Spring-контекст при старте приложения?**
+**8. В каком порядке происходит инициализация конкретного бина?**
+**9. Чем отличаются `@PostConstruct`, `InitializingBean` и `initMethod`?**
+**10. Что происходит с бинами при остановке приложения?**
+**11. В чём разница между `@Configuration` и обычным `@Component`, если в них есть методы `@Bean`?**
+**12. Что означает `proxyBeanMethods=true/false` и почему это важно?**
+**13. Как работает `@Bean`, какие у него основные возможности и ограничения?**
+**14. Когда и зачем нужен `@Scope`, и почему с `prototype` нужно быть осторожным?**
+**15. Что такое `FactoryBean` и чем он отличается от обычного бина-фабрики?**
+**16. Что делает `@Lookup` и в каких случаях он действительно полезен?**
+**17. Почему прямой вызов `@Bean`-метода — это не то же самое, что получение бина из контейнера?**
+**18. Как события приложения и раннеры (`ApplicationReadyEvent`, `CommandLineRunner`, `ApplicationRunner`) связаны с жизненным циклом бинов?**
+**19. Как работает автоконфигурация Spring Boot и почему она не должна ломать пользовательский граф бинов?**
+**20. Какие анти-паттерны чаще всего встречаются при работе с бинами и конфигурацией в Spring?**
+
+## Ответы
+
+**1. Что такое бин в Spring и чем он отличается от обычного Java-объекта?**
+
+Бин — это объект, жизненным циклом которого управляет Spring-контейнер. Контейнер знает, как этот объект создать, какие зависимости ему передать, в каком scope его держать и когда вызвать инициализацию или уничтожение.
+
+Обычный Java-объект тоже может быть экземпляром того же класса, но если он создан через `new`, Spring про него ничего не знает. Это означает, что на такой объект не распространяются прокси, пост-процессоры, декларативные транзакции, кеширование и другие инфраструктурные механизмы.
+
+На практике разница очень прикладная: бин — это часть управляемого графа приложения, а обычный объект — просто локально созданный экземпляр. Поэтому в Spring-проекте важно не только *какой* класс написан, но и *кто именно* его создаёт. 
+
+**2. Что такое `BeanDefinition` и зачем разработчику вообще знать о его существовании?**
+
+`BeanDefinition` — это метаданные о бине внутри контейнера. В них хранится информация о классе, способе создания, scope, жизненном цикле, зависимостях и других параметрах, по которым Spring потом строит реальный объект.
+
+Большую часть времени разработчик не работает с `BeanDefinition` напрямую. Но понимание этого уровня помогает объяснить, почему контейнер умеет модифицировать поведение бинов, оборачивать их прокси, менять способ создания и подключать инфраструктурные расширения ещё до фактической инициализации экземпляра.
+
+Это особенно полезно при диагностике сложных случаев: конфликтов бинов, неожиданных прокси, нестандартных scope, программной регистрации бинов и автоконфигурации. То есть знание `BeanDefinition` нужно не для повседневного CRUD-кода, а для понимания того, как Spring реально собирает приложение. 
+
+**3. Какими основными способами бин попадает в Spring-контекст?**
+
+Самый частый путь — компонент-сканирование. Класс помечается `@Component`, `@Service`, `@Repository`, `@Controller`, и Spring при сканировании пакетов регистрирует его как бин.
+
+Второй большой путь — Java-конфигурация через `@Configuration` и методы `@Bean`. Такой способ особенно удобен для инфраструктурных объектов: клиентов, пулов соединений, сериализаторов, кэшей и других зависимостей, которые нужно собирать вручную.
+
+Кроме того, бины могут приходить через `@Import`, `@ImportSelector`, а также через `FactoryBean`, когда объект создаётся не напрямую, а через специальную фабрику. Поэтому важно понимать: бин — это не только «класс с аннотацией», а любой объект, который зарегистрирован в контексте корректным для Spring способом. 
+
+**4. Когда стоит использовать `@Component`-семейство, а когда `@Configuration` + `@Bean`?**
+
+`@Component`-семейство хорошо подходит для бизнес-компонентов и обычных частей приложения: сервисов, адаптеров, репозиториев, контроллеров. Такой код проще читать, потому что роль класса видна сразу, а его создание не требует отдельной ручной фабрики.
+
+`@Configuration` + `@Bean` лучше использовать там, где нужен явный код сборки объекта. Например, если вы создаёте HTTP-клиент, настраиваете таймауты, собираете стороннюю библиотеку через builder или хотите управлять init/destroy-методами библиотечного класса.
+
+Практическое правило простое: бизнес-логику удобнее регистрировать через сканирование, а инфраструктурную «проволоку» — через `@Bean`. Тогда проект остаётся предсказуемым: бизнес-код не перегружается конфигурацией, а конфигурация не превращается в место для предметной логики.  ([Home][1])
+
+**5. Что такое каноническое имя бина и зачем нужны алиасы?**
+
+У каждого бина есть имя, под которым он известен контейнеру. Для компонентного сканирования это обычно имя класса в `camelCase`, а для `@Bean` — имя метода, если вы не указали что-то вручную.
+
+Алиасы позволяют одному и тому же бину иметь несколько имён. Это полезно, когда бин должен быть доступен под разными логическими ролями или когда вы хотите сохранить совместимость со старой конфигурацией, не меняя фактический объект.
+
+Сами по себе имена часто кажутся второстепенными, пока не появляется несколько реализаций одного контракта, карты `Map<String, T>`, сложная диагностика или интеграция с библиотекой. В этот момент оказывается, что осмысленная политика именования — это не косметика, а часть архитектурной дисциплины. 
+
+**6. Почему коллизии имён бинов опасны и как их предотвращать?**
+
+Коллизия имён означает, что в одном контексте два разных кандидата пытаются использовать одно и то же имя. В зависимости от настроек это может приводить к ошибке старта или к неочевидной подмене одного бина другим.
+
+Опасность здесь не только в самом падении приложения. Намного хуже случай, когда приложение стартовало, но часть графа зависимостей оказалась собрана не так, как ожидал разработчик, и поведение изменилось без явного компиляторного сигнала.
+
+Лучший способ защиты — договорённость об именовании, осмысленные названия бинов, аккуратное использование `@Bean(name=...)`, `@Qualifier` и отсутствие случайных совпадений. Чем крупнее проект, тем дороже обходится хаос в именах. 
+
+**7. Какие основные этапы проходит Spring-контекст при старте приложения?**
+
+Сначала Spring регистрирует определения бинов: читает конфигурацию, сканирует компоненты, подключает импорты и формирует реестр того, что *может* быть создано. На этом этапе реальных объектов ещё может не быть, но граф уже описан декларативно.
+
+Затем вступают в работу пост-процессоры фабрики, которые могут менять дефиниции или регистрировать новые. После этого контейнер начинает создавать singleton-бины, разрешать зависимости, вызывать инициализационные колбэки и применять `BeanPostProcessor`.
+
+Когда все ключевые singleton-бины созданы, Spring Boot публикует события старта, включая `ApplicationReadyEvent`. Это важная граница: приложение прошло этап сборки графа и готово к нормальной работе, а тяжёлые задачи и прогревы уже можно привязывать к более поздним точкам жизненного цикла. 
+
+**8. В каком порядке происходит инициализация конкретного бина?**
+
+Сначала контейнер создаёт экземпляр и внедряет в него зависимости. То есть конструктор, параметры, сеттеры и прочие точки связывания уже отработали, и объект стал собранным с точки зрения ссылок на другие компоненты.
+
+Далее могут вызываться `Aware`-интерфейсы, если класс их реализует. После этого идут инициализационные механизмы: `@PostConstruct`, `afterPropertiesSet`, `initMethod`, а также обработка через `BeanPostProcessor`, которая может заменить или обернуть бин.
+
+Этот порядок важен не ради теории, а ради объяснения типичных багов. Например, если разработчик ожидает, что какая-то AOP-магия сработает уже внутри `@PostConstruct`, он часто ошибается: на этом этапе нужный прокси или нужное окружение поведения ещё может быть не готово так, как он ожидает. 
+
+**9. Чем отличаются `@PostConstruct`, `InitializingBean` и `initMethod`?**
+
+Все три механизма решают одну задачу: дают выполнить код после того, как зависимости уже внедрены. Разница в форме и степени связанности с фреймворком.
+
+`@PostConstruct` считается самым нейтральным и удобным вариантом для обычного кода. `InitializingBean` требует реализовать Spring-интерфейс и тем самым сильнее связывает класс с фреймворком. `initMethod` полезен в ситуациях, когда сам класс менять нельзя или не хочется, например если это сторонняя библиотека.
+
+В команде обычно выгодно стандартизировать один основной подход, чтобы код был однородным. На практике чаще выбирают `@PostConstruct`, а `initMethod` оставляют для библиотечных объектов, которые создаются через `@Bean`.  ([Home][2])
+
+**10. Что происходит с бинами при остановке приложения?**
+
+При завершении работы контейнер публикует событие закрытия контекста и затем запускает механизмы уничтожения бинов. Для singleton-компонентов это означает вызовы `@PreDestroy`, `DisposableBean.destroy()` и `destroyMethod`, если они настроены.
+
+Смысл этого этапа не в «красивом завершении», а в корректном освобождении ресурсов. Нужно остановить планировщики, закрыть соединения, завершить фоновые потоки, освободить буферы и не оставить JVM в подвешенном состоянии.
+
+Особенно это важно в микросервисной среде и контейнеризации. Если остановка неаккуратная, система начинает терять сообщения, ронять соединения и вести себя нестабильно при rolling update. Поэтому destroy-фаза — это не опция, а полноценная часть жизненного цикла приложения. 
+
+**11. В чём разница между `@Configuration` и обычным `@Component`, если в них есть методы `@Bean`?**
+
+Оба варианта могут регистрировать бины, но семантически они неравны. `@Configuration` — специальный тип компонента, предназначенный именно для источника bean-definition’ов и поддерживающий проксирование межбиновых вызовов.
+
+Если методы `@Bean` находятся в обычном `@Component`, то сам факт регистрации бинов остаётся, но межбиновые вызовы внутри такого класса не получают той же семантики, что у полноценной конфигурации. Это означает, что разработчик может случайно создать новый объект прямым вызовом метода, а не получить управляемый контейнером экземпляр.
+
+Поэтому `@Component` с `@Bean` — технически допустимо, но архитектурно чаще хуже читается и опаснее для поддержки. Для явной инфраструктурной конфигурации лучше использовать `@Configuration`, чтобы поведение класса соответствовало ожиданиям команды.  ([Home][3])
+
+**12. Что означает `proxyBeanMethods=true/false` и почему это важно?**
+
+Когда `proxyBeanMethods=true`, Spring проксирует конфигурационный класс так, чтобы вызовы `@Bean`-методов внутри него проходили через контейнер. Это позволяет вернуть уже зарегистрированный singleton, а не создавать новый объект прямым Java-вызовом.
+
+Когда `proxyBeanMethods=false`, проксирование отключается. Это ускоряет старт и убирает часть накладных расходов, но меняет смысл внутренних вызовов: `this.someBean()` становится обычным вызовом метода и может породить новый экземпляр, который не является тем самым управляемым бином из контекста.
+
+Это важно потому, что ошибка тут очень коварная: код выглядит почти одинаково, а жизненное поведение объекта — разное. Поэтому отключать прокси нужно осознанно, только если конфигурация написана так, что не полагается на межбиновые вызовы.  ([Home][1])
+
+**13. Как работает `@Bean`, какие у него основные возможности и ограничения?**
+
+`@Bean` говорит контейнеру, что результат конкретного метода нужно зарегистрировать как бин. Имя по умолчанию берётся из имени метода, а тип — из возвращаемого значения, хотя всё это можно уточнить дополнительными параметрами.
+
+Через `@Bean` удобно задавать scope, `initMethod`, `destroyMethod`, явные имена и зависимости через параметры метода. Это делает аннотацию особенно полезной для настройки сторонних библиотек и сложных инфраструктурных объектов, которые не хочется или нельзя аннотировать напрямую.
+
+Но `@Bean` — не замена всему подряд. Если им начинают регистрировать каждую мелочь, включая обычные бизнес-сервисы, конфигурационный слой быстро разрастается и становится тяжёлым для чтения. Поэтому `@Bean` силён именно как инструмент явной конфигурации, а не как универсальный стиль для любого класса.  ([Home][4])
+
+**14. Когда и зачем нужен `@Scope`, и почему с `prototype` нужно быть осторожным?**
+
+По умолчанию Spring создаёт singleton-бины, и этого хватает для большинства сервисов. `@Scope` нужен, когда жизненный цикл объекта должен отличаться: например, новый экземпляр на каждый запрос, на каждую HTTP-сессию или на каждое получение из контейнера.
+
+Самый известный нестандартный вариант — `prototype`. Он полезен, если объект действительно короткоживущий и нужен как одноразовый рабочий экземпляр, а не как общий сервис. Но тут возникает важная тонкость: контейнер умеет создать такой бин, но уже не управляет им так полно, как singleton’ом, особенно в части дальнейшего жизненного цикла.
+
+Из-за этого `prototype` часто используют неправильно, ожидая от него того же удобства, что и от singleton. Поэтому вводить его надо только там, где модель жизни объекта действительно требует новых экземпляров, а способ их получения архитектурно продуман. 
+
+**15. Что такое `FactoryBean` и чем он отличается от обычного бина-фабрики?**
+
+`FactoryBean` — специальный Spring-контракт, при котором сам бин выступает фабрикой для другого объекта. То есть контейнер по имени такого бина обычно отдаёт не саму фабрику, а её продукт.
+
+Это отличается от обычного класса-фабрики тем, что Spring знает о семантике `FactoryBean` на уровне контейнера. Поэтому он может обращаться с продуктом фабрики как с полноценным управляемым бином, а при необходимости саму фабрику можно получить отдельно по имени с префиксом `&`.
+
+На практике `FactoryBean` нужен не везде, а в достаточно специальных сценариях: сложная сборка клиента, динамический выбор реализации, интеграция со сторонними SDK и библиотеками. Это инструмент для инфраструктуры, а не для рядового бизнес-кода.  
+
+**16. Что делает `@Lookup` и в каких случаях он действительно полезен?**
+
+`@Lookup` позволяет singleton-бину получать новый экземпляр другого бина по требованию, обычно прототипа. Контейнер подменяет отмеченный метод так, чтобы при вызове фактически происходило обращение к контексту за свежим объектом.
+
+Это полезно в тех случаях, когда singleton-компоненту нельзя заранее держать один фиксированный экземпляр зависимости, а нужно создавать новый рабочий объект для каждой операции. Например, временную задачу, команду, буфер, сессионный обработчик или другой короткоживущий объект.
+
+Но `@Lookup` не должен становиться универсальной заплаткой. Если он начинает массово появляться в коде, это обычно признак того, что модель скоупов и фабрик продумана плохо, и архитектуру лучше упростить до более явного способа создания зависимостей. 
+
+**17. Почему прямой вызов `@Bean`-метода — это не то же самое, что получение бина из контейнера?**
+
+На уровне Java это просто вызов метода. Контейнер участвует в этом только тогда, когда сам конфигурационный класс проксирован и вызов проходит через соответствующий механизм Spring.
+
+Если же прокси не участвует, особенно при `proxyBeanMethods=false`, вызов `someConfig.someBean()` просто создаёт новый объект согласно телу метода. Такой объект может не совпадать с уже зарегистрированным singleton-бином и не пройти тот же инфраструктурный путь, что прошёл объект из контейнера.
+
+Именно поэтому нельзя мыслить `@Bean`-методы как «обычные фабричные методы, которые по совпадению ещё и регистрируют бин». Это другой уровень абстракции: контейнерная регистрация и прямой Java-вызов внешне похожи, но семантически не равны.  
+
+**18. Как события приложения и раннеры (`ApplicationReadyEvent`, `CommandLineRunner`, `ApplicationRunner`) связаны с жизненным циклом бинов?**
+
+Они дают точки расширения уже после того, как ключевая часть контекста собрана. То есть это не механизм создания бина, а способ выполнить дополнительную инициализацию в правильный момент жизненного цикла приложения.
+
+`ApplicationReadyEvent` особенно полезен, когда нужно стартовать прогрев, который не должен тормозить базовую сборку графа или не должен жить внутри `@PostConstruct`. `CommandLineRunner` и `ApplicationRunner` удобны для запуска кода после старта — например, инициализации данных, прогрева соединений, проверки внешних зависимостей.
+
+Правильное использование этих точек делает старт приложения более предсказуемым. Вместо того чтобы прятать тяжёлую логику в конструкторах и init-методах, разработчик привязывает её к более поздней фазе, где уже понятна готовность контекста и проще контролировать порядок выполнения.  
+
+**19. Как работает автоконфигурация Spring Boot и почему она не должна ломать пользовательский граф бинов?**
+
+Автоконфигурация подключает бины автоматически, ориентируясь на classpath, свойства и другие условия. Идея в том, чтобы библиотека или стартер давали полезные значения по умолчанию, не заставляя разработчика вручную собирать каждый инфраструктурный объект.
+
+Но качественная автоконфигурация обязана быть «вежливой». Она не должна безусловно навязывать свои бины и ломать пользовательскую конфигурацию. Именно поэтому в Spring Boot широко используются условия вроде наличия класса, свойства или отсутствия пользовательского бина.
+
+Если автоконфигурация построена плохо, она начинает засорять граф, неожиданно менять поведение приложения и усложнять диагностику. Поэтому хороший стартер не диктует архитектуру приложения, а только мягко достраивает инфраструктуру там, где пользователь этого ещё не сделал.  ([Home][5])
+
+**20. Какие анти-паттерны чаще всего встречаются при работе с бинами и конфигурацией в Spring?**
+
+Первый большой анти-паттерн — смешивание бизнес-логики и конфигурации. Когда в `@Configuration` появляются предметные правила, а в сервисах — ручное создание клиентов через `new`, архитектура быстро теряет предсказуемость и тестируемость.
+
+Второй тип проблем связан с обходом контейнера: Service Locator через `ApplicationContext#getBean`, прямые вызовы `@Bean`-методов, неосознанное использование `prototype`, попытки чинить дизайн случайным `@Lookup` или внутренними вызовами методов, которые должны были пройти через прокси.
+
+Третий анти-паттерн — игнорирование жизненного цикла. Когда тяжёлые операции кладут в `@PostConstruct`, не освобождают ресурсы на остановке, не продумывают имена бинов и не диагностируют граф, проект начинает «работать случайно». В Spring такие ошибки редко выглядят как мелочь: они почти всегда масштабируются вместе с системой.   
+
+---
+
+# Теоретические материалы
+
+1. Spring Framework: [Bean Overview](https://docs.spring.io/spring-framework/reference/core/beans/definition.html)
+2. Spring Framework: [Container Overview](https://docs.spring.io/spring-framework/reference/core/beans/basics.html)
+3. Spring Framework: [Java-based Container Configuration](https://docs.spring.io/spring-framework/reference/core/beans/java.html)
+4. Spring Framework: [Basic Concepts: `@Bean` and `@Configuration`](https://docs.spring.io/spring-framework/reference/core/beans/java/basic-concepts.html)
+5. Spring Framework: [Using the `@Configuration` annotation](https://docs.spring.io/spring-framework/reference/core/beans/java/configuration-annotation.html)
+6. Spring Framework: [Using the `@Bean` annotation](https://docs.spring.io/spring-framework/reference/core/beans/java/bean-annotation.html)
+7. Spring Framework: [Customizing the Nature of a Bean](https://docs.spring.io/spring-framework/reference/core/beans/factory-nature.html)
+8. Spring Framework: [Introduction to the Spring IoC Container and Beans](https://docs.spring.io/spring-framework/reference/core/beans/introduction.html)
+9. Spring Framework: [Composing Java-based Configurations](https://docs.spring.io/spring-framework/reference/core/beans/java/composing-configuration-classes.html)
+10. Spring Boot: [Auto-configuration](https://docs.spring.io/spring-boot/reference/using/auto-configuration.html)
+11. Spring Boot: [Creating Your Own Auto-configuration](https://docs.spring.io/spring-boot/reference/features/developing-auto-configuration.html)
+12. Spring Boot API: [ConditionalOnBean](https://docs.spring.io/spring-boot/api/java/org/springframework/boot/autoconfigure/condition/ConditionalOnBean.html)
+13. Habr: [Spring изнутри. Этапы инициализации контекста](https://habr.com/ru/articles/222579/)
+14. Habr: [Spring: Жизненный цикл бинов, методы init() и destroy()](https://habr.com/ru/articles/658273/)
+15. Habr: [Обратная сторона Spring](https://habr.com/ru/articles/334448/)
+16. Habr: [Шедевральный трюк Великого Springhoff-а](https://habr.com/ru/articles/922248/)
+
+---
+
+# Задачи
+
+## 1. Построить модуль уведомлений с разными способами регистрации бинов
+
+Есть небольшой модуль уведомлений, который уже умеет отправлять сообщения, но сейчас всё смешано в одном месте. Часть классов должна попадать в контекст через компонент-сканирование, а часть — собираться как инфраструктурные бины через конфигурацию. Нужно привести код к более правильной структуре, где бизнес-координация отделена от сборки клиентов и шаблонов.
+
+Дополнительно важно сделать так, чтобы один и тот же сервис мог использовать разные реализации канала уведомлений, а шаблонизатор и клиент к внешнему API создавались через `@Bean`. В результате должен получиться понятный граф бинов, который можно легко читать по конструкторам.
+
+* Стартовый код
+
+```java
+package demo.task1;
+
+public class NotificationHttpClient {
+    private final String baseUrl;
+
+    public NotificationHttpClient(String baseUrl) {
+        this.baseUrl = baseUrl;
+    }
+
+    public String post(String payload) {
+        return "POST " + baseUrl + " -> " + payload;
+    }
+}
+
+public class NotificationTemplateEngine {
+    public String render(String template, String user) {
+        return template.replace("{user}", user);
+    }
+}
+
+public interface NotificationSender {
+    String send(String user, String message);
+}
+
+public class EmailNotificationSender implements NotificationSender {
+    private final NotificationHttpClient client;
+    private final NotificationTemplateEngine templateEngine;
+
+    public EmailNotificationSender(NotificationHttpClient client, NotificationTemplateEngine templateEngine) {
+        this.client = client;
+        this.templateEngine = templateEngine;
+    }
+
+    @Override
+    public String send(String user, String message) {
+        return client.post(templateEngine.render("[EMAIL] {user}: " + message, user));
+    }
+}
+
+public class SmsNotificationSender implements NotificationSender {
+    private final NotificationHttpClient client;
+
+    public SmsNotificationSender(NotificationHttpClient client) {
+        this.client = client;
+    }
+
+    @Override
+    public String send(String user, String message) {
+        return client.post("[SMS] " + user + ": " + message);
+    }
+}
+
+public class NotificationService {
+    private final NotificationSender sender;
+
+    public NotificationService(NotificationSender sender) {
+        this.sender = sender;
+    }
+
+    public String notifyUser(String user, String message) {
+        return sender.send(user, message);
+    }
+}
+```
+
+* Что требуется
+
+  * Зарегистрировать `NotificationHttpClient` и `NotificationTemplateEngine` через `@Configuration` + `@Bean`.
+  * Сделать две реализации `NotificationSender` Spring-бинами.
+  * Одну реализацию сделать основной по умолчанию.
+  * Зарегистрировать `NotificationService` через компонент-сканирование.
+  * Добавить отдельный сервис для срочных SMS-уведомлений с явным `@Qualifier`.
+
+### Решение
+
+```java
+package demo.task1;
+
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
+
+public class NotificationHttpClient {
+    private final String baseUrl;
+
+    public NotificationHttpClient(String baseUrl) {
+        this.baseUrl = baseUrl;
+    }
+
+    public String post(String payload) {
+        return "POST " + baseUrl + " -> " + payload;
+    }
+}
+
+public class NotificationTemplateEngine {
+    public String render(String template, String user) {
+        return template.replace("{user}", user);
+    }
+}
+
+public interface NotificationSender {
+    String send(String user, String message);
+}
+
+@Component("emailSender")
+@Primary
+class EmailNotificationSender implements NotificationSender {
+    private final NotificationHttpClient client;
+    private final NotificationTemplateEngine templateEngine;
+
+    public EmailNotificationSender(NotificationHttpClient client, NotificationTemplateEngine templateEngine) {
+        this.client = client;
+        this.templateEngine = templateEngine;
+    }
+
+    @Override
+    public String send(String user, String message) {
+        return client.post(templateEngine.render("[EMAIL] {user}: " + message, user));
+    }
+}
+
+@Component("smsSender")
+class SmsNotificationSender implements NotificationSender {
+    private final NotificationHttpClient client;
+
+    public SmsNotificationSender(NotificationHttpClient client) {
+        this.client = client;
+    }
+
+    @Override
+    public String send(String user, String message) {
+        return client.post("[SMS] " + user + ": " + message);
+    }
+}
+
+@Service
+public class NotificationService {
+    private final NotificationSender sender;
+
+    public NotificationService(NotificationSender sender) {
+        this.sender = sender;
+    }
+
+    public String notifyUser(String user, String message) {
+        return sender.send(user, message);
+    }
+}
+
+@Service
+class UrgentNotificationService {
+    private final NotificationSender smsSender;
+
+    public UrgentNotificationService(@Qualifier("smsSender") NotificationSender smsSender) {
+        this.smsSender = smsSender;
+    }
+
+    public String notifyUrgently(String user, String message) {
+        return smsSender.send(user, "[URGENT] " + message);
+    }
+}
+
+@Configuration
+class NotificationConfig {
+
+    @Bean
+    NotificationHttpClient notificationHttpClient() {
+        return new NotificationHttpClient("https://notify.internal/api");
+    }
+
+    @Bean
+    NotificationTemplateEngine notificationTemplateEngine() {
+        return new NotificationTemplateEngine();
+    }
+}
+```
+
+## 2. Реализовать ресурсный бин с корректным жизненным циклом и прогревом после старта
+
+Есть компонент, который должен хранить соединение с внешним справочным сервисом и подгружать данные в память. Сейчас код не управляет жизненным циклом явно, поэтому неясно, когда соединение открывается, когда кеш прогревается и что произойдёт при остановке приложения.
+
+Нужно оформить его как управляемый бин с полноценным циклом жизни. Важно разделить стадии: лёгкая техническая инициализация должна происходить во время создания бина, а тяжёлый прогрев — только после полной готовности приложения.
+
+* Стартовый код
+
+```java
+package demo.task2;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class ReferenceClient {
+    private boolean opened;
+
+    public void open() {
+        opened = true;
+    }
+
+    public Map<String, String> loadData() {
+        if (!opened) {
+            throw new IllegalStateException("Client is not opened");
+        }
+        Map<String, String> data = new HashMap<>();
+        data.put("A", "ACTIVE");
+        data.put("B", "BLOCKED");
+        return data;
+    }
+
+    public void close() {
+        opened = false;
+    }
+}
+
+public class ReferenceDictionary {
+    private final ReferenceClient client;
+    private final Map<String, String> cache = new HashMap<>();
+
+    public ReferenceDictionary(ReferenceClient client) {
+        this.client = client;
+    }
+
+    public String getStatus(String code) {
+        return cache.get(code);
+    }
+}
+```
+
+* Что требуется
+
+  * Зарегистрировать `ReferenceClient` и `ReferenceDictionary` как Spring-бины.
+  * Открывать клиент при инициализации бина.
+  * Прогревать кеш после `ApplicationReadyEvent`.
+  * Освобождать ресурс при остановке приложения.
+  * Добавить сервис, использующий словарь в бизнес-логике.
+
+### Решение
+
+```java
+package demo.task2;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class ReferenceClient {
+    private boolean opened;
+
+    public void open() {
+        opened = true;
+    }
+
+    public Map<String, String> loadData() {
+        if (!opened) {
+            throw new IllegalStateException("Client is not opened");
+        }
+        Map<String, String> data = new HashMap<>();
+        data.put("A", "ACTIVE");
+        data.put("B", "BLOCKED");
+        return data;
+    }
+
+    public void close() {
+        opened = false;
+    }
+}
+
+public class ReferenceDictionary {
+    private final ReferenceClient client;
+    private final Map<String, String> cache = new HashMap<>();
+
+    public ReferenceDictionary(ReferenceClient client) {
+        this.client = client;
+    }
+
+    @PostConstruct
+    public void init() {
+        client.open();
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmUp() {
+        cache.clear();
+        cache.putAll(client.loadData());
+    }
+
+    public String getStatus(String code) {
+        return cache.get(code);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        client.close();
+    }
+}
+
+@Service
+class CustomerStateService {
+    private final ReferenceDictionary dictionary;
+
+    public CustomerStateService(ReferenceDictionary dictionary) {
+        this.dictionary = dictionary;
+    }
+
+    public String resolveState(String code) {
+        return dictionary.getStatus(code);
+    }
+}
+
+@Configuration
+class ReferenceConfig {
+
+    @Bean
+    ReferenceClient referenceClient() {
+        return new ReferenceClient();
+    }
+
+    @Bean
+    ReferenceDictionary referenceDictionary(ReferenceClient referenceClient) {
+        return new ReferenceDictionary(referenceClient);
+    }
+}
+```
+
+## 3. Собрать маршрутизатор обработчиков через `Map<String, Bean>` и осмысленные имена бинов
+
+Есть зачаток движка обработки заявок, но сейчас он знает только про один обработчик и не умеет гибко выбирать реализацию по типу операции. Нужно перейти от жёсткой связки к расширяемой схеме, где все обработчики регистрируются как бины и автоматически собираются в карту.
+
+Суть задачи в том, чтобы ученики не просто дописали одну строчку, а построили нормальный паттерн расширения. При добавлении нового обработчика бизнес-сервис не должен изменяться, кроме, возможно, новых входных данных.
+
+* Стартовый код
+
+```java
+package demo.task3;
+
+public interface RequestHandler {
+    String handle(String payload);
+}
+
+public class CreateRequestHandler implements RequestHandler {
+    @Override
+    public String handle(String payload) {
+        return "created:" + payload;
+    }
+}
+
+public class UpdateRequestHandler implements RequestHandler {
+    @Override
+    public String handle(String payload) {
+        return "updated:" + payload;
+    }
+}
+
+public class RequestProcessingService {
+    public String process(String operation, String payload) {
+        throw new UnsupportedOperationException("implement me");
+    }
+}
+```
+
+* Что требуется
+
+  * Сделать обработчики Spring-бинами с осмысленными именами.
+  * Внедрить в сервис `Map<String, RequestHandler>`.
+  * Реализовать роутинг по имени обработчика.
+  * Добавить ещё один обработчик `delete`.
+  * Для неизвестной операции выбрасывать понятную ошибку с перечислением допустимых ключей.
+
+### Решение
+
+```java
+package demo.task3;
+
+import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
+
+import java.util.Map;
+import java.util.Set;
+
+public interface RequestHandler {
+    String handle(String payload);
+}
+
+@Component("create")
+class CreateRequestHandler implements RequestHandler {
+    @Override
+    public String handle(String payload) {
+        return "created:" + payload;
+    }
+}
+
+@Component("update")
+class UpdateRequestHandler implements RequestHandler {
+    @Override
+    public String handle(String payload) {
+        return "updated:" + payload;
+    }
+}
+
+@Component("delete")
+class DeleteRequestHandler implements RequestHandler {
+    @Override
+    public String handle(String payload) {
+        return "deleted:" + payload;
+    }
+}
+
+@Service
+public class RequestProcessingService {
+    private final Map<String, RequestHandler> handlers;
+
+    public RequestProcessingService(Map<String, RequestHandler> handlers) {
+        this.handlers = handlers;
+    }
+
+    public String process(String operation, String payload) {
+        RequestHandler handler = handlers.get(operation);
+        if (handler == null) {
+            Set<String> supported = handlers.keySet();
+            throw new IllegalArgumentException(
+                "Unsupported operation '" + operation + "'. Supported operations: " + supported
+            );
+        }
+        return handler.handle(payload);
+    }
+}
+```
+
+#### 4. Переписать конфигурацию так, чтобы она была безопасной при `proxyBeanMethods=false`
+
+Есть конфигурационный класс, который создаёт несколько связанных между собой инфраструктурных объектов. Сейчас он опирается на прямые вызовы `@Bean`-методов, и это начинает быть проблемой, если перевести конфигурацию в более быстрый режим без проксирования.
+
+Задача — переписать конфиг так, чтобы зависимости выражались через параметры `@Bean`-методов, а не через вызовы соседних методов. Это хороший практический кейс на понимание реальной семантики `@Configuration`.
+
+* Стартовый код
+
+```java
+package demo.task4;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+public class AuthClient {
+    private final String token;
+
+    public AuthClient(String token) {
+        this.token = token;
+    }
+
+    public String token() {
+        return token;
+    }
+}
+
+public class OrdersClient {
+    private final AuthClient authClient;
+
+    public OrdersClient(AuthClient authClient) {
+        this.authClient = authClient;
+    }
+
+    public String call() {
+        return "orders by " + authClient.token();
+    }
+}
+
+public class BillingClient {
+    private final AuthClient authClient;
+
+    public BillingClient(AuthClient authClient) {
+        this.authClient = authClient;
+    }
+
+    public String call() {
+        return "billing by " + authClient.token();
+    }
+}
+
+@Configuration(proxyBeanMethods = false)
+public class IntegrationConfig {
+
+    @Bean
+    AuthClient authClient() {
+        return new AuthClient("secret-token");
+    }
+
+    @Bean
+    OrdersClient ordersClient() {
+        return new OrdersClient(authClient());
+    }
+
+    @Bean
+    BillingClient billingClient() {
+        return new BillingClient(authClient());
+    }
+}
+```
+
+* Что требуется
+
+  * Переписать конфигурацию без прямых вызовов `@Bean`-методов.
+  * Оставить `proxyBeanMethods=false`.
+  * Выразить зависимости через параметры методов.
+  * Добавить сервис-агрегатор, который использует оба клиента.
+
+### Решение
+
+```java
+package demo.task4;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Service;
+
+public class AuthClient {
+    private final String token;
+
+    public AuthClient(String token) {
+        this.token = token;
+    }
+
+    public String token() {
+        return token;
+    }
+}
+
+public class OrdersClient {
+    private final AuthClient authClient;
+
+    public OrdersClient(AuthClient authClient) {
+        this.authClient = authClient;
+    }
+
+    public String call() {
+        return "orders by " + authClient.token();
+    }
+}
+
+public class BillingClient {
+    private final AuthClient authClient;
+
+    public BillingClient(AuthClient authClient) {
+        this.authClient = authClient;
+    }
+
+    public String call() {
+        return "billing by " + authClient.token();
+    }
+}
+
+@Service
+class IntegrationFacade {
+    private final OrdersClient ordersClient;
+    private final BillingClient billingClient;
+
+    public IntegrationFacade(OrdersClient ordersClient, BillingClient billingClient) {
+        this.ordersClient = ordersClient;
+        this.billingClient = billingClient;
+    }
+
+    public String healthcheck() {
+        return ordersClient.call() + " | " + billingClient.call();
+    }
+}
+
+@Configuration(proxyBeanMethods = false)
+public class IntegrationConfig {
+
+    @Bean
+    AuthClient authClient() {
+        return new AuthClient("secret-token");
+    }
+
+    @Bean
+    OrdersClient ordersClient(AuthClient authClient) {
+        return new OrdersClient(authClient);
+    }
+
+    @Bean
+    BillingClient billingClient(AuthClient authClient) {
+        return new BillingClient(authClient);
+    }
+}
+```
+
+## 5. Спроектировать условную автоконфигурацию для аудита и не сломать пользовательские бины
+
+Нужно смоделировать мини-стартер, который при подключении в приложение поднимает аудит. Но поднимать его надо только при выполнении условий: если аудит включён свойством и если пользователь сам не объявил свою реализацию.
+
+Это уже более взрослый сценарий, где важно не просто создать бин, а сделать это аккуратно и «вежливо». Такой код должен хорошо вести себя в чужих приложениях и не ломать пользовательский контекст.
+
+* Стартовый код
+
+```java
+package demo.task5;
+
+public interface AuditSink {
+    void emit(String event);
+}
+
+public class ConsoleAuditSink implements AuditSink {
+    @Override
+    public void emit(String event) {
+        System.out.println("[AUDIT] " + event);
+    }
+}
+
+public class AuditService {
+    private final AuditSink sink;
+
+    public AuditService(AuditSink sink) {
+        this.sink = sink;
+    }
+
+    public void audit(String event) {
+        sink.emit(event);
+    }
+}
+```
+
+* Что требуется
+
+  * Сделать автоконфигурационный класс.
+  * Создавать `AuditSink` только при `audit.enabled=true`.
+  * Использовать `@ConditionalOnMissingBean`, чтобы пользователь мог переопределить бин.
+  * Зарегистрировать `AuditService` только если есть `AuditSink`.
+  * Показать пользовательский конфиг, который подменяет стандартную реализацию.
+
+### Решение
+
+```java
+package demo.task5;
+
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+public interface AuditSink {
+    void emit(String event);
+}
+
+public class ConsoleAuditSink implements AuditSink {
+    @Override
+    public void emit(String event) {
+        System.out.println("[AUDIT] " + event);
+    }
+}
+
+public class AuditService {
+    private final AuditSink sink;
+
+    public AuditService(AuditSink sink) {
+        this.sink = sink;
+    }
+
+    public void audit(String event) {
+        sink.emit(event);
+    }
+}
+
+@AutoConfiguration
+@ConditionalOnProperty(prefix = "audit", name = "enabled", havingValue = "true")
+class AuditAutoConfiguration {
+
+    @Bean
+    @ConditionalOnMissingBean
+    AuditSink auditSink() {
+        return new ConsoleAuditSink();
+    }
+
+    @Bean
+    @ConditionalOnBean(AuditSink.class)
+    @ConditionalOnMissingBean
+    AuditService auditService(AuditSink sink) {
+        return new AuditService(sink);
+    }
+}
+
+@Configuration
+class UserAuditConfig {
+
+    @Bean
+    AuditSink customAuditSink() {
+        return event -> System.out.println("[CUSTOM-AUDIT] " + event);
+    }
+}
+```
+
+## 6. Разделить сервис с self-invocation и добавить корректное получение prototype-бина через `@Lookup`
+
+Есть сервис пакетной обработки, который должен на каждую запись создавать отдельный рабочий объект с временным состоянием. Сейчас код написан в стиле «всё в одном классе», а попытка расширить его аспектами и прототипами почти наверняка приведёт к ошибкам проектирования.
+
+Нужно вынести одноразовый обработчик в отдельный prototype-бин и научить основной сервис получать новый экземпляр на каждую операцию. Дополнительно полезно оформить код так, чтобы решение не сводилось к ручному `new`.
+
+* Стартовый код
+
+```java
+package demo.task6;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class RowTask {
+    private final List<String> steps = new ArrayList<>();
+
+    public void addStep(String value) {
+        steps.add(value);
+    }
+
+    public List<String> steps() {
+        return steps;
+    }
+}
+
+public class BatchImportService {
+
+    public List<List<String>> importRows(List<String> rows) {
+        List<List<String>> result = new ArrayList<>();
+        for (String row : rows) {
+            RowTask task = new RowTask();
+            task.addStep("start:" + row);
+            task.addStep("validate:" + row);
+            task.addStep("save:" + row);
+            result.add(task.steps());
+        }
+        return result;
+    }
+}
+```
+
+* Что требуется
+
+  * Сделать `RowTask` prototype-бином.
+  * Сделать основной сервис Spring-бином.
+  * Получать новый `RowTask` на каждую строку через `@Lookup`.
+  * Вынести логику обработки строки в отдельный метод.
+  * Избавиться от ручного `new` внутри бизнес-логики.
+
+### Решение
+
+```java
+package demo.task6;
+
+import org.springframework.beans.factory.annotation.Lookup;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Component
+@Scope("prototype")
+class RowTask {
+    private final List<String> steps = new ArrayList<>();
+
+    public void addStep(String value) {
+        steps.add(value);
+    }
+
+    public List<String> steps() {
+        return List.copyOf(steps);
+    }
+}
+
+@Service
+public abstract class BatchImportService {
+
+    public List<List<String>> importRows(List<String> rows) {
+        List<List<String>> result = new ArrayList<>();
+        for (String row : rows) {
+            result.add(processSingleRow(row));
+        }
+        return result;
+    }
+
+    protected List<String> processSingleRow(String row) {
+        RowTask task = newRowTask();
+        task.addStep("start:" + row);
+        task.addStep("validate:" + row);
+        task.addStep("save:" + row);
+        return task.steps();
+    }
+
+    @Lookup
+    protected abstract RowTask newRowTask();
+}
+```
+
 
 
 

@@ -61,6 +61,22 @@ permalink: /spring/context
   * [Не плодить «глобальные» бины с чтением свойств на лету; читать один раз и инжектить](#не-плодить-глобальные-бины-с-чтением-свойств-на-лету-читать-один-раз-и-инжектить)
   * [Не смешивать профили «поведения» и профили «окружения»; договориться о конвенциях имён](#не-смешивать-профили-поведения-и-профили-окружения-договориться-о-конвенциях-имён)
   * [Документировать контракт конфигов: что обязательно, какие дефолты, что считается секретом; проверка на старте (fail-fast)](#документировать-контракт-конфигов-что-обязательно-какие-дефолты-что-считается-секретом-проверка-на-старте-fail-fast)
+* [Вопросы](#вопросы-)
+      * [Ответы](#ответы)
+* [Теоретические материалы](#теоретические-материалы)
+* [Задачи](#задачи-)
+  * [1. Собрать типобезопасную конфигурацию HTTP-клиента через `@ConfigurationProperties`](#1-собрать-типобезопасную-конфигурацию-http-клиента-через-configurationproperties)
+    * [Решение](#решение)
+  * [2. Разделить dev/prod-поведение уведомлений через профили и протестировать его](#2-разделить-devprod-поведение-уведомлений-через-профили-и-протестировать-его)
+    * [Решение](#решение-1)
+  * [3. Перевести feature toggle с ручного чтения `Environment` на `@ConditionalOnProperty`](#3-перевести-feature-toggle-с-ручного-чтения-environment-на-conditionalonproperty)
+    * [Решение](#решение-2)
+  * [4. Построить иерархическую конфигурацию маршрутизации с коллекциями, картами и профильным переопределением](#4-построить-иерархическую-конфигурацию-маршрутизации-с-коллекциями-картами-и-профильным-переопределением)
+    * [Решение](#решение-3)
+  * [5. Спроектировать мини-стартер с автоконфигурацией и “вежливым” поведением](#5-спроектировать-мини-стартер-с-автоконфигурацией-и-вежливым-поведением)
+    * [Решение](#решение-4)
+  * [6. Написать интеграционный тест конфигурации через `@DynamicPropertySource` и Testcontainers](#6-написать-интеграционный-тест-конфигурации-через-dynamicpropertysource-и-testcontainers)
+    * [Решение](#решение-5)
 <!-- TOC -->
 
 # 0. Введение
@@ -2998,3 +3014,1011 @@ management:
 ```
 
 
+# Вопросы 
+
+**1. Что такое `ApplicationContext` в Spring и чем он отличается от простой `BeanFactory`?**
+**2. Какую роль играет `Environment` и почему его отделяют от `ApplicationContext`?**
+**3. Какие источники конфигурации умеет читать Spring Boot и как между ними выбирается итоговое значение?**
+**4. Что такое `Config Data API` и зачем в Spring Boot нужны `application.yml`, `application-<profile>.yml` и дополнительные локации конфигов?**
+**5. Как работают профили в Spring и как их правильно активировать?**
+**6. Когда лучше использовать профильные файлы, а когда — `spring.config.activate.on-profile` внутри одного файла?**
+**7. Что такое группы профилей и в каких сценариях они полезны?**
+**8. Чем `@Profile` отличается от `@ConditionalOnProperty`, `@ConditionalOnClass` и `@ConditionalOnMissingBean`?**
+**9. Зачем нужен `@ConfigurationProperties` и почему он обычно лучше набора `@Value` по всему проекту?**
+**10. Как работает relaxed binding и почему свойства можно задавать в разных форматах имён?**
+**11. Почему immutable-конфигурация через конструкторный биндинг считается предпочтительной?**
+**12. Как валидировать конфигурационные свойства и почему fail-fast на старте лучше поздних ошибок в runtime?**
+**13. Какие типы Spring Boot умеет биндинговать автоматически и чем это полезно на практике?**
+**14. Когда достаточно `@Value`, а когда уже нужно переходить на `@ConfigurationProperties`?**
+**15. Зачем нужен `spring-boot-configuration-processor` и какую пользу дают metadata-файлы?**
+**16. Как правильно работать с секретами и почему их нельзя хранить в Git?**
+**17. Как свойства из переменных окружения связываются со свойствами Spring Boot?**
+**18. Как тестировать конфигурацию и профили с помощью `@ActiveProfiles` и `@TestPropertySource`?**
+**19. Для чего нужен `@DynamicPropertySource` и почему он особенно полезен вместе с Testcontainers?**
+**20. Какие анти-паттерны чаще всего встречаются при работе с контекстом, профилями и конфигурацией в Spring?**
+
+## Ответы
+
+**1. Что такое `ApplicationContext` в Spring и чем он отличается от простой `BeanFactory`?**
+
+`ApplicationContext` — это основной контейнер Spring, в котором живут бины приложения, их зависимости и инфраструктурные сервисы. Он управляет не только созданием объектов, но и событиями, сообщениями, конвертацией типов, интеграцией с `Environment` и многими другими механизмами платформы.
+
+`BeanFactory` можно считать более базовым уровнем. Он тоже умеет создавать и выдавать бины, но `ApplicationContext` расширяет эту модель и делает её пригодной для полноценного приложения, где важны локализация, публикация событий, автоматическое применение пост-процессоров и работа с конфигурацией среды.
+
+На практике почти все Spring Boot-приложения работают именно с `ApplicationContext`, а не с “голой” `BeanFactory`. Для прикладного разработчика это означает простую вещь: когда он пишет обычный сервис или конфигурацию, он почти всегда взаимодействует уже с богатым контейнером уровня приложения, а не с минималистичным реестром объектов. 
+
+**2. Какую роль играет `Environment` и почему его отделяют от `ApplicationContext`?**
+
+`Environment` отвечает за две ключевые области: активные профили и свойства приложения. Он знает, какие профили включены, какие `PropertySource` подключены, и какое значение свойства считается итоговым после учёта приоритетов и переопределений.
+
+Отделение `Environment` от `ApplicationContext` полезно концептуально. Контекст отвечает за граф бинов и инфраструктуру приложения, а `Environment` — за внешнюю конфигурацию и её разрешение. Благодаря этому Spring может сформировать конфигурационную среду очень рано, ещё до полного поднятия всех бинов, и использовать её при принятии решений о том, какие компоненты вообще нужно создать.
+
+Для архитектуры это критично. Если смешать оба уровня, получится система, в которой бизнес-объекты слишком сильно зависят от деталей внешней среды. Правильная модель другая: `Environment` формирует конфигурацию, а `ApplicationContext` собирает на её основе нужный граф бинов. 
+
+**3. Какие источники конфигурации умеет читать Spring Boot и как между ними выбирается итоговое значение?**
+
+Spring Boot умеет собирать конфигурацию из нескольких внешних источников: файлов `application.properties` и `application.yml`, переменных окружения, системных свойств JVM, аргументов командной строки и дополнительных импортируемых конфигов. Всё это объединяется в единый `Environment`, который затем используют бины и автоконфигурации.
+
+Ключевой принцип — порядок источников имеет значение. Более “сильные” источники могут переопределять значения из более “слабых”. Это сделано специально, чтобы одно и то же приложение можно было запускать в разных окружениях с одним артефактом, меняя только внешние параметры.
+
+Практически это даёт очень удобную модель эксплуатации. Базовые настройки можно держать в репозитории, а конкретные значения для среды, региона, CI-пайплайна или локального запуска подмешивать снаружи, не меняя код и не пересобирая приложение. 
+
+**4. Что такое `Config Data API` и зачем в Spring Boot нужны `application.yml`, `application-<profile>.yml` и дополнительные локации конфигов?**
+
+`Config Data API` — это механизм Spring Boot, который отвечает за обнаружение, загрузку и объединение конфигурационных файлов. Он стандартизирует, где Boot ищет конфиги, в каком порядке их применяет и как работают профильные файлы и импорты.
+
+Благодаря этой модели `application.yml` обычно играет роль базовой конфигурации, а `application-prod.yml`, `application-test.yml` и другие профильные файлы накладывают поверх неё нужные переопределения. Кроме этого, можно подключать дополнительные локации через параметры запуска и импортировать другие конфиги через `spring.config.import`.
+
+На практике это превращает конфигурацию в управляемую систему слоёв. У приложения появляется baseline, профильные отличия и внешние расширения, например для секретов, региональных настроек или общих платформенных пакетов. Это заметно лучше, чем хаотично разбрасывать свойства по случайным файлам. 
+
+**5. Как работают профили в Spring и как их правильно активировать?**
+
+Профили — это способ включать или исключать части конфигурации и наборы бинов в зависимости от окружения или сценария запуска. Они влияют и на выбор `@Profile`-бинов, и на подключение профильных конфигурационных файлов.
+
+Активировать профили можно через `spring.profiles.active`, переменные окружения, системные свойства или аргументы запуска. Дополнительно можно задавать профиль по умолчанию, который будет использоваться, если явно не активирован ни один другой профиль.
+
+Хорошая практика — использовать профили для действительно крупных переключений: dev/test/prod, интеграции с определённой инфраструктурой, отдельные тестовые варианты. Но не стоит превращать профили в бесконтрольную замену feature-флагам и бизнес-правилам, иначе конфигурация быстро становится плохо предсказуемой. 
+
+**6. Когда лучше использовать профильные файлы, а когда — `spring.config.activate.on-profile` внутри одного файла?**
+
+Профильные файлы удобны тогда, когда конфигурация для окружений достаточно большая и её естественно держать в отдельных документах. `application-prod.yml` и `application-test.yml` хорошо читаются, если отличий много и нужно быстро открыть именно нужный слой конфигурации.
+
+`spring.config.activate.on-profile` внутри одного файла удобен в другой ситуации: когда различий немного и вы хотите хранить базовую и профильную конфигурацию рядом. Тогда файл остаётся единым, а профильные секции включаются только при совпадении условий.
+
+Выбор здесь не идеологический, а практический. Если один файл начинает разрастаться и превращается в трудночитаемый многосекционный документ, лучше разносить конфиги по отдельным файлам. Если же различия компактные и тесно связаны с базовыми значениями, секции внутри одного YAML могут быть даже нагляднее. 
+
+**7. Что такое группы профилей и в каких сценариях они полезны?**
+
+Группы профилей позволяют активировать набор профилей одним логическим именем. Вместо того чтобы вручную перечислять длинную комбинацию вроде `prod,eu,kafka,s3`, можно объявить группу и включать один верхнеуровневый профиль.
+
+Это особенно полезно в крупных системах, где окружение складывается из нескольких независимых признаков: тип среды, регион, интеграции, дополнительные инфраструктурные особенности. Группа делает такую комбинацию явной и снижает риск забыть какой-то важный профиль при деплое или локальном запуске.
+
+С архитектурной точки зрения группы помогают бороться с хаосом именования и повторения. Они не заменяют нормальную структуру конфигов, но сильно упрощают управление типовыми наборами профилей и делают настройки понятнее для команды и DevOps-пайплайнов. 
+
+**8. Чем `@Profile` отличается от `@ConditionalOnProperty`, `@ConditionalOnClass` и `@ConditionalOnMissingBean`?**
+
+`@Profile` — это самый прямой способ сказать: данный бин или конфигурация должны существовать только при определённых активных профилях. Это удобно для dev/test/prod-вариантов и для крупных переключений на уровне окружений.
+
+`@ConditionalOnProperty` решает другую задачу: он включает или выключает конфигурацию по значению конкретного свойства. Это уже больше про feature-flag или конфигурационный флаг, а не про целый профиль среды. `@ConditionalOnClass` и `@ConditionalOnMissingBean` чаще всего живут в автоконфигурациях и стартерах: первый проверяет наличие класса на classpath, второй — отсутствие пользовательского бина, чтобы библиотека могла подставить дефолт.
+
+Выбор между ними зависит от природы условия. Если нужна логика “в этом окружении другой набор бинов” — это профиль. Если нужна логика “эта функция включается флагом” — свойство. Если вы пишете библиотеку и хотите, чтобы она вела себя “вежливо” по отношению к приложению, нужны classpath- и bean-условия. 
+
+**9. Зачем нужен `@ConfigurationProperties` и почему он обычно лучше набора `@Value` по всему проекту?**
+
+`@ConfigurationProperties` нужен для типобезопасного связывания группы связанных свойств с отдельным классом. Вместо множества разбросанных строковых ключей вы получаете объект с понятным префиксом, именами полей, возможностью валидации и естественной точкой входа для всей конфигурации модуля.
+
+Это даёт несколько практических преимуществ. Во-первых, свойства группируются логически, а не размазываются по сервисам. Во-вторых, такие классы проще тестировать и документировать. В-третьих, IDE и метаданные начинают помогать разработчику автодополнением и проверкой структуры конфигурации.
+
+Поэтому `@ConfigurationProperties` особенно хорош там, где есть набор связанных настроек: клиент, кэш, пул потоков, интеграция, модуль безопасности. `@Value` может быть допустим для единичного флага, но как только параметров становится несколько, типобезопасный биндинг почти всегда выигрывает по читаемости и поддерживаемости. 
+
+**10. Как работает relaxed binding и почему свойства можно задавать в разных форматах имён?**
+
+Relaxed binding — это механизм Spring Boot, который позволяет связывать одно и то же свойство, даже если его имя записано по-разному в YAML, properties, env-переменных и Java-коде. Например, `base-url`, `baseUrl` и `BASE_URL` могут быть связаны с одним и тем же полем `baseUrl`.
+
+Это сделано для совместимости между форматами и средами запуска. YAML традиционно тяготеет к kebab-case, Java — к camelCase, а переменные окружения — к UPPER_SNAKE_CASE. Boot понимает эту разницу и снимает с разработчика лишнюю обязанность вручную преобразовывать имена.
+
+На практике relaxed binding делает внешнюю конфигурацию удобнее и переносимее. Команда может следовать нормальным конвенциям каждого слоя: читаемые YAML-ключи, привычные Java-поля и валидные переменные окружения, не ломая при этом один и тот же контракт конфигурации. 
+
+**11. Почему immutable-конфигурация через конструкторный биндинг считается предпочтительной?**
+
+Неизменяемые классы свойств делают конфигурацию предсказуемой: значения устанавливаются один раз при старте приложения и дальше не меняются случайно в runtime. Это хорошо согласуется с моделью Spring Boot, где конфигурация обычно рассматривается как внешний снимок среды на момент запуска.
+
+Конструкторный биндинг делает обязательность параметров более явной. Если значение не может быть связано корректно, проблема проявится сразу на этапе старта, а не потом в виде позднего `NullPointerException` или частично инициализированного объекта. Это особенно полезно для критичных настроек интеграций и безопасности.
+
+Кроме того, immutable-конфигурация проще для reasoning и тестов. Такой объект можно безопасно передавать между слоями, использовать в многопоточной среде и создавать в unit-тестах без опасений, что его кто-то изменит через сеттеры после инициализации. 
+
+**12. Как валидировать конфигурационные свойства и почему fail-fast на старте лучше поздних ошибок в runtime?**
+
+Валидация конфигурационных свойств обычно строится через `@Validated` и аннотации Jakarta Validation вроде `@NotBlank`, `@Min`, `@Max`, `@Positive` и другие. Это позволяет проверять не только наличие значения, но и его диапазон, формат и базовые инварианты.
+
+Fail-fast полезен тем, что проблема обнаруживается сразу при старте приложения. Если у вас пустой URL, отрицательный таймаут, недопустимый размер буфера или отсутствующий обязательный токен, лучше получить понятную ошибку запуска, чем позднюю нестабильность под нагрузкой или в середине рабочего дня.
+
+Такой подход делает конфигурацию частью контракта приложения. Окружение обязано предоставить корректные значения, а приложение обязано рано их проверить. Это дешевле в эксплуатации и намного лучше согласуется с практиками надёжного деплоя и observable-систем. 
+
+**13. Какие типы Spring Boot умеет биндинговать автоматически и чем это полезно на практике?**
+
+Spring Boot умеет автоматически преобразовывать строки из конфигурации в удобные типы вроде `Duration`, `DataSize`, `URI`, `InetAddress`, `Enum` и ряд других. За счёт этого YAML остаётся человекочитаемым, а код получает уже готовые типы вместо строк и ручного парсинга.
+
+Польза здесь очень прикладная. Вместо хранения таймаута как `long timeoutMs` и последующего преобразования можно сразу получить `Duration`. Вместо мегабайт в виде целого числа — `DataSize`. Вместо строки с адресом — `URI`. Это уменьшает количество шаблонного кода и снижает вероятность путаницы с единицами измерения.
+
+Такие типы также делают конфигурацию самодокументируемой. Значение `15s` или `64MB` читается лучше, чем абстрактное число без контекста. А когда тип фиксирован на уровне класса свойств, ошибки формата обнаруживаются рано и намного понятнее, чем в самописном парсере. 
+
+**14. Когда достаточно `@Value`, а когда уже нужно переходить на `@ConfigurationProperties`?**
+
+`@Value` подходит для небольших и изолированных случаев: один флаг, одно сервисное имя, один константный лимит или один параметр, который не образует логическую группу с другими настройками. В таких ситуациях отдельный класс свойств может быть избыточен.
+
+Но как только появляются несколько связанных параметров, ситуация меняется. Несколько `@Value` в одном или нескольких сервисах быстро ухудшают читаемость, усложняют тестирование и лишают команду единой точки документации и валидации. Конфигурация начинает расползаться по коду, а ключи превращаются в строковые литералы, которые сложно сопровождать.
+
+Именно поэтому типичное правило команды выглядит так: если это действительно один простой параметр — `@Value` допустим. Если это уже набор настроек одного модуля, интеграции или клиента — нужен `@ConfigurationProperties`, чтобы сохранить типобезопасность и архитектурную дисциплину. 
+
+**15. Зачем нужен `spring-boot-configuration-processor` и какую пользу дают metadata-файлы?**
+
+`spring-boot-configuration-processor` генерирует metadata-файлы для классов, помеченных `@ConfigurationProperties`. Эти метаданные попадают в артефакт приложения или библиотеки и описывают свойства, их типы, группы, допустимые значения и дополнительные подсказки.
+
+Главная практическая польза — IDE начинает понимать ваши кастомные свойства почти так же хорошо, как и стандартные свойства Spring Boot. Разработчик получает автодополнение, подсказки по структуре, иногда описание полей и более раннее обнаружение опечаток прямо во время редактирования YAML или properties.
+
+Для команды и внутренних стартеров это очень ценно. Метаданные превращают конфигурацию из “скрытого знания в коде” в формализованный контракт, который удобнее документировать, публиковать и поддерживать между несколькими модулями или сервисами. 
+
+**16. Как правильно работать с секретами и почему их нельзя хранить в Git?**
+
+Секреты — это пароли, токены, ключи API, сертификаты и другие чувствительные данные, которые не должны жить в репозитории. Даже если репозиторий приватный, секрет, попавший в историю коммитов, фактически становится трудноуправляемым и может сохраниться в форках, кэшах CI, бэкапах и логах.
+
+Правильная практика — хранить секреты во внешних системах: Kubernetes Secrets, Vault, облачных secret-менеджерах или хотя бы во внешних конфигурационных локациях, которые не коммитятся в VCS. Spring Boot позволяет подмешивать такие значения через env-переменные, `configtree:` и другие механизмы внешней конфигурации.
+
+Дополнительно важно не печатать секреты в логах и не склеивать их в огромные строки без необходимости. Лучше хранить атомарные значения отдельно и собирать итоговые объекты уже внутри конфигурационного слоя. Это упрощает ротацию, аудит и защиту от случайных утечек. 
+
+**17. Как свойства из переменных окружения связываются со свойствами Spring Boot?**
+
+Spring Boot умеет связывать переменные окружения с обычными свойствами приложения по правилам relaxed binding. Обычно точки и дефисы заменяются на подчёркивания, а имя переводится в верхний регистр. Поэтому свойство вроде `client.mail.base-url` может быть передано как `CLIENT_MAIL_BASE_URL`.
+
+Это особенно важно для Docker, Kubernetes и CI/CD, где env-переменные — один из основных каналов передачи конфигурации. Благодаря этому приложение может оставаться одинаковым, а окружение просто подставляет нужные значения без правки YAML внутри образа.
+
+Для разработчика это означает, что не нужно писать отдельную логику под Docker или Pod. Достаточно один раз корректно описать свойства и биндинг, а платформа уже передаст их в удобном для себя формате, который Spring Boot приведёт к общему виду. 
+
+**18. Как тестировать конфигурацию и профили с помощью `@ActiveProfiles` и `@TestPropertySource`?**
+
+`@ActiveProfiles` позволяет запускать тестовый контекст с выбранным профилем, например `test` или `it`. За счёт этого автоматически подключаются профильные файлы и активируются те бины, которые должны существовать только в данной тестовой среде.
+
+`@TestPropertySource` нужен для более точечного сценария: когда надо переопределить конкретные свойства или подключить отдельный файл свойств только для данного теста. Это удобно, если различия локальны и не стоит заводить под них новый профильный YAML.
+
+Вместе эти механизмы позволяют строить детерминированные тестовые окружения. Профиль задаёт крупный слой поведения, а `@TestPropertySource` делает локальные overrides. Такой подход намного чище, чем хаотично подменять значения через случайные mock-и и вручную собранные тестовые контексты. 
+
+**19. Для чего нужен `@DynamicPropertySource` и почему он особенно полезен вместе с Testcontainers?**
+
+`@DynamicPropertySource` нужен для случаев, когда значение свойства становится известно только во время выполнения теста. Классический пример — порт или JDBC URL контейнера, поднятого через Testcontainers, который нельзя жёстко зашить в `application-test.yml`.
+
+Этот механизм позволяет зарегистрировать свойства программно до создания тестового `ApplicationContext`. Контейнер стартует, отдаёт актуальные значения, а Spring уже использует их как обычные свойства среды. За счёт этого код приложения не знает ничего о тестовой природе окружения и продолжает работать через стандартную конфигурацию.
+
+Связка с Testcontainers особенно сильна потому, что она делает интеграционные тесты ближе к реальности, но при этом сохраняет чистую конфигурационную модель Spring. Вместо специальных if-веток для тестов приложение просто получает правильные значения свойств в нужный момент. 
+
+**20. Какие анти-паттерны чаще всего встречаются при работе с контекстом, профилями и конфигурацией в Spring?**
+
+Один из самых частых анти-паттернов — тащить `Environment` или россыпь `@Value` прямо в бизнес-код. Это делает доменную логику зависимой от инфраструктурных деталей и сильно ухудшает тестируемость. Вместо этого лучше инжектить готовые типобезопасные классы свойств или уже сконфигурированные зависимости.
+
+Второй анти-паттерн — смешивать профили окружения с feature-флагами и случайными поведенческими переключателями. Профили тогда перестают быть понятными, а конфигурация превращается в систему труднообъяснимых комбинаций. Для feature-toggle логичнее использовать свойства и условные бины, а не плодить новые профили на каждую мелочь.
+
+Третий тип ошибок связан с секретами и внешними конфигами: хранение чувствительных значений в Git, отсутствие валидации обязательных настроек, попытка читать свойства “на лету” из глобального контейнера вместо чёткого снимка при старте. Все эти практики делают систему менее надёжной и заметно усложняют сопровождение. 
+
+# Теоретические материалы
+
+1. Spring Framework: [Additional Capabilities of the ApplicationContext](https://docs.spring.io/spring-framework/reference/core/beans/context-introduction.html)
+2. Spring Framework: [Environment Abstraction](https://docs.spring.io/spring-framework/reference/core/beans/environment.html)
+3. Spring Boot: [Externalized Configuration](https://docs.spring.io/spring-boot/reference/features/external-config.html)
+4. Spring Boot: [Profiles](https://docs.spring.io/spring-boot/reference/features/profiles.html)
+5. Spring Boot: [Creating Your Own Auto-configuration](https://docs.spring.io/spring-boot/reference/features/developing-auto-configuration.html)
+6. Spring Framework: [@DynamicPropertySource](https://docs.spring.io/spring-framework/reference/testing/annotations/integration-spring/annotation-dynamicpropertysource.html)
+7. Spring Framework: [@TestPropertySource](https://docs.spring.io/spring-framework/reference/testing/annotations/integration-spring/annotation-testpropertysource.html)
+8. Spring Boot: [Configuration Metadata Specification](https://docs.spring.io/spring-boot/specification/configuration-metadata/index.html)
+9. Spring Boot: [Generating Metadata with the Annotation Processor](https://docs.spring.io/spring-boot/specification/configuration-metadata/annotation-processor.html)
+10. Spring Boot API: [@ConfigurationProperties](https://docs.spring.io/spring-boot/docs/current/api/org/springframework/boot/context/properties/ConfigurationProperties.html)
+11. Baeldung: [Guide to @ConfigurationProperties in Spring Boot](https://www.baeldung.com/configuration-properties-in-spring-boot)
+12. Baeldung: [Kotlin and Spring Boot @ConfigurationProperties](https://www.baeldung.com/kotlin/spring-boot-configurationproperties)
+13. Habr: [Внешние данные конфигурации в Spring](https://habr.com/ru/companies/otus/articles/576910/)
+14. Habr: [Ещё раз о пропертях или откуда что берётся](https://habr.com/ru/articles/740802/)
+15. Habr: [Spring Boot @ConfigurationProperties и коллекции](https://habr.com/ru/articles/686726/)
+16. Habr: [Валидация параметров конфигурации Spring Boot при запуске](https://habr.com/ru/articles/505628/)
+
+# Задачи 
+
+## 1. Собрать типобезопасную конфигурацию HTTP-клиента через `@ConfigurationProperties`
+
+В проекте есть HTTP-клиент внешнего каталога, но сейчас его конфигурация размазана по коду через `@Value`. Из-за этого настройки трудно валидировать, сложно тестировать, а список ключей быстро теряется между разными классами. Нужно собрать всё в нормальную схему: отдельный класс свойств, инфраструктурный конфиг и сервис, который работает уже с готовым клиентом.
+
+Смысл задачи не в том, чтобы просто заменить пару аннотаций. Здесь нужно спроектировать связку “класс свойств → конфигурация → готовый клиент → прикладной сервис”, добавить валидацию и убрать прямое чтение строковых ключей из бизнес-кода.
+
+* Стартовый код
+
+```java
+package demo.task1;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
+
+@Component
+public class CatalogHttpClient {
+    private final String baseUrl;
+    private final int timeoutMs;
+    private final boolean metricsEnabled;
+
+    public CatalogHttpClient(
+            @Value("${catalog.client.base-url}") String baseUrl,
+            @Value("${catalog.client.timeout-ms:1000}") int timeoutMs,
+            @Value("${catalog.client.metrics-enabled:true}") boolean metricsEnabled
+    ) {
+        this.baseUrl = baseUrl;
+        this.timeoutMs = timeoutMs;
+        this.metricsEnabled = metricsEnabled;
+    }
+
+    public String get(String path) {
+        return "GET " + baseUrl + path + " timeout=" + timeoutMs + " metrics=" + metricsEnabled;
+    }
+}
+
+@Service
+public class CatalogService {
+    private final CatalogHttpClient client;
+
+    public CatalogService(CatalogHttpClient client) {
+        this.client = client;
+    }
+
+    public String loadProduct(String id) {
+        return client.get("/products/" + id);
+    }
+}
+```
+
+* Что требуется
+
+  * Создать класс свойств `CatalogClientProperties` с префиксом `catalog.client`.
+  * Добавить валидацию обязательных и диапазонных параметров.
+  * Перевести строковый URL на тип `URI`, а таймаут — на `Duration`.
+  * Зарегистрировать клиент через `@Configuration`, а не через `@Component`.
+  * Оставить `CatalogService` чистым: без `@Value`, `Environment` и знаний о ключах свойств.
+
+### Решение
+
+```java
+package demo.task1;
+
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Service;
+import org.springframework.validation.annotation.Validated;
+
+import java.net.URI;
+import java.time.Duration;
+
+@Validated
+@ConfigurationProperties("catalog.client")
+record CatalogClientProperties(
+        @NotNull URI baseUrl,
+        @NotNull Duration timeout,
+        boolean metricsEnabled,
+        @Min(1) @Max(10) int maxRetries
+) {
+}
+
+final class CatalogHttpClient {
+    private final URI baseUrl;
+    private final Duration timeout;
+    private final boolean metricsEnabled;
+    private final int maxRetries;
+
+    CatalogHttpClient(URI baseUrl, Duration timeout, boolean metricsEnabled, int maxRetries) {
+        this.baseUrl = baseUrl;
+        this.timeout = timeout;
+        this.metricsEnabled = metricsEnabled;
+        this.maxRetries = maxRetries;
+    }
+
+    public String get(String path) {
+        return "GET " + baseUrl + path
+                + " timeout=" + timeout
+                + " metrics=" + metricsEnabled
+                + " retries=" + maxRetries;
+    }
+}
+
+@Configuration
+@EnableConfigurationProperties(CatalogClientProperties.class)
+class CatalogClientConfig {
+
+    @Bean
+    CatalogHttpClient catalogHttpClient(CatalogClientProperties properties) {
+        return new CatalogHttpClient(
+                properties.baseUrl(),
+                properties.timeout(),
+                properties.metricsEnabled(),
+                properties.maxRetries()
+        );
+    }
+}
+
+@Service
+public class CatalogService {
+    private final CatalogHttpClient client;
+
+    public CatalogService(CatalogHttpClient client) {
+        this.client = client;
+    }
+
+    public String loadProduct(String id) {
+        return client.get("/products/" + id);
+    }
+}
+
+/*
+application.yml
+
+catalog:
+  client:
+    base-url: https://catalog.internal
+    timeout: 1500ms
+    metrics-enabled: true
+    max-retries: 3
+*/
+```
+
+## 2. Разделить dev/prod-поведение уведомлений через профили и протестировать его
+
+Сейчас уведомления отправляются через один класс, который сам внутри решает, работает он в dev или prod. Такое решение быстро деградирует: логика окружения попадает в прикладной код, условия разрастаются, а тестирование превращается в проверку внутренних `if`. Нужно вынести различия на уровень конфигурации Spring.
+
+В задаче нужно построить нормальную профильно-ориентированную схему: интерфейс, две реализации, один сервис и тесты, которые подтверждают выбор нужного бина через профиль. Это уже полноценная работа с профилями, а не косметическая правка.
+
+* Стартовый код
+
+```java
+package demo.task2;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+@Service
+public class NotificationGateway {
+    private final boolean devMode;
+
+    public NotificationGateway(@Value("${app.dev-mode:false}") boolean devMode) {
+        this.devMode = devMode;
+    }
+
+    public String send(String user, String message) {
+        if (devMode) {
+            return "[DEV-STUB] " + user + ": " + message;
+        }
+        return "[SMTP] " + user + ": " + message;
+    }
+}
+
+@Service
+public class NotificationService {
+    private final NotificationGateway gateway;
+
+    public NotificationService(NotificationGateway gateway) {
+        this.gateway = gateway;
+    }
+
+    public String notifyUser(String user, String message) {
+        return gateway.send(user, message);
+    }
+}
+```
+
+* Что требуется
+
+  * Выделить контракт `NotificationGateway`.
+  * Сделать реализацию для `dev` и отдельную реализацию для `prod`.
+  * Убрать проверку режима из прикладного кода.
+  * Оставить `NotificationService` зависящим только от интерфейса.
+  * Добавить два теста через `@ActiveProfiles`, подтверждающих выбор нужной реализации.
+
+### Решение
+
+```java
+package demo.task2;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
+import org.springframework.test.context.ActiveProfiles;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+public interface NotificationGateway {
+    String send(String user, String message);
+}
+
+@Component
+@Profile("dev")
+class StubNotificationGateway implements NotificationGateway {
+    @Override
+    public String send(String user, String message) {
+        return "[DEV-STUB] " + user + ": " + message;
+    }
+}
+
+@Component
+@Profile("prod")
+class SmtpNotificationGateway implements NotificationGateway {
+    @Override
+    public String send(String user, String message) {
+        return "[SMTP] " + user + ": " + message;
+    }
+}
+
+@Service
+public class NotificationService {
+    private final NotificationGateway gateway;
+
+    public NotificationService(NotificationGateway gateway) {
+        this.gateway = gateway;
+    }
+
+    public String notifyUser(String user, String message) {
+        return gateway.send(user, message);
+    }
+}
+
+@SpringBootTest(classes = {
+        StubNotificationGateway.class,
+        SmtpNotificationGateway.class,
+        NotificationService.class
+})
+@ActiveProfiles("dev")
+class NotificationServiceDevTest {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private NotificationService notificationService;
+
+    @Test
+    void shouldUseStubGatewayInDevProfile() {
+        assertThat(notificationService.notifyUser("dima", "hello"))
+                .isEqualTo("[DEV-STUB] dima: hello");
+    }
+}
+
+@SpringBootTest(classes = {
+        StubNotificationGateway.class,
+        SmtpNotificationGateway.class,
+        NotificationService.class
+})
+@ActiveProfiles("prod")
+class NotificationServiceProdTest {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private NotificationService notificationService;
+
+    @Test
+    void shouldUseSmtpGatewayInProdProfile() {
+        assertThat(notificationService.notifyUser("dima", "hello"))
+                .isEqualTo("[SMTP] dima: hello");
+    }
+}
+```
+
+## 3. Перевести feature toggle с ручного чтения `Environment` на `@ConditionalOnProperty`
+
+В модуле расчёта скидок включение нового алгоритма сейчас реализовано через прямой доступ к `Environment`. Из-за этого сервис знает о ключах конфигурации, сам выбирает реализацию и фактически берёт на себя роль контейнера. Нужно вынести выбор реализации на уровень Spring и оставить бизнес-код чистым.
+
+Здесь задача уже сложнее: надо сделать интерфейс стратегии, две реализации, условную конфигурацию и итоговый сервис, который вообще не знает, как именно выбирается стратегия. Это хороший практический кейс на разницу между конфигурацией и доменной логикой.
+
+* Стартовый код
+
+```java
+package demo.task3;
+
+import org.springframework.core.env.Environment;
+import org.springframework.stereotype.Service;
+
+@Service
+public class DiscountService {
+    private final Environment environment;
+
+    public DiscountService(Environment environment) {
+        this.environment = environment;
+    }
+
+    public int calculateDiscount(int price) {
+        boolean newAlgorithm = Boolean.parseBoolean(
+                environment.getProperty("pricing.new-algorithm.enabled", "false")
+        );
+
+        if (newAlgorithm) {
+            return price >= 10_000 ? 15 : 7;
+        }
+        return price >= 10_000 ? 10 : 5;
+    }
+}
+```
+
+* Что требуется
+
+  * Выделить интерфейс `DiscountPolicy`.
+  * Сделать старую и новую реализацию отдельными Spring-бинами.
+  * Подключать новую реализацию через `@ConditionalOnProperty`.
+  * Сделать старую реализацию дефолтной через `matchIfMissing`.
+  * Убрать `Environment` из прикладного сервиса.
+  * Добавить класс свойств для секции `pricing.new-algorithm`.
+
+### Решение
+
+```java
+package demo.task3;
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Service;
+
+public interface DiscountPolicy {
+    int calculate(int price);
+}
+
+final class LegacyDiscountPolicy implements DiscountPolicy {
+    @Override
+    public int calculate(int price) {
+        return price >= 10_000 ? 10 : 5;
+    }
+}
+
+final class NewDiscountPolicy implements DiscountPolicy {
+    @Override
+    public int calculate(int price) {
+        return price >= 10_000 ? 15 : 7;
+    }
+}
+
+@ConfigurationProperties("pricing.new-algorithm")
+record PricingFeatureProperties(boolean enabled) {
+}
+
+@Configuration
+@EnableConfigurationProperties(PricingFeatureProperties.class)
+class DiscountPolicyConfig {
+
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "pricing.new-algorithm",
+            name = "enabled",
+            havingValue = "false",
+            matchIfMissing = true
+    )
+    DiscountPolicy legacyDiscountPolicy() {
+        return new LegacyDiscountPolicy();
+    }
+
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "pricing.new-algorithm",
+            name = "enabled",
+            havingValue = "true"
+    )
+    DiscountPolicy newDiscountPolicy() {
+        return new NewDiscountPolicy();
+    }
+}
+
+@Service
+public class DiscountService {
+    private final DiscountPolicy discountPolicy;
+
+    public DiscountService(DiscountPolicy discountPolicy) {
+        this.discountPolicy = discountPolicy;
+    }
+
+    public int calculateDiscount(int price) {
+        return discountPolicy.calculate(price);
+    }
+}
+
+/*
+application.yml
+
+pricing:
+  new-algorithm:
+    enabled: true
+*/
+```
+
+## 4. Построить иерархическую конфигурацию маршрутизации с коллекциями, картами и профильным переопределением
+
+Есть модуль маршрутизации запросов между несколькими backend-сервисами. Сейчас правила и оверрайды читаются по одному свойству через `@Value`, а часть логики вообще хардкодится в сервисе. Нужно заменить это на нормальный класс свойств с вложенными объектами, списками и картами, а затем использовать его для построения роутера.
+
+Сложность задачи в том, что здесь уже нужно грамотно описать структуру конфигурации, а не просто “подцепить пару полей”. Ученик должен собрать вложенный типобезопасный контракт и показать, как профильный конфиг меняет итоговое поведение без переписывания бизнес-кода.
+
+* Стартовый код
+
+```java
+package demo.task4;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+@Service
+public class RouteService {
+
+    @Value("${routes.default-service}")
+    private String defaultService;
+
+    @Value("${routes.analytics-enabled:false}")
+    private boolean analyticsEnabled;
+
+    public String resolve(String path) {
+        if (path.startsWith("/api/users/")) {
+            return "users";
+        }
+        if (path.startsWith("/api/payments/")) {
+            return "payments";
+        }
+        if (analyticsEnabled && path.startsWith("/api/analytics/")) {
+            return "analytics";
+        }
+        return defaultService;
+    }
+}
+```
+
+* Что требуется
+
+  * Создать `@ConfigurationProperties`-класс `RoutesProperties`.
+  * Описать список правил маршрутизации и карту оверрайдов.
+  * Убрать `@Value` и хардкод логики из сервиса.
+  * Реализовать поиск по списку правил.
+  * Для неизвестных путей использовать `defaultService`.
+  * Показать базовый `application.yml` и профильный блок для `prod`, где включается analytics и меняется часть правил.
+
+### Решение
+
+```java
+package demo.task4;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Map;
+
+@ConfigurationProperties("routes")
+record RoutesProperties(
+        String defaultService,
+        List<RouteRule> rules,
+        Map<String, String> overrides
+) {
+    record RouteRule(String prefix, String service) {
+    }
+}
+
+@Configuration
+@EnableConfigurationProperties(RoutesProperties.class)
+class RoutesConfig {
+}
+
+@Service
+public class RouteService {
+    private final RoutesProperties properties;
+
+    public RouteService(RoutesProperties properties) {
+        this.properties = properties;
+    }
+
+    public String resolve(String path) {
+        for (RoutesProperties.RouteRule rule : properties.rules()) {
+            if (path.startsWith(rule.prefix())) {
+                return properties.overrides().getOrDefault(rule.service(), rule.service());
+            }
+        }
+        return properties.defaultService();
+    }
+}
+
+/*
+application.yml
+
+routes:
+  default-service: gateway
+  rules:
+    - prefix: /api/users/
+      service: users
+    - prefix: /api/payments/
+      service: payments
+  overrides:
+    users: users-v1
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+routes:
+  rules:
+    - prefix: /api/users/
+      service: users
+    - prefix: /api/payments/
+      service: payments
+    - prefix: /api/analytics/
+      service: analytics
+  overrides:
+    users: users-v2
+    analytics: analytics-prod
+*/
+```
+
+## 5. Спроектировать мини-стартер с автоконфигурацией и “вежливым” поведением
+
+Нужно смоделировать библиотеку, которая автоматически поднимает клиент внешнего склада. Сейчас конфигурация создаёт бин всегда и без условий, поэтому библиотека навязывает своё поведение приложению и ломает кастомные реализации. Требуется превратить это в нормальную автоконфигурацию: с классом свойств, условием по наличию класса, флагом включения и уважением к пользовательским бинам.
+
+Это уже задача senior-уровня по замыслу, хотя в названии уровень не указан. Здесь важно не только создать бины, но и правильно оформить их условия, чтобы библиотека могла безопасно жить в чужом приложении.
+
+* Стартовый код
+
+```java
+package demo.task5;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+public class WarehouseClient {
+    private final String baseUrl;
+    private final String token;
+
+    public WarehouseClient(String baseUrl, String token) {
+        this.baseUrl = baseUrl;
+        this.token = token;
+    }
+
+    public String ping() {
+        return "ping " + baseUrl + " token=" + token;
+    }
+}
+
+@Configuration
+public class WarehouseClientConfig {
+
+    @Bean
+    WarehouseClient warehouseClient() {
+        return new WarehouseClient("https://warehouse.internal", "hardcoded-token");
+    }
+}
+```
+
+* Что требуется
+
+  * Создать класс свойств `warehouse.client`.
+  * Сделать автоконфигурацию через `@AutoConfiguration`.
+  * Включать клиент только при `warehouse.client.enabled=true`.
+  * Использовать `@ConditionalOnMissingBean`, чтобы пользователь мог подменить бин.
+  * Добавить сервис `WarehouseFacade`, который создаётся только если есть `WarehouseClient`.
+  * Показать пользовательскую конфигурацию, которая переопределяет дефолтный клиент.
+
+### Решение
+
+```java
+package demo.task5;
+
+import jakarta.validation.constraints.NotBlank;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.validation.annotation.Validated;
+
+@Validated
+@ConfigurationProperties("warehouse.client")
+record WarehouseClientProperties(
+        boolean enabled,
+        @NotBlank String baseUrl,
+        @NotBlank String token
+) {
+}
+
+public class WarehouseClient {
+    private final String baseUrl;
+    private final String token;
+
+    public WarehouseClient(String baseUrl, String token) {
+        this.baseUrl = baseUrl;
+        this.token = token;
+    }
+
+    public String ping() {
+        return "ping " + baseUrl + " token=" + token;
+    }
+}
+
+public class WarehouseFacade {
+    private final WarehouseClient warehouseClient;
+
+    public WarehouseFacade(WarehouseClient warehouseClient) {
+        this.warehouseClient = warehouseClient;
+    }
+
+    public String healthcheck() {
+        return warehouseClient.ping();
+    }
+}
+
+@AutoConfiguration
+@ConditionalOnClass(WarehouseClient.class)
+@EnableConfigurationProperties(WarehouseClientProperties.class)
+@ConditionalOnProperty(prefix = "warehouse.client", name = "enabled", havingValue = "true")
+class WarehouseAutoConfiguration {
+
+    @Bean
+    @ConditionalOnMissingBean
+    WarehouseClient warehouseClient(WarehouseClientProperties properties) {
+        return new WarehouseClient(properties.baseUrl(), properties.token());
+    }
+
+    @Bean
+    @ConditionalOnBean(WarehouseClient.class)
+    @ConditionalOnMissingBean
+    WarehouseFacade warehouseFacade(WarehouseClient warehouseClient) {
+        return new WarehouseFacade(warehouseClient);
+    }
+}
+
+@Configuration
+class CustomWarehouseClientConfig {
+
+    @Bean
+    WarehouseClient customWarehouseClient() {
+        return new WarehouseClient("https://warehouse.custom", "custom-token");
+    }
+}
+
+/*
+application.yml
+
+warehouse:
+  client:
+    enabled: true
+    base-url: https://warehouse.internal
+    token: ${WAREHOUSE_TOKEN}
+*/
+```
+
+## 6. Написать интеграционный тест конфигурации через `@DynamicPropertySource` и Testcontainers
+
+В модуле доступа к базе конфигурация сейчас предполагает фиксированный URL в `application.yml`. Это плохо подходит для интеграционных тестов, где база должна подниматься динамически и отдавать порт только во время запуска теста. Нужно перестроить тестовую схему так, чтобы приложение получало свойства базы из контейнера без ручных if-ов и временных костылей.
+
+Задача требует совместить несколько вещей: тестовый профиль, динамическую регистрацию свойств, реальный контейнер PostgreSQL и бин настроек, который нормально связывается через Spring Boot. Это не “проверка пары строк”, а полноценная рабочая заготовка для интеграционных тестов.
+
+* Стартовый код
+
+```java
+package demo.task6;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class CustomerRepository {
+    private final String jdbcUrl;
+    private final String username;
+    private final String password;
+
+    public CustomerRepository(
+            @Value("${spring.datasource.url}") String jdbcUrl,
+            @Value("${spring.datasource.username}") String username,
+            @Value("${spring.datasource.password}") String password
+    ) {
+        this.jdbcUrl = jdbcUrl;
+        this.username = username;
+        this.password = password;
+    }
+
+    public String connectionInfo() {
+        return jdbcUrl + "|" + username + "|" + password;
+    }
+}
+```
+
+* Что требуется
+
+  * Оставить приложение работающим через обычные datasource-свойства Spring Boot.
+  * Написать интеграционный тест с PostgreSQLContainer.
+  * Передать URL, username и password через `@DynamicPropertySource`.
+  * Запускать тест под профилем `test`.
+  * Добавить один дополнительный override через `@TestPropertySource`.
+  * Проверить, что бин действительно получил значения контейнера.
+
+### Решение
+
+```java
+package demo.task6;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.stereotype.Repository;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@Repository
+public class CustomerRepository {
+    private final String jdbcUrl;
+    private final String username;
+    private final String password;
+    private final String schema;
+
+    public CustomerRepository(
+            @Value("${spring.datasource.url}") String jdbcUrl,
+            @Value("${spring.datasource.username}") String username,
+            @Value("${spring.datasource.password}") String password,
+            @Value("${app.db.schema:public}") String schema
+    ) {
+        this.jdbcUrl = jdbcUrl;
+        this.username = username;
+        this.password = password;
+        this.schema = schema;
+    }
+
+    public String connectionInfo() {
+        return jdbcUrl + "|" + username + "|" + password + "|" + schema;
+    }
+}
+
+@SpringBootTest(classes = CustomerRepository.class)
+@ActiveProfiles("test")
+@TestPropertySource(properties = "app.db.schema=test_schema")
+class CustomerRepositoryIntegrationTest {
+
+    private static final PostgreSQLContainer<?> POSTGRES =
+            new PostgreSQLContainer<>("postgres:16-alpine");
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private CustomerRepository customerRepository;
+
+    @BeforeAll
+    static void startContainer() {
+        POSTGRES.start();
+    }
+
+    @AfterAll
+    static void stopContainer() {
+        POSTGRES.stop();
+    }
+
+    @DynamicPropertySource
+    static void registerDynamicProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
+
+    @Test
+    void shouldInjectDatasourcePropertiesFromContainer() {
+        String info = customerRepository.connectionInfo();
+
+        assertThat(info).contains(POSTGRES.getJdbcUrl());
+        assertThat(info).contains(POSTGRES.getUsername());
+        assertThat(info).contains(POSTGRES.getPassword());
+        assertThat(info).contains("test_schema");
+    }
+}
+```
